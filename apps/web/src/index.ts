@@ -4538,8 +4538,9 @@ export function mountWeatherDashboard(
         ?.setAttribute("data-forecast-initial-index", forecastPosition);
     }
 
-    bindDashboardControls(root, controller);
     fitHomepageTitle(root);
+    fitStickyHeader(root);
+    bindDashboardControls(root, controller);
 
     // retain keyboard focus on the replaced preference switch
     if (toggleHadFocus) {
@@ -4585,7 +4586,7 @@ function bindCurrentReadingsRefresh(root: HTMLElement, controller: WeatherDashbo
   timer = window.setInterval(refresh, 60_000);
 }
 
-// refit dashboard labels after viewport and font changes
+// refit dashboard labels and sticky offsets after viewport and font changes
 function bindDashboardSize(root: HTMLElement): void {
   const observer = new ResizeObserver(() => {
     // release the observer when its application root is removed
@@ -4594,14 +4595,24 @@ function bindDashboardSize(root: HTMLElement): void {
       return;
     }
     fitHomepageTitle(root);
+    fitStickyHeader(root);
     fitForecastValueLabels(root);
   });
   observer.observe(root);
   // measure labels again after the final fonts load
   void document.fonts.ready.then(() => {
     fitHomepageTitle(root);
+    fitStickyHeader(root);
     fitForecastValueLabels(root);
   });
+}
+
+// reserve the complete pinned header height for other sticky elements
+function fitStickyHeader(root: HTMLElement): void {
+  const header = root.querySelector<HTMLElement>(".home-masthead, .forecast-masthead");
+  const height = header === null ? 0 : header.getBoundingClientRect().height +
+    (Number.parseFloat(getComputedStyle(header).top) || 0);
+  root.style.setProperty("--weather-sticky-header-height", `${String(height)}px`);
 }
 
 // retain one complete title line at the largest size that fits beside the switch
