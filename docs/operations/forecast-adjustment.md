@@ -206,8 +206,10 @@ With Adjusted on, the dashboard can raise or lower the current regional cloud
 estimate and the next 24 hours of Open-Meteo cloud forecasts using the on-site
 WS90 `solarRadiationWm2` reading. The Clouds card, its daily extrema and clearest
 window, the forecast cloud chart, and live Now artwork use the same selected
-values. Changed cloud icons are gold; the card and chart identify the estimate
-as experimental. Raw/off mode remains regional-only and unchanged.
+values. Changed cloud icons are gold; the card identifies the sunlight estimate
+without experimental wording. The proxy remains experimental and unqualified;
+removing the display label does not promote a model. Raw/off mode remains
+regional-only for current and future conditions.
 
 This is an instantaneous sunlight proxy, not a measured fraction of the sky
 and not a trained, qualified, or promoted adjustment family. Temperature, wind,
@@ -1531,3 +1533,29 @@ proxy research must remain distinct from same-product near-term validation.
 See the official [Previous Runs](https://open-meteo.com/en/docs/previous-runs-api),
 [Historical Forecast](https://open-meteo.com/en/docs/historical-forecast-api), and
 [Single Runs](https://open-meteo.com/en/docs/single-runs-api) documentation.
+
+## Recorded history in forecast charts
+
+The elapsed portion of each forecast chart uses recorded hourly values in both
+display modes. The fixed web-edge `forecast-observations` route fully pages the
+existing core physical and regional-current history from local midnight minus
+three hours through one fixed server timestamp. A completed compact projection
+is shared for five minutes; failed, oversized, timed-out or cursor-invalid fills
+are not published. Paging is not a database snapshot: later revisions are
+incorporated on the next fill. Core, schema and model evidence capture are unchanged.
+
+Selection is independent per metric and hour: Ballydidean's exact Ecowitt source,
+then an equal mean of available local stations, then recorded regional current
+values. Each source is reduced to an hourly scalar mean before duplicate station
+feeds are collapsed. Gust uses the preceding-hour recorded maximum; rain uses
+direct measured rates, never per-report precipitation increments. Maintenance-only
+rain-target sources are excluded. Three-hour pressure changes require four
+consecutive hourly bins from the same source, so station fallback changes do not
+manufacture pressure jumps. Projection tiers, sample/station counts and partial-hour
+recorded-through timestamps remain available in the compact read-only response.
+
+If no recorded value is available for a field, the graph retains its raw regional
+forecast value, not an adjusted estimate. Complete projection failure leaves the
+future forecast usable and displays a recorded-history availability message.
+Adjustment controls affect only future plotted values. The homepage current
+source preference and forward correction models are unchanged.

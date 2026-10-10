@@ -1610,8 +1610,12 @@ test("regional current polling refreshes its forecast on cadence and retains saf
       return failCurrent ? Response.json({}, { status: 503 }) : Response.json({ data: state.current, site });
     }
     // delay or fail only selected forecast attempts
-    if (url.includes("/forecast")) {
+    if (/\/forecast(?:\?|$)/u.test(url)) {
       return pendingForecast ?? (failForecast ? Response.json({}, { status: 503 }) : Response.json({ data: forecast, site }));
+    }
+    // isolate compact recorded history from model refresh accounting
+    if (url.endsWith("/forecast-observations")) {
+      return Response.json({ data: [], generatedAt: new Date().toISOString() });
     }
     return Response.json({ data: [], site });
   };
@@ -1621,7 +1625,8 @@ test("regional current polling refreshes its forecast on cadence and retains saf
   requests.length = 0;
   context.mock.timers.tick(14 * 60_000);
   await controller.refreshCurrentReadings();
-  assert.equal(requests.filter((url) => url.includes("/forecast")).length, 0);
+  assert.equal(requests.filter((url) => /\/forecast(?:\?|$)/u.test(url)).length, 0);
+  assert.equal(requests.filter((url) => url.endsWith("/forecast-observations")).length, 1);
   context.mock.timers.tick(60_000);
   forecast = [{ ...forecast[0], productRunAt: "2026-08-22T20:20:00.000Z", metrics: { ...forecast[0].metrics, pm25MicrogramsPerCubicMeter: 15 } }];
   let resolveForecast;
@@ -1632,7 +1637,7 @@ test("regional current polling refreshes its forecast on cadence and retains saf
   failCurrent = true;
   const first = controller.refreshCurrentReadings();
   const second = controller.refreshCurrentReadings();
-  assert.equal(requests.filter((url) => url.includes("/forecast")).length, 1);
+  assert.equal(requests.filter((url) => /\/forecast(?:\?|$)/u.test(url)).length, 1);
   resolveForecast(Response.json({ data: forecast, site }));
   await Promise.all([first, second]);
   pendingForecast = null;
@@ -4359,7 +4364,8 @@ test("humidity forecast colors use paired temperatures in cards and chart gradie
   );
   // ensure both chart ends and the homepage max use the displayed metric mode
   for (const mode of ["raw", "adjusted"]) {
-    const state = { ...forecastState(forecast, null), forecastAdjustmentMode: mode };
+    // keep this forward-color fixture beyond the current time marker
+    const state = { ...forecastState(forecast, null), current: [{ ...record, validAt: "2026-08-21T17:00:00.000Z" }], forecastAdjustmentMode: mode };
     const tile = renderWeatherDashboard(state).match(/<article[^>]*data-condition="humidity"[\s\S]*?<\/article>/u)?.[0];
     assert.match(tile, /condition-forecast-reading condition-forecast-tone-green[\s\S]*?Max<\/span> <strong>95<small>%/u);
     const chart = forecastChartHtml(renderWeatherDashboard(state, "forecast"), "humidity");

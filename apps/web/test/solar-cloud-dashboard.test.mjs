@@ -300,7 +300,7 @@ test("solar projection drives cloud summaries and remains separate from governed
   const rawChart = chartSeries(rawForecast, "clouds");
 
   assert.match(adjustedCard, /class="condition-primary"><strong>0<small>%<\/small>/u);
-  assert.match(adjustedCard, /Sunlight estimate · experimental/u);
+  assert.match(adjustedCard, /Sunlight estimate/u);
   assert.match(adjustedCard, /forecast-adjusted-icon/u);
   assert.match(adjustedCard, /Clearest[\s\S]*?1–4<small>PM/u);
   assert.match(adjustedCard, /Max[\s\S]*?0<small>%[\s\S]*?Min[\s\S]*?0<small>%/u);
@@ -310,7 +310,7 @@ test("solar projection drives cloud summaries and remains separate from governed
   assert.match(rawCard, /Max[\s\S]*?80<small>%[\s\S]*?Min[\s\S]*?60<small>%/u);
   assert.deepEqual(adjustedChart.series, [{ label: "Cover", values: [0, 0, 0] }]);
   assert.deepEqual(rawChart.series, [{ label: "Cover", values: [80, 70, 60] }]);
-  assert.match(adjustedChart.chart, /forecast-adjusted-icon[\s\S]*?Clouds · experimental/u);
+  assert.match(adjustedChart.chart, /forecast-adjusted-icon[\s\S]*?Clouds/u);
   assert.doesNotMatch(rawChart.chart, /experimental|forecast-adjusted-icon/u);
   assert.match(adjustedForecast, /data-forecast-adjustment-available="true"/u);
 });

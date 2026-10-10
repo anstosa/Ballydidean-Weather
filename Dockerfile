@@ -71,6 +71,6 @@ COPY --from=build --chown=10002:10002 /opt/weather/apps/web/dist apps/web/dist
 COPY --chown=10002:10002 apps/web/package.json apps/web/package.json
 COPY --chown=10002:10002 apps/web/public apps/web/public
 COPY --chown=10002:10002 config/sites/ballydidean.json config/sites/ballydidean.json
-COPY --chown=10002:10002 deploy/scripts/web-server.mjs deploy/scripts/weather-admin-store.mjs deploy/scripts/home-network.mjs deploy/scripts/xweather-tile-cache.mjs deploy/scripts/xweather-usage-budget.mjs deploy/scripts/adjustment-evidence-store.mjs deploy/scripts/forecast-adjustment-scorecard-contract.mjs deploy/scripts/
+COPY --chown=10002:10002 deploy/scripts/web-server.mjs deploy/scripts/forecast-observations.mjs deploy/scripts/weather-admin-store.mjs deploy/scripts/home-network.mjs deploy/scripts/xweather-tile-cache.mjs deploy/scripts/xweather-usage-budget.mjs deploy/scripts/adjustment-evidence-store.mjs deploy/scripts/forecast-adjustment-scorecard-contract.mjs deploy/scripts/
 USER 10002:10002
 CMD ["node", "deploy/scripts/web-server.mjs"]

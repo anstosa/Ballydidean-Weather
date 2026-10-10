@@ -202,7 +202,7 @@ test("rendered local summaries and air temperature chart match adjusted values",
   // verify each forecast chart's actual projected values rather than its gold class alone
   for (const [key, expected] of [["humidity", 70], ["air-quality", 10], ["uv-index", 3], ["pressure", 1.8]]) {
     close(chart(adjustedHtml, key).series[0].values[3], expected);
-    assert.match(chart(adjustedHtml, key).markup, /experimental/u);
+    assert.doesNotMatch(chart(adjustedHtml, key).markup, /experimental/u);
     assert.doesNotMatch(chart(rawHtml, key).markup, /experimental/u);
   }
   const correctedMax = strongestPressureChange(combined.forecast, now, site.timezone, true);
@@ -219,7 +219,7 @@ test("rendered local summaries and air temperature chart match adjusted values",
 });
 
 // retire each family's marker independently when observation clocks differ near the final hour
-test("experimental labels expire at each metric's own observation horizon", (context) => {
+test("local projections expire independently without changing clean chart labels", (context) => {
   const later = new Date(now.getTime() + 5 * 60_000);
   context.mock.timers.enable({ apis: ["Date"], now: later });
   const input = state();
@@ -233,5 +233,5 @@ test("experimental labels expire at each metric's own observation horizon", (con
   assert.ok(forecastMetricValue(adjusted.forecast[1], "pm25MicrogramsPerCubicMeter") < 20);
   const html = renderWeatherDashboard({ ...input, current, forecast }, "forecast");
   assert.doesNotMatch(chart(html, "humidity").markup, /experimental/u);
-  assert.match(chart(html, "air-quality").markup, /experimental/u);
+  assert.doesNotMatch(chart(html, "air-quality").markup, /experimental/u);
 });

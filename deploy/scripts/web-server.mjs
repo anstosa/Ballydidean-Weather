@@ -14,6 +14,7 @@ import { XweatherTileMemoryCache } from "./xweather-tile-cache.mjs";
 import { XweatherUsageBudget } from "./xweather-usage-budget.mjs";
 import { WeatherAdminStore } from "./weather-admin-store.mjs";
 import { HomeNetworkMatcher } from "./home-network.mjs";
+import { ForecastObservationCache } from "./forecast-observations.mjs";
 import {
   ADJUSTMENT_EVIDENCE_DEFAULT_ROOT,
   AdjustmentEvidenceArchiveTransport,
@@ -64,6 +65,7 @@ const scheduledArchiveTransferEnabled =
 const scheduledCaptureParameter = "__weather_scheduler_nonce";
 const scheduledCaptureRequests = new Map();
 const apiOrigin = parseApiOrigin(process.env.WEATHER_API_ORIGIN);
+const forecastObservationCache = new ForecastObservationCache({ origin: apiOrigin });
 const adjustmentMaintenanceApiOrigin = parseOptionalAdjustmentMaintenanceApiOrigin(
   process.env.WEATHER_ADJUSTMENT_MAINTENANCE_API_ORIGIN,
 );
@@ -259,6 +261,33 @@ const server = createServer(async (request, response) => {
     // isolate the closed widget route before the general api proxy
     if (isWidgetForecastPath(requestUrl.pathname)) {
       await serveWidgetForecast(request, response, requestUrl);
+      return;
+    }
+
+    // aggregate only the fixed recorded graph product without altering forecast evidence
+    if (requestUrl.pathname === "/api/v1/sites/ballydidean/forecast-observations") {
+      // reject all browser-controlled archive geometry and mutation methods
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        sendText(response, 405, "method not allowed\n", { Allow: "GET, HEAD" });
+        return;
+      }
+      // one queryless route keeps cache identity and load bounded
+      if (requestUrl.search !== "") {
+        sendText(response, 400, "unsupported query\n");
+        return;
+      }
+      try {
+        const body = JSON.stringify(await forecastObservationCache.get());
+        setSecurityHeaders(response);
+        response.writeHead(200, {
+          "Cache-Control": "public, max-age=60, s-maxage=60",
+          "Content-Length": String(Buffer.byteLength(body)),
+          "Content-Type": "application/json; charset=utf-8",
+        });
+        response.end(request.method === "HEAD" ? undefined : body);
+      } catch {
+        sendText(response, 503, "recorded history is temporarily unavailable\n", { "Cache-Control": "no-store", "Retry-After": "30" });
+      }
       return;
     }
 

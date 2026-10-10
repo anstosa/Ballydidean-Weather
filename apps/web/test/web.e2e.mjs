@@ -1079,6 +1079,8 @@ async function startFixtureServer() {
     currentRecords: [current, physicalCurrent],
     dailyPrecipitation,
     failReads: false,
+    forecastObservations: [],
+    forecastObservationsGeneratedAt: "2026-08-22T05:00:00.000Z",
     forecastPayload: null,
     forecastRecords: forecast,
     mutations: 0,
@@ -1324,6 +1326,15 @@ async function startFixtureServer() {
       return;
     }
 
+    // serve projected hourly recordings for past forecast points
+    if (url.pathname === "/api/v1/sites/ballydidean/forecast-observations") {
+      sendJson(response, {
+        data: state.forecastObservations,
+        generatedAt: state.forecastObservationsGeneratedAt,
+      });
+      return;
+    }
+
     // serve daily calendar-year trend buckets
     if (url.pathname === "/api/v1/sites/ballydidean/trends") {
       sendJson(response, {
@@ -1529,7 +1540,8 @@ test("WS90 sunlight clouds fade within 24 hours and retire on stale readings", {
       await page.goto(fixture.origin, { waitUntil: "networkidle" });
       const cloudCard = page.locator("[data-condition='clouds']");
       assert.match(await cloudCard.locator(".condition-primary").textContent() ?? "", /10%/u);
-      assert.match(await cloudCard.textContent() ?? "", /Sunlight estimate · experimental/u);
+      assert.match(await cloudCard.textContent() ?? "", /Sunlight estimate/u);
+      assert.doesNotMatch(await cloudCard.textContent() ?? "", /experimental/iu);
       assert.equal(await cloudCard.locator(".condition-detail").isVisible(), true);
       assert.equal(await cloudCard.locator(".forecast-adjusted-icon").count(), 1);
       assert.match(await page.locator(".section-nav-weather-icon").getAttribute("src") ?? "", /01-sunny\.svg$/u);
@@ -1548,7 +1560,8 @@ test("WS90 sunlight clouds fade within 24 hours and retire on stale readings", {
       assert.equal(series[0].values[13], 90);
       assert.equal(Math.round(series[0].values[14]), 13);
       assert.equal(Math.round(series[0].values[19]), 30);
-      assert.match(await chart.locator(".forecast-chart-heading").textContent() ?? "", /experimental/u);
+      assert.equal(await chart.locator(".forecast-chart-heading h3 > span:last-child").innerText(), "Clouds");
+      assert.doesNotMatch(await page.locator("body").innerText(), /experimental/iu);
       await grid.focus();
       await page.keyboard.press("ArrowRight");
       const selected = await grid.getAttribute("data-forecast-selected-position");
@@ -1581,7 +1594,7 @@ test("WS90 sunlight clouds fade within 24 hours and retire on stale readings", {
       assert.match(await page.locator(".section-nav-weather-icon").getAttribute("src") ?? "", /05-cloudy\.svg$/u);
       assert.deepEqual(errors, []);
       assert.equal(await page.evaluate(
-        // prevent the experimental label from widening a mobile viewport
+        // prevent the cloud heading from widening a mobile viewport
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ), true);
       await page.close();
@@ -1712,7 +1725,7 @@ test("local observations bias four forecast families for only the next 24 hours"
       JSON.parse(await page.locator(`[data-forecast-chart='${family}']`).getAttribute("data-forecast-series"))[0].values,
     ],
   )));
-  // keep long experimental headings clear of their selected-value bubbles
+  // keep forecast headings clear of their selected-value bubbles
   const assertForecastLayout = async (page, width) => {
     const layout = await page.locator(collisionFamilies.map((family) => `[data-forecast-chart='${family}']`).join(", ")).evaluateAll(
       // compare each chart's actual browser geometry
@@ -1849,13 +1862,20 @@ test("local observations bias four forecast families for only the next 24 hours"
       const adjustedTemperature = JSON.parse(
         await page.locator("[data-forecast-chart='temperature']").getAttribute("data-forecast-series"),
       );
-      // require visible evidence for every accepted local estimator
-      for (const family of localFamilies) {
-        assert.match(
-          await page.locator(`[data-forecast-chart='${family}'] .forecast-chart-heading`).innerText(),
-          /experimental/u,
+      const familyLabels = {
+        "air-quality": "Air quality",
+        humidity: "Humidity",
+        pressure: "Pressure",
+        "uv-index": "UV index",
+      };
+      // keep accepted local estimators free of internal status labels
+      for (const [family, label] of Object.entries(familyLabels)) {
+        assert.equal(
+          await page.locator(`[data-forecast-chart='${family}'] .forecast-chart-heading h3 > span:last-child`).innerText(),
+          label,
         );
       }
+      assert.doesNotMatch(await page.locator("body").innerText(), /experimental/iu);
       await assertForecastLayout(page, viewport.width);
       await assertCrosshairClear(page, viewport.width);
       const api = await page.evaluate(
@@ -1879,6 +1899,7 @@ test("local observations bias four forecast families for only the next 24 hours"
       const rawTemperature = JSON.parse(
         await page.locator("[data-forecast-chart='temperature']").getAttribute("data-forecast-series"),
       );
+      assert.doesNotMatch(await page.locator("body").innerText(), /experimental/iu);
       await assertForecastLayout(page, viewport.width);
       await assertCrosshairClear(page, viewport.width);
       // compare all four displayed current-hour biases
@@ -1995,6 +2016,266 @@ test("local observations bias four forecast families for only the next 24 hours"
         assert.deepEqual(await chartSeries(page), raw);
       }
       assert.deepEqual(fixture.state.forecastPayload, payloadSnapshot);
+      assert.deepEqual(pageErrors, []);
+      assert.equal((await page.screenshot()).byteLength > 1_000, true);
+      await page.close();
+    }
+  } finally {
+    // close disposable browser resources
+    await browser?.close();
+    fixture.server.close();
+    await once(fixture.server, "close");
+  }
+});
+
+// replace past forecast points with recorded hourly conditions in every display mode
+test("forecast history uses recorded hourly conditions before raw regional fallback", { timeout: 120_000 }, async () => {
+  const fixture = await startFixtureServer();
+  let browser;
+  const now = new Date("2026-08-22T05:37:00.000Z");
+  const metricKeys = [
+    "apparentTemperatureC",
+    "cloudCoverPercent",
+    "pm25MicrogramsPerCubicMeter",
+    "precipitationRateMmPerHour",
+    "relativeHumidityPercent",
+    "temperatureC",
+    "uvIndex",
+    "windGustMps",
+    "windSpeedMps",
+  ];
+  const emptyMetrics = Object.fromEntries(metricKeys.map((key) => [key, null]));
+  // create one projected hourly response point
+  const observation = (index, metrics, sources, pressureChange3hHpa, pressureSource) => ({
+    metrics: { ...emptyMetrics, ...metrics },
+    pressureChange3hHpa,
+    sources: {
+      ...sources,
+      ...(pressureSource === null ? {} : { pressureChange3hHpa: pressureSource }),
+    },
+    validAt: forecast[index].validAt,
+  });
+  const preferred = observation(
+    3,
+    {
+      apparentTemperatureC: 13,
+      cloudCoverPercent: 30,
+      pm25MicrogramsPerCubicMeter: 10,
+      precipitationRateMmPerHour: 2,
+      relativeHumidityPercent: 91,
+      temperatureC: 30,
+      uvIndex: 4,
+      windGustMps: 7,
+      windSpeedMps: 3,
+    },
+    {
+      apparentTemperatureC: "local_mean",
+      cloudCoverPercent: "local_mean",
+      pm25MicrogramsPerCubicMeter: "local_mean",
+      precipitationRateMmPerHour: "ballydidean",
+      relativeHumidityPercent: "ballydidean",
+      temperatureC: "ballydidean",
+      uvIndex: "regional",
+      windGustMps: "local_mean",
+      windSpeedMps: "local_mean",
+    },
+    6,
+    "ballydidean",
+  );
+  const zero = observation(
+    4,
+    Object.fromEntries(metricKeys.map((key) => [key, 0])),
+    Object.fromEntries(metricKeys.map((key) => [key, "ballydidean"])),
+    0,
+    "regional",
+  );
+  const missing = observation(5, {}, {}, null, null);
+  const observations = [preferred, zero, missing];
+  const payload = forecastResponse(
+    "active",
+    { version: 1, temperature: true, wind: true, rain: true },
+    forecast,
+  );
+  const payloadSnapshot = structuredClone(payload);
+  const chartKeys = [
+    "temperature",
+    "wind",
+    "rain-rate",
+    "clouds",
+    "humidity",
+    "air-quality",
+    "uv-index",
+    "pressure",
+    "tide",
+  ];
+  // read every serialized line that drives the visible charts
+  const chartSeries = async (page) => Object.fromEntries(await Promise.all(chartKeys.map(
+    // retain stable chart ordering
+    async (key) => [
+      key,
+      JSON.parse(await page.locator(`[data-forecast-chart='${key}']`).getAttribute("data-forecast-series")),
+    ],
+  )));
+  const observationReads = () => fixture.state.requests.filter(
+    // count only projected graph recordings
+    (request) => request === "GET /api/v1/sites/ballydidean/forecast-observations",
+  ).length;
+
+  fixture.state.adjustmentMode = "active";
+  fixture.state.forecastObservations = observations;
+  fixture.state.forecastObservationsGeneratedAt = now.toISOString();
+  fixture.state.forecastPayload = payload;
+
+  try {
+    browser = await launchBrowser();
+
+    // prove the same historical splice on desktop and phone layouts
+    for (const viewport of [
+      { height: 1_000, width: 1_440 },
+      { height: 844, width: 390 },
+    ]) {
+      fixture.state.forecastObservations = structuredClone(observations);
+      fixture.state.forecastObservationsGeneratedAt = now.toISOString();
+      const readsBefore = observationReads();
+      const page = await createFixturePage(browser, { timezoneId: site.timezone, viewport });
+      const pageErrors = [];
+      // retain asynchronous parsing and redraw failures
+      page.on("pageerror", (error) => pageErrors.push(error.message));
+      await page.clock.install({ time: now });
+      await page.addInitScript(
+        // keep rendered values directly comparable to metric fixtures
+        ({ key, value }) => localStorage.setItem(key, JSON.stringify(value)),
+        {
+          key: UNIT_PREFERENCE_STORAGE_KEY,
+          value: {
+            precipitation: "millimeters",
+            pressure: "hectopascals",
+            temperature: "celsius",
+            waterLevel: "meters",
+            windSpeed: "meters_per_second",
+          },
+        },
+      );
+      await page.goto(fixture.origin, { waitUntil: "networkidle" });
+      assert.equal(observationReads(), readsBefore);
+      const observationResponse = page.waitForResponse(
+        // capture the exact projected body consumed by the forecast route
+        (response) => new URL(response.url()).pathname === "/api/v1/sites/ballydidean/forecast-observations",
+      );
+      await page.getByRole("link", { name: "Forecast", exact: true }).click();
+      const consumed = await (await observationResponse).json();
+      await page.locator('[data-forecast-charts][data-forecast-days="1"]').waitFor();
+      await page.waitForFunction(
+        // wait for the optional projection redraw after the required forecast renders
+        () => JSON.parse(document.querySelector("[data-forecast-chart='temperature']")?.getAttribute("data-forecast-series") ?? "[]")[1]?.values?.[3] === 30,
+      );
+      assert.equal(observationReads(), readsBefore + 1);
+      assert.deepEqual(consumed.data, observations);
+      assert.doesNotMatch(await page.locator("body").innerText(), /experimental/iu);
+
+      const adjusted = await chartSeries(page);
+      assert.deepEqual(adjusted.temperature.map((series) => series.values[3]), [13, 30]);
+      assert.deepEqual(adjusted.wind.map((series) => series.values[3]), [3, 7]);
+      assert.equal(adjusted["rain-rate"][0].values[3], 2);
+      assert.equal(adjusted.clouds[0].values[3], 30);
+      assert.equal(adjusted.humidity[0].values[3], 91);
+      assert.equal(adjusted["air-quality"][0].values[3], 10);
+      assert.equal(adjusted["uv-index"][0].values[3], 4);
+      assert.equal(adjusted.pressure[0].values[3], 6);
+      // keep genuine recorded zeros instead of treating them as missing
+      for (const key of chartKeys.filter((key) => key !== "tide")) {
+        assert.equal(
+          adjusted[key].every((series) => series.values[4] === 0),
+          true,
+          `${key} discarded a recorded zero`,
+        );
+      }
+      // bypass governed adjustments when a past field falls back to regional raw
+      assert.equal(adjusted.temperature[1].values[5], forecast[5].metrics.temperatureC);
+      assert.equal(adjusted.wind[0].values[5], forecast[5].metrics.windSpeedMps);
+      // leave future hours under their normal governed forecast behavior
+      assert.equal(adjusted.temperature[1].values[23], forecast[23].metrics.temperatureC + 2);
+      assert.equal(adjusted.wind[0].values[23], forecast[23].metrics.windSpeedMps + 0.4);
+
+      const grid = page.locator("[data-forecast-charts]");
+      await grid.focus();
+      await grid.press("Home");
+      // select the mixed-source historical hour
+      for (let index = 0; index < 3; index += 1) {
+        await grid.press("ArrowRight");
+      }
+      assert.match(await page.locator("[data-forecast-chart='temperature'] .forecast-chart-value").innerText(), /Feels like\s*13\s*°C[\s\S]*Air Temp\s*30\s*°C/iu);
+      assert.match(await page.locator("[data-forecast-chart='wind'] .forecast-chart-value").innerText(), /Wind\s*3\s*m\/s[\s\S]*Gust\s*7\s*m\/s/iu);
+      assert.match(await page.locator("[data-forecast-chart='humidity'] .forecast-chart-value").innerText(), /91\s*%/u);
+      assert.match(await page.locator("[data-forecast-chart='pressure'] .forecast-chart-value").innerText(), /\+6/u);
+
+      const toggle = page.getByRole("switch", { name: "Adjusted", exact: true });
+      await toggle.click();
+      await page.waitForFunction(
+        // wait for raw future temperature while retaining historical recordings
+        (value) => JSON.parse(document.querySelector("[data-forecast-chart='temperature']")?.getAttribute("data-forecast-series") ?? "[]")[1]?.values?.[23] === value,
+        forecast[23].metrics.temperatureC,
+      );
+      const raw = await chartSeries(page);
+      const times = JSON.parse(await grid.getAttribute("data-forecast-times"));
+      const pastIndices = times.slice(0, 24).flatMap(
+        // retain only hours behind the graph's regional now marker
+        (validAt, index) => Date.parse(validAt) < Date.parse(current.validAt) ? [index] : [],
+      );
+      // compare every chart family across the display modes
+      for (const key of chartKeys) {
+        // compare each rendered line independently
+        for (const [seriesIndex, series] of adjusted[key].entries()) {
+          // require identity at every completed hour
+          for (const index of pastIndices) {
+            assert.equal(
+              series.values[index],
+              raw[key][seriesIndex].values[index],
+              `${key} changed recorded hour ${String(index)} with the toggle`,
+            );
+          }
+        }
+      }
+      assert.notEqual(adjusted.temperature[1].values[23], raw.temperature[1].values[23]);
+      assert.notEqual(adjusted.wind[0].values[23], raw.wind[0].values[23]);
+      assert.deepEqual(adjusted.tide, raw.tide);
+      assert.equal(observationReads(), readsBefore + 1);
+
+      // range changes reuse the same bounded observation response
+      await page.getByRole("button", { name: "5 days", exact: true }).click();
+      await page.locator('[data-forecast-charts][data-forecast-days="5"]').waitFor();
+      await page.getByRole("button", { name: "Today", exact: true }).click();
+      await page.locator('[data-forecast-charts][data-forecast-days="1"]').waitFor();
+      assert.equal(observationReads(), readsBefore + 1);
+
+      fixture.state.forecastObservations = fixture.state.forecastObservations.map(
+        // update one recorded farm temperature for the scheduled refresh
+        (point) => point.validAt === preferred.validAt
+          ? { ...point, metrics: { ...point.metrics, temperatureC: 31 } }
+          : point,
+      );
+      fixture.state.forecastObservationsGeneratedAt = new Date(now.getTime() + 300_100).toISOString();
+      const refreshed = page.waitForResponse(
+        // await the five-minute observation refresh
+        (response) => new URL(response.url()).pathname === "/api/v1/sites/ballydidean/forecast-observations",
+      );
+      await page.clock.fastForward(300_100);
+      await refreshed;
+      await page.waitForFunction(
+        // require the refreshed recording in raw mode
+        () => JSON.parse(document.querySelector("[data-forecast-chart='temperature']")?.getAttribute("data-forecast-series") ?? "[]")[1]?.values?.[3] === 31,
+      );
+      assert.equal(observationReads(), readsBefore + 2);
+      await toggle.click();
+      assert.equal(await toggle.getAttribute("aria-checked"), "true");
+      assert.equal((await chartSeries(page)).temperature[1].values[3], 31);
+      assert.equal(observationReads(), readsBefore + 2);
+      assert.deepEqual(fixture.state.forecastPayload, payloadSnapshot);
+      assert.doesNotMatch(await page.locator("body").innerText(), /experimental/iu);
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+        0,
+      );
       assert.deepEqual(pageErrors, []);
       assert.equal((await page.screenshot()).byteLength > 1_000, true);
       await page.close();

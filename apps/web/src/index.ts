@@ -128,6 +128,215 @@ export interface WeatherRecord {
   readonly validAt: string;
 }
 
+// describe one recorded hourly projection without qualified forecast decisions
+export interface ForecastObservationPoint {
+  readonly validAt: string;
+  readonly metrics: Partial<WeatherRecord["metrics"]>;
+  readonly pressureChange3hHpa: number | null;
+  readonly sources: Partial<Record<WeatherMetricKey | "pressureChange3hHpa", "ballydidean" | "local_mean" | "regional">>;
+  readonly counts?: Partial<Record<WeatherMetricKey | "pressureChange3hHpa", Readonly<{ samples: number; stations: number }>>>;
+  readonly recordedThrough?: string;
+  readonly partial?: boolean;
+}
+
+// limit history to the scalar families shown by the weather charts
+const FORECAST_OBSERVATION_METRICS: readonly WeatherMetricKey[] = [
+  "temperatureC", "apparentTemperatureC", "windSpeedMps", "windGustMps", "windDirectionDegrees",
+  "precipitationRateMmPerHour", "cloudCoverPercent", "relativeHumidityPercent",
+  "pm25MicrogramsPerCubicMeter", "uvIndex", "pressureHpa",
+];
+const FORECAST_OBSERVATION_PROVIDERS = new Set([
+  "weatherflow-tempest", "ambient-weather-network", "weather-underground", "netatmo-weathermap", "purpleair",
+]);
+
+// reduce complete paged recordings before selecting an independent tier for every metric
+export function buildForecastObservationPoints(records: readonly WeatherRecord[], from: string, through: string): readonly ForecastObservationPoint[] {
+  const first = Date.parse(from);
+  const cutoff = Date.parse(through);
+  // refuse unbounded or unaligned projection geometry
+  if (!Number.isFinite(first) || !Number.isFinite(cutoff) || first % 3_600_000 !== 0 || cutoff < first || cutoff - first > 25 * 3_600_000) {
+    throw new RangeError("Forecast observation window is invalid");
+  }
+  const revisions = new Map<string, WeatherRecord>();
+  // retain the newest revision once without treating historical age as a sensor outage
+  for (const record of records) {
+    const valid = Date.parse(record.validAt);
+    const received = Date.parse(record.receivedAt);
+    const source = record.provenance;
+    const physical = source.sourceKind === "physical_sensor" && !source.sourceKey.startsWith("rain-target-") &&
+      (isFarmCurrentRecord(record) ? source.sourceKey === "ecowitt-88f15505d89f-local-live-v1" :
+        source.stationSlug !== "ballydidean-ecowitt" && FORECAST_OBSERVATION_PROVIDERS.has(source.providerKey));
+    const regional = source.sourceKind === "model_current" && source.providerKey === "open-meteo" && source.stationSlug === "open-meteo-virtual";
+    // exclude future samples unsupported sources and out-of-window context
+    if ((!physical && !regional) || !Number.isFinite(valid) || !Number.isFinite(received) || valid < first - 3 * 3_600_000 || valid >= cutoff || received > cutoff) {
+      continue;
+    }
+    const key = `${source.sourceId}/${valid}`;
+    const previous = revisions.get(key);
+    // a repeated logical row never receives an extra averaging vote
+    if (previous === undefined || Date.parse(previous.receivedAt) < received) {
+      revisions.set(key, record);
+    }
+  }
+  const bins = new Map<string, WeatherRecord[]>();
+  // retain separate source-local hourly bins for pressure datums and sampling cadence
+  for (const record of revisions.values()) {
+    const key = `${record.provenance.sourceId}/${Math.floor(Date.parse(record.validAt) / 3_600_000) * 3_600_000}`;
+    const bin = bins.get(key) ?? [];
+    bin.push(record);
+    bins.set(key, bin);
+  }
+  const points: ForecastObservationPoint[] = [];
+  // visit every elapsed hourly cell including the explicitly partial current hour
+  for (let hour = first; hour < cutoff; hour += 3_600_000) {
+    const metrics: { -readonly [Key in WeatherMetricKey]?: number | null } = {};
+    const sources: ForecastObservationPoint["sources"] = {};
+    const counts: NonNullable<ForecastObservationPoint["counts"]> = {};
+    const candidates = new Map<WeatherMetricKey | "pressureChange3hHpa", { value: number; samples: number; record: WeatherRecord }[]>();
+    // aggregate each exact source before choosing one source per station
+    for (const [key, rows] of bins) {
+      const binHour = Number(key.slice(key.lastIndexOf("/") + 1));
+      // gust maxima describe the preceding hour while scalars describe the labeled hour
+      if (binHour !== hour && binHour !== hour - 3_600_000) {
+        continue;
+      }
+      const latest = rows.toSorted((left, right) => Date.parse(right.validAt) - Date.parse(left.validAt))[0]!;
+      // collect one valid aggregate for each metric without converting report rain increments
+      for (const metric of FORECAST_OBSERVATION_METRICS) {
+        // keep preceding-hour gusts separate from the scalar hourly bin
+        if (binHour !== (metric === "windGustMps" ? hour - 3_600_000 : hour)) {
+          continue;
+        }
+        const values = rows.flatMap((record) => {
+          const value = usableCurrentMetric(record.metrics[metric], metric);
+          return value === null ? [] : [value];
+        });
+        const value = values.length === 0 ? null : metric === "windGustMps" ? Math.max(...values) :
+          metric === "windDirectionDegrees" ? meanCurrentWindDirection(values) : meanCurrentValues(values);
+        // missing metrics never disqualify the other working source readings
+        if (value !== null) {
+          const available = candidates.get(metric) ?? [];
+          available.push({ value, samples: values.length, record: latest });
+          candidates.set(metric, available);
+        }
+      }
+      // pressure changes never cross station source identities or an intervening empty hour
+      if (binHour === hour) {
+        const window = [0, 1, 2, 3].map((offset) => bins.get(`${latest.provenance.sourceId}/${hour - offset * 3_600_000}`) ?? []);
+        const pressures = window.map((samples) => meanCurrentValues(samples.flatMap((record) => {
+          const value = usableCurrentMetric(record.metrics.pressureHpa, "pressureHpa");
+          return value === null ? [] : [value];
+        })));
+        // require all four source-local hourly bins before computing a tendency
+        if (pressures.every((value) => value !== null)) {
+          const available = candidates.get("pressureChange3hHpa") ?? [];
+          const value = pressures[0]! - pressures[3]!;
+          // reject impossible tendencies without erasing valid scalar pressure
+          if (Math.abs(value) <= 20) {
+            available.push({ value, samples: window.reduce((total, samples) => total + samples.filter((record) => usableCurrentMetric(record.metrics.pressureHpa, "pressureHpa") !== null).length, 0), record: latest });
+            candidates.set("pressureChange3hHpa", available);
+          }
+        }
+      }
+    }
+    let pressureChange3hHpa: number | null = null;
+    // apply farm precedence and equal station weighting separately for every scalar and tendency
+    for (const [metric, available] of candidates) {
+      available.sort((left, right) => Date.parse(right.record.validAt) - Date.parse(left.record.validAt) || left.record.provenance.sourceKey.localeCompare(right.record.provenance.sourceKey));
+      const farm = available.find((sample) => isFarmCurrentRecord(sample.record));
+      const stations = new Map<string, typeof available[number]>();
+      // collapse duplicate provider feeds into one newest usable station aggregate
+      for (const sample of available) {
+        // regional rows and the farm never contribute a second local vote
+        if (sample.record.provenance.sourceKind === "physical_sensor" && !isFarmCurrentRecord(sample.record) && !stations.has(sample.record.provenance.stationSlug)) {
+          stations.set(sample.record.provenance.stationSlug, sample);
+        }
+      }
+      const regional = available.find((sample) => sample.record.provenance.sourceKind === "model_current");
+      const selected = farm !== undefined ? [farm] : stations.size > 0 ? [...stations.values()] : regional === undefined ? [] : [regional];
+      const values = selected.map((sample) => sample.value);
+      const value = values.length === 0 ? null : metric === "windDirectionDegrees" ? meanCurrentWindDirection(values) : meanCurrentValues(values);
+      // retain a missing circular mean rather than manufacturing north for opposing winds
+      if (value === null) {
+        continue;
+      }
+      // the pressure chart consumes a tendency rather than an absolute pressure datum
+      if (metric === "pressureChange3hHpa") {
+        pressureChange3hHpa = value;
+      } else {
+        metrics[metric] = value;
+      }
+      sources[metric] = farm !== undefined ? "ballydidean" : stations.size > 0 ? "local_mean" : "regional";
+      counts[metric] = { samples: selected.reduce((total, sample) => total + sample.samples, 0), stations: selected.length };
+    }
+    points.push({ validAt: new Date(hour).toISOString(), metrics, pressureChange3hHpa, sources, counts, recordedThrough: through, partial: hour + 3_600_000 > cutoff });
+  }
+  return points;
+}
+
+// validate the compact edge projection atomically before it can replace plotted forecast values
+export function parseForecastObservationResponse(value: unknown): readonly ForecastObservationPoint[] {
+  const response = forecastAdjustmentObject(value);
+  const generated = Date.parse(typeof response?.generatedAt === "string" ? response.generatedAt : "");
+  const data = response?.data;
+  // refuse malformed or unbounded envelopes instead of accepting partial projections
+  if (!Number.isFinite(generated) || !Array.isArray(data) || data.length > 25) {
+    throw new RangeError("Forecast observations are invalid");
+  }
+  const seen = new Set<number>();
+  // bind every point to its actual recording window metric domains and provenance
+  for (const item of data) {
+    const point = forecastAdjustmentObject(item);
+    const valid = Date.parse(typeof point?.validAt === "string" ? point.validAt : "");
+    const metrics = forecastAdjustmentObject(point?.metrics);
+    const sources = forecastAdjustmentObject(point?.sources);
+    // a future duplicate or malformed point invalidates the entire optional projection
+    if (point === null || !Number.isFinite(valid) || valid % 3_600_000 !== 0 || valid >= generated || generated - valid > 25 * 3_600_000 || seen.has(valid) || metrics === null || sources === null ||
+      (point.pressureChange3hHpa !== null && (typeof point.pressureChange3hHpa !== "number" || !Number.isFinite(point.pressureChange3hHpa) || Math.abs(point.pressureChange3hHpa) > 20))) {
+      throw new RangeError("Forecast observation point is invalid");
+    }
+    // bind optional partial-hour provenance to the exact projection timestamp
+    if ((point.recordedThrough !== undefined && point.recordedThrough !== response!.generatedAt) ||
+      (point.partial !== undefined && (typeof point.partial !== "boolean" || point.partial !== (valid + 3_600_000 > generated)))) {
+      throw new RangeError("Forecast observation coverage is invalid");
+    }
+    const counts = point.counts === undefined ? null : forecastAdjustmentObject(point.counts);
+    // reject malformed optional counts rather than exposing an unsupported completeness claim
+    if (point.counts !== undefined && counts === null) {
+      throw new RangeError("Forecast observation counts are invalid");
+    }
+    // retain only bounded count metadata associated with actual values
+    for (const [metric, value] of Object.entries(counts ?? {})) {
+      const count = forecastAdjustmentObject(value);
+      // sample counts cannot be fractional zero private or detached from a recorded tier
+      if (!Object.hasOwn(sources, metric) || count === null || !Number.isSafeInteger(count.samples) || !Number.isSafeInteger(count.stations) ||
+        (count.samples as number) < 1 || (count.stations as number) < 1 || (count.stations as number) > (count.samples as number) || (count.samples as number) > 64_000) {
+        throw new RangeError("Forecast observation counts are invalid");
+      }
+    }
+    seen.add(valid);
+    // validate each scalar with the same normalized domains used for current recordings
+    for (const [metric, reading] of Object.entries(metrics)) {
+      // reject unsupported metrics nonnumbers and absent provenance
+      if (!FORECAST_OBSERVATION_METRICS.includes(metric as WeatherMetricKey) || (reading !== null && (typeof reading !== "number" || usableCurrentMetric(reading, metric as WeatherMetricKey) === null || !Object.hasOwn(sources, metric)))) {
+        throw new RangeError("Forecast observation metric is invalid");
+      }
+    }
+    // retain only explicit recorded tiers never qualified or forecast metadata
+    for (const [metric, source] of Object.entries(sources)) {
+      // reject unknown labels or source claims without an associated actual value
+      if (!["ballydidean", "local_mean", "regional"].includes(source as string) || (metric === "pressureChange3hHpa" ? point.pressureChange3hHpa === null : !Object.hasOwn(metrics, metric) || metrics[metric] === null)) {
+        throw new RangeError("Forecast observation source is invalid");
+      }
+    }
+    // every measured pressure tendency also requires a provenance tier
+    if (point.pressureChange3hHpa !== null && !Object.hasOwn(sources, "pressureChange3hHpa")) {
+      throw new RangeError("Forecast observation pressure source is invalid");
+    }
+  }
+  return data as readonly ForecastObservationPoint[];
+}
+
 // keep experimental projections private rather than trusting serialized api metadata
 const solarCloudValues = new WeakMap<WeatherRecord, number>();
 
@@ -940,6 +1149,9 @@ export interface DashboardState {
   readonly adminAdjustmentScorecardState: ForecastAdjustmentScorecardLoadState;
   readonly forecast: readonly WeatherRecord[];
   readonly forecastPressureContext: readonly WeatherRecord[];
+  readonly forecastObservations: readonly ForecastObservationPoint[];
+  readonly forecastObservationsReady: boolean;
+  readonly forecastObservationsLoading: boolean;
   readonly forecastDays: ForecastDays;
   readonly history: readonly WeatherRecord[];
   readonly loading: boolean;
@@ -1099,6 +1311,9 @@ const EMPTY_STATE: DashboardState = {
   adminAdjustmentScorecardState: "loading",
   forecast: [],
   forecastPressureContext: [],
+  forecastObservations: [],
+  forecastObservationsReady: false,
+  forecastObservationsLoading: false,
   forecastDays: 1,
   history: [],
   loading: false,
@@ -3550,6 +3765,8 @@ export class WeatherDashboardController {
   #currentRefresh: Promise<void> | null = null;
   #currentGeneration = 0;
   #lastForecastRefreshAt = 0;
+  #lastForecastObservationRefreshAt = 0;
+  #forecastObservationRequest: Promise<readonly ForecastObservationPoint[]> | null = null;
   #view: WeatherView;
   #state: DashboardState;
 
@@ -3672,6 +3889,12 @@ export class WeatherDashboardController {
     const generation = this.#currentGeneration;
     const refreshForecast = this.#state.forecastAdjustmentMode === "raw" &&
       Date.now() - this.#lastForecastRefreshAt >= REGIONAL_FORECAST_REFRESH_MS;
+    const refreshObservations = this.#view === "forecast" &&
+      Date.now() - this.#lastForecastObservationRefreshAt >= 5 * 60_000;
+    // throttle failed history attempts without repeatedly scanning the archive
+    if (refreshObservations) {
+      void this.refreshForecastObservations(generation);
+    }
     // throttle failed forecast attempts as well as successful reads
     if (refreshForecast) {
       this.#lastForecastRefreshAt = Date.now();
@@ -3728,6 +3951,40 @@ export class WeatherDashboardController {
       await refresh;
     } finally {
       this.#currentRefresh = null;
+    }
+  }
+
+  // refresh optional recordings without blocking current conditions or future forecasts
+  private async refreshForecastObservations(generation: number): Promise<void> {
+    const site = this.#state.selectedSite;
+    const days = this.#state.forecastDays;
+    // keep archive reads off other routes and incomplete product initialization
+    if (site === null || this.#view !== "forecast") {
+      return;
+    }
+    this.#lastForecastObservationRefreshAt = Date.now();
+    const request = this.#forecastObservationRequest ?? getForecastObservations(this.#fetcher, this.#apiBaseUrl, site.slug);
+    this.#forecastObservationRequest = request;
+    this.patch({ forecastObservationsLoading: true });
+    // fence both success and failure against later routes and forecast horizons
+    const current = (): boolean => generation === this.#currentGeneration && this.#view === "forecast" &&
+      this.#state.selectedSite?.slug === site.slug && this.#state.forecastDays === days;
+    try {
+      const observations = await request;
+      // late optional data must not commit an obsolete route or day
+      if (current()) {
+        this.patch({ forecastObservations: observations, forecastObservationsReady: true, forecastObservationsLoading: false });
+      }
+    } catch {
+      // retain genuine last-good recordings while exposing the failed refresh honestly
+      if (current()) {
+        this.patch({ forecastObservationsReady: false, forecastObservationsLoading: false });
+      }
+    } finally {
+      // only the owner of the shared request clears its in-flight identity
+      if (this.#forecastObservationRequest === request) {
+        this.#forecastObservationRequest = null;
+      }
     }
   }
 
@@ -3860,6 +4117,10 @@ export class WeatherDashboardController {
     // fence background reads from the former forecast range
     this.#currentGeneration += 1;
     this.patch({ error: null, forecastDays: days, loading: true });
+    // adopt the same pending archive read without issuing another horizon-dependent request
+    if (this.#forecastObservationRequest !== null) {
+      void this.refreshForecastObservations(this.#currentGeneration);
+    }
 
     try {
       const response = await getForecastJson(
@@ -4139,7 +4400,7 @@ export class WeatherDashboardController {
       return;
     }
 
-    this.#currentGeneration += 1;
+    const generation = ++this.#currentGeneration;
 
     this.patch({
       error: null,
@@ -4153,6 +4414,11 @@ export class WeatherDashboardController {
         ? null
         : this.#state.adminAdjustmentScorecardPublicationState,
     });
+
+    // optional archive work cannot hold the required weather products in loading state
+    if (this.#view === "forecast") {
+      void this.refreshForecastObservations(generation);
+    }
 
     // start the private location check without delaying weather rendering
     if (this.#view === "home" && !this.#isAdmin) {
@@ -4176,6 +4442,10 @@ export class WeatherDashboardController {
           buildCurrentUrl(this.#apiBaseUrl, site.slug, {}),
         ).then((response) => {
           const responseSite = requireProductSite(response.site);
+          // ignore current responses from a superseded full-weather load
+          if (generation !== this.#currentGeneration) {
+            return response;
+          }
           const forecastAdjustmentMode = this.#state.forecastAdjustmentMode;
           const inputs = currentWeatherIconInputs(response.data, forecastAdjustmentMode, false, this.#state.forecast);
           const cachedNowIcon = inputs === null ? null : { ...inputs, cachedAt: Date.now(), forecastAdjustmentMode };
@@ -4249,6 +4519,10 @@ export class WeatherDashboardController {
           )
           : Promise.resolve(null),
       ]);
+      // an older route or horizon cannot replace a newer completed load
+      if (generation !== this.#currentGeneration) {
+        return;
+      }
       const responseSite = requireProductSite(
         current?.site ?? dailyPrecipitation?.site ?? forecast?.site ?? tides?.site ?? trends?.site ?? site,
       );
@@ -4301,7 +4575,10 @@ export class WeatherDashboardController {
     } catch (error) {
       // keep cold artwork loading until current settles even when a sibling fails first
       await pendingCurrent?.catch(() => null);
-      this.fail(error);
+      // ignore failures from a superseded full-weather load
+      if (generation === this.#currentGeneration) {
+        this.fail(error);
+      }
     }
   }
 
@@ -5691,7 +5968,7 @@ function renderCloudsCondition(state: DashboardState): string {
 
   return renderConditionCard({
     adjusted: forecastValuesAreAdjusted([...currentCloud === undefined ? [] : [currentCloud], ...forecast], ["cloudCoverPercent"], useAdjustments),
-    band: sunlightEstimate ? { ...cloudBand(cover), detail: "Sunlight estimate · experimental" } : cloudBand(cover),
+    band: sunlightEstimate ? { ...cloudBand(cover), detail: "Sunlight estimate" } : cloudBand(cover),
     className: `compact-condition clouds-condition${sunlightEstimate ? " solar-cloud-estimate" : ""}`,
     forecast: {
       readings: [
@@ -6298,10 +6575,19 @@ function renderForecast(state: DashboardState): string {
   }
 
   const days = state.forecastDays ?? 1;
-  const reference = state.current.find(
-    // align the timeline with the current model day
+  const regionalClock = state.current.find(
+    // retain the current regional clock independently of optional archive availability
     (record) => record.provenance.sourceKind === "model_current",
-  )?.validAt ?? state.forecast[0]?.validAt;
+  )?.validAt;
+  const recordedClock = state.forecastObservations?.at(-1)?.recordedThrough;
+  const clocks = [regionalClock, recordedClock].filter(
+    // stale retained history cannot freeze a newer regional day or current-time line
+    (value): value is string => value !== undefined && Number.isFinite(Date.parse(value)),
+  );
+  const reference = clocks.length === 0 ? state.forecast[0]?.validAt : new Date(Math.max(...clocks.map(
+    // choose the newest trusted clock without renewing the actual observation timestamps
+    (value) => Date.parse(value),
+  ))).toISOString();
   const hours = reference === undefined
     ? []
     : forecastForSiteDays(
@@ -6321,7 +6607,7 @@ function renderForecast(state: DashboardState): string {
   }
 
   const useForecastAdjustments = state.forecastAdjustmentMode !== "raw";
-  const charts = buildForecastCharts(hours, state.tides, useForecastAdjustments, state.forecast, state.forecastPressureContext ?? []);
+  const charts = buildForecastCharts(hours, state.tides, useForecastAdjustments, state.forecast, state.forecastPressureContext ?? [], state.forecastObservations ?? [], Date.parse(reference ?? new Date().toISOString()));
   const hourlyTimes = hours.map(
     // retain one shared continuous clock
     (record) => record.validAt,
@@ -6343,6 +6629,7 @@ function renderForecast(state: DashboardState): string {
   const selectedTime = interpolateForecastInstant(forecastTimes, currentPosition);
   return `
     <section class="panel forecast-panel" aria-label="Weather forecast">
+      ${state.forecastObservationsLoading ? '<p class="condition-detail">Loading recorded history; regional values are shown.</p>' : state.forecastObservationsReady === false ? `<p class="condition-detail">Recorded history update is unavailable; ${state.forecastObservations?.length ? "latest available recordings and regional values" : "regional values"} are shown.</p>` : ""}
       <div class="forecast-chart-shell">
         <div class="forecast-current-time-line" aria-hidden="true"></div>
         <div class="forecast-shared-crosshair" aria-hidden="true"></div>
@@ -6711,19 +6998,19 @@ function buildForecastCharts(
   useAdjustments: boolean,
   records: readonly WeatherRecord[],
   pressureContext: readonly WeatherRecord[],
+  observations: readonly ForecastObservationPoint[],
+  now: number,
 ): readonly ForecastChartDefinition[] {
   const cloudsAdjusted = forecastValuesAreAdjusted(hours, ["cloudCoverPercent"], useAdjustments);
-  // identify accepted local experiments without changing the global gold-icon preference
-  const localLabel = (metric: LocalForecastBiasMetric, label: string): string =>
-    useAdjustments && hours.some(
-      // only forward hours marked by the local estimator can expose an experimental label
-      (record) => localForecastBiases.get(record)?.[metric] !== undefined &&
-        !(record.adjustment?.state === "active" && record.adjustment.appliedMetrics.includes(metric as ForecastAdjustmentMetric)),
-    ) ? `${label} · experimental` : label;
-  // apply the selected adjustment mode to each displayed metric
+  const observed = new Map(observations.map((point) => [Date.parse(point.validAt), point]));
+  // recorded past never inherits forecast corrections or the persisted adjustment mode
+  const value = (record: WeatherRecord, key: WeatherMetricKey): number | null => Date.parse(record.validAt) < now
+    ? observed.get(Date.parse(record.validAt))?.metrics[key] ?? forecastMetricValue(record, key, false)
+    : forecastMetricValue(record, key, useAdjustments);
+  // apply the selected adjustment mode only beyond the recorded past
   const metric = (key: WeatherMetricKey): readonly (number | null)[] => hours.map(
     // align every weather metric to the shared hourly index
-    (record) => forecastMetricValue(record, key, useAdjustments),
+    (record) => value(record, key),
   );
 
   const contextChanges = forecastPressureChanges(pressureContext);
@@ -6733,9 +7020,12 @@ function buildForecastCharts(
   ));
   const pressureChanges = forecastPressureChanges(records, hours).map(
     // correct completed windows only after retaining the isolated prior-vintage fallback
-    (change, index) => forecastPressureChangeValue(hours[index]!, change ?? (index < 3
-      ? contextByHour.get(`${hours[index]!.provenance.sourceId}/${Date.parse(hours[index]!.validAt)}`) ?? null
-      : null), useAdjustments),
+    (change, index) => {
+      const record = hours[index]!;
+      const raw = change ?? (index < 3 ? contextByHour.get(`${record.provenance.sourceId}/${Date.parse(record.validAt)}`) ?? null : null);
+      // completed observed windows take precedence without crossing pressure datums
+      return Date.parse(record.validAt) < now ? observed.get(Date.parse(record.validAt))?.pressureChange3hHpa ?? raw : forecastPressureChangeValue(record, raw, useAdjustments);
+    },
   );
   const pressureExtent = Math.max(6, ...pressureChanges.map(
     // center the signed scale on steady pressure without clipping rapid changes
@@ -6779,8 +7069,8 @@ function buildForecastCharts(
         label: "Rate",
         values: hours.map(
           // prefer the direct forecast rate
-          (record) => forecastMetricValue(record, "precipitationRateMmPerHour", useAdjustments) ??
-            forecastMetricValue(record, "precipitationMm", useAdjustments),
+          (record) => value(record, "precipitationRateMmPerHour") ??
+            forecastMetricValue(record, "precipitationMm", Date.parse(record.validAt) >= now && useAdjustments),
         ),
       }],
     },
@@ -6790,7 +7080,7 @@ function buildForecastCharts(
       format: "cloudCover",
       icon: "cloud",
       key: "clouds",
-      label: cloudsAdjusted ? "Clouds · experimental" : "Clouds",
+      label: "Clouds",
       series: [{ label: "Cover", values: metric("cloudCoverPercent") }],
     },
     {
@@ -6799,7 +7089,7 @@ function buildForecastCharts(
       format: "humidity",
       icon: "humidity_percentage",
       key: "humidity",
-      label: localLabel("relativeHumidityPercent", "Humidity"),
+      label: "Humidity",
       series: [{ label: "Humidity", values: metric("relativeHumidityPercent") }],
       temperaturesC: metric("temperatureC"),
     },
@@ -6809,7 +7099,7 @@ function buildForecastCharts(
       format: "airQuality",
       icon: "masks",
       key: "air-quality",
-      label: localLabel("pm25MicrogramsPerCubicMeter", "Air quality"),
+      label: "Air quality",
       series: [{ label: "PM2.5", values: metric("pm25MicrogramsPerCubicMeter") }],
     },
     {
@@ -6818,7 +7108,7 @@ function buildForecastCharts(
       format: "uvIndex",
       icon: "wb_sunny",
       key: "uv-index",
-      label: localLabel("uvIndex", "UV index"),
+      label: "UV index",
       series: [{ label: "Index", values: metric("uvIndex") }],
     },
     {
@@ -6827,7 +7117,7 @@ function buildForecastCharts(
       format: "pressureChange",
       icon: "speed",
       key: "pressure",
-      label: localLabel("pressureChange3hHpa", "Pressure"),
+      label: "Pressure",
       series: [{ label: "3h change", values: pressureChanges }],
     },
     {
@@ -14377,6 +14667,24 @@ async function getHomeNetworkViewerContext(fetcher: typeof fetch, apiBaseUrl: st
   } finally {
     clearTimeout(timeout);
     abort.abort();
+  }
+}
+
+// load only the compact recorded projection rather than paging archives in every browser
+async function getForecastObservations(fetcher: typeof fetch, apiBaseUrl: string, siteSlug: string): Promise<readonly ForecastObservationPoint[]> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 35_000);
+  try {
+    const response = await fetcher(`${normalizeBaseUrl(apiBaseUrl)}/sites/${encodeURIComponent(siteSlug)}/forecast-observations`, {
+      headers: { accept: "application/json" }, signal: abort.signal,
+    });
+    // an optional history failure never removes the separately loaded future forecast
+    if (!response.ok) {
+      throw new Error("Recorded forecast history is unavailable");
+    }
+    return parseForecastObservationResponse(await response.json());
+  } finally {
+    clearTimeout(timer);
   }
 }
 
