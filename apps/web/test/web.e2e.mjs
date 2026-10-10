@@ -4704,6 +4704,10 @@ test("raw current forecast fallback rejects wrong stale missing and invalid hour
 test("raw regional current cards refresh hourly products on the background forecast cadence", { timeout: 120_000 }, async () => {
   const fixture = await startFixtureServer();
   let browser;
+  // match the regional product without absorbing the archive endpoint
+  const isForecastProductRequest = (request) => /^GET \/api\/v1\/sites\/ballydidean\/forecast(?:\?|$)/u.test(request);
+  // match only the optional recorded-history projection
+  const isForecastObservationRequest = (request) => request === "GET /api/v1/sites/ballydidean/forecast-observations";
   fixture.state.currentRecords = [current, physicalCurrent];
   fixture.state.forecastRecords = forecast.map(
     // publish one recent regional run with quiet initial current-hour readings
@@ -4739,27 +4743,39 @@ test("raw regional current cards refresh hourly products on the background forec
     assert.equal(await page.locator("[data-condition='uv-index'] .condition-primary").innerText(), "3");
     assert.match(await page.locator(".section-nav-weather-icon").getAttribute("src") ?? "", /09-heavy-rain\.svg$/u);
     const background = fixture.state.requests.slice(before.length);
-    assert.equal(background.filter((url) => url.includes("/sites/ballydidean/forecast")).length, 1);
+    assert.equal(background.filter(isForecastProductRequest).length, 1);
+    assert.equal(background.filter(isForecastObservationRequest).length, 0);
     assert.equal(background.some((url) => url.includes("/tides") || url.includes("/daily-precipitation")), false);
+    const initialObservation = page.waitForResponse(
+      // await the separate optional archive request
+      (response) => new URL(response.url()).pathname === "/api/v1/sites/ballydidean/forecast-observations",
+    );
     await page.getByRole("link", { name: "Forecast", exact: true }).click();
+    await initialObservation;
     const grid = page.locator("[data-forecast-charts]");
     await grid.focus();
     await page.keyboard.press("ArrowRight");
     const selected = await grid.getAttribute("data-forecast-selected-position");
     const forecastReads = fixture.state.requests.filter(
       // count only regional product reads
-      (url) => url.includes("/sites/ballydidean/forecast"),
+      isForecastProductRequest,
     ).length;
+    const observationReads = fixture.state.requests.filter(isForecastObservationRequest).length;
     const nextForecast = page.waitForResponse(
       // await the next regional forecast refresh
-      (response) => response.url().includes("/sites/ballydidean/forecast") && response.status() === 200,
+      (response) => new URL(response.url()).pathname === "/api/v1/sites/ballydidean/forecast" && response.status() === 200,
+    );
+    const nextObservation = page.waitForResponse(
+      // await the independent five-minute archive refresh
+      (response) => new URL(response.url()).pathname === "/api/v1/sites/ballydidean/forecast-observations" && response.status() === 200,
     );
     await page.clock.fastForward(15 * 60_000);
-    await nextForecast;
+    await Promise.all([nextForecast, nextObservation]);
     assert.equal(fixture.state.requests.filter(
       // require one bounded refresh per interval
-      (url) => url.includes("/sites/ballydidean/forecast"),
+      isForecastProductRequest,
     ).length, forecastReads + 1);
+    assert.equal(fixture.state.requests.filter(isForecastObservationRequest).length, observationReads + 1);
     assert.equal(await grid.getAttribute("data-forecast-selected-position"), selected);
     assert.equal(await grid.evaluate(
       // preserve the keyboard interaction through the redraw
@@ -4947,11 +4963,42 @@ test("forecast switch stays accessibly named Adjusted and fail-raw on desktop an
         (await page.locator('[data-forecast-chart="temperature"] [data-forecast-value="0"]').textContent())?.trim(),
         adjustedTemperature,
       );
-      assert.notEqual(
+      assert.equal(
         (await page.locator('[data-forecast-chart="wind"] [data-forecast-value="0"]').textContent())?.trim(),
         adjustedWind,
       );
       assert.equal(await page.locator("[data-forecast-adjustment-status]").count(), 0);
+
+      await regionalToggle.click();
+      assert.equal(await regionalToggle.getAttribute("aria-checked"), "true");
+      const currentPosition = Number(await forecastScrubber.getAttribute("data-forecast-current-position"));
+      const futureIndex = Math.ceil(currentPosition);
+      const finalHour = Number(await forecastScrubber.getAttribute("aria-valuemax")) - 1;
+      assert.equal(Number.isFinite(currentPosition) && futureIndex <= finalHour, true);
+      await forecastScrubber.press("Home");
+      // scrub to the first actual hour beyond the graph's now marker
+      for (let index = 0; index < futureIndex; index += 1) {
+        await forecastScrubber.press("ArrowRight");
+      }
+      assert.equal(Number(await forecastScrubber.getAttribute("aria-valuenow")), futureIndex);
+      const futureTemperature = (await page.locator('[data-forecast-chart="temperature"] [data-forecast-value="1"]').textContent())?.trim();
+      const futureFeelsLike = (await page.locator('[data-forecast-chart="temperature"] [data-forecast-value="0"]').textContent())?.trim();
+      const futureWind = (await page.locator('[data-forecast-chart="wind"] [data-forecast-value="0"]').textContent())?.trim();
+      await regionalToggle.click();
+      assert.equal(await regionalToggle.getAttribute("aria-checked"), "false");
+      assert.equal(Number(await forecastScrubber.getAttribute("aria-valuenow")), futureIndex);
+      assert.equal(
+        (await page.locator('[data-forecast-chart="temperature"] [data-forecast-value="0"]').textContent())?.trim(),
+        futureFeelsLike,
+      );
+      assert.notEqual(
+        (await page.locator('[data-forecast-chart="temperature"] [data-forecast-value="1"]').textContent())?.trim(),
+        futureTemperature,
+      );
+      assert.notEqual(
+        (await page.locator('[data-forecast-chart="wind"] [data-forecast-value="0"]').textContent())?.trim(),
+        futureWind,
+      );
 
       // preserve the preference across reloads and both forecast-bearing routes
       await page.reload({ waitUntil: "networkidle" });
