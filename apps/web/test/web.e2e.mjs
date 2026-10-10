@@ -9581,18 +9581,23 @@ test("desktop navigation aligns with the first visible route content", { timeout
   // preserve the sticky viewport inset after the document scrolls
   const assertStickyInset = async (page, label) => {
     await page.evaluate(() => window.scrollTo(0, Math.min(400, document.documentElement.scrollHeight - innerHeight)));
-    assert.deepEqual(
-      await page.locator(".section-nav").evaluate(
-        // capture the active sticky position
-        (navigation) => ({
-          computedTop: getComputedStyle(navigation).top,
+    const layout = await page.locator(".section-nav").evaluate(
+      // capture the active sticky position
+      (navigation) => {
+        const masthead = document.querySelector(".home-masthead, .forecast-masthead");
+        const mastheadBottom = masthead === null ? 0 : masthead.getBoundingClientRect().bottom;
+        return {
+          computedTop: Number.parseFloat(getComputedStyle(navigation).top),
+          expectedTop: mastheadBottom + 16,
+          mastheadBottom,
           position: getComputedStyle(navigation).position,
           top: navigation.getBoundingClientRect().top,
-        }),
-      ),
-      { computedTop: "16px", position: "sticky", top: 16 },
-      label,
+        };
+      },
     );
+    assert.equal(layout.position, "sticky", `${label}: ${JSON.stringify(layout)}`);
+    assert.ok(Math.abs(layout.computedTop - layout.expectedTop) < 0.25, `${label}: ${JSON.stringify(layout)}`);
+    assert.ok(Math.abs(layout.top - layout.expectedTop) < 0.25, `${label}: ${JSON.stringify(layout)}`);
     await page.evaluate(() => window.scrollTo(0, 0));
   };
   // retain the fixed bottom navigation below the desktop breakpoint
