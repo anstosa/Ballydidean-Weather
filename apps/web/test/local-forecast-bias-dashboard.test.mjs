@@ -235,3 +235,65 @@ test("local projections expire independently without changing clean chart labels
   assert.doesNotMatch(chart(html, "humidity").markup, /experimental/u);
   assert.doesNotMatch(chart(html, "air-quality").markup, /experimental/u);
 });
+
+// read only the family icon marker from one rendered chart or homepage card
+function gold(html, key, view = "forecast") {
+  const markup = view === "forecast" ? chart(html, key).markup : html.match(new RegExp(`<article[^>]*data-condition="${key}"[\\s\\S]*?<\\/article>`, "u"))?.[0];
+  assert.ok(markup);
+  return markup.includes("forecast-adjusted-icon");
+}
+
+// every family marker must agree with a real numeric difference anywhere in its plotted series
+test("forecast gold tracks changed plotted values not model state or selected mode", (context) => {
+  context.mock.timers.enable({ apis: ["Date"], now });
+  const input = state();
+  const equal = state({ current: [
+    record("physical_sensor", "equal-farm", now.toISOString(), {}, { pressureChange3hHpa: -0.5 }),
+    record("model_current", "equal-regional", now.toISOString()),
+  ], forecast: input.forecast.map(
+    // genuine active temperature outputs can be numerically identical to regional values
+    (item) => ({ ...item, temperatureAdjustment: { state: "active", correctedTemperatureC: item.metrics.temperatureC } }),
+  ) });
+  const expired = { ...input, current: input.current.map(
+    // stale observations cannot leave local experiment markers behind
+    (item) => ({ ...item, freshness: { ...item.freshness, status: "stale" } }),
+  ), forecast: equal.forecast };
+  // include ordinary nonzero zero-bias expired and all-clamped ultraviolet forecasts
+  for (const value of [input, equal, expired, { ...input, forecast: input.forecast.map((item) => ({ ...item, metrics: { ...item.metrics, uvIndex: 0 } })) }]) {
+    const selected = renderWeatherDashboard(value, "forecast");
+    const raw = renderWeatherDashboard({ ...value, forecastAdjustmentMode: "raw" }, "forecast");
+    // every chart uses the same comparison contract including pressure's derived tendency
+    for (const key of ["temperature", "wind", "rain-rate", "clouds", "humidity", "air-quality", "uv-index", "pressure"]) {
+      const selectedSeries = chart(selected, key).series;
+      const rawSeries = chart(raw, key).series;
+      const changed = selectedSeries.some(
+        // unavailable and equal readings cannot claim an actual numeric correction
+        (line, seriesIndex) => line.values.some((reading, index) => Number.isFinite(reading) && Number.isFinite(rawSeries[seriesIndex].values[index]) && reading !== rawSeries[seriesIndex].values[index]),
+      );
+      assert.equal(gold(selected, key), changed, key);
+      assert.equal(gold(raw, key), false, `raw ${key}`);
+    }
+  }
+  const selected = renderWeatherDashboard(equal, "home");
+  const raw = renderWeatherDashboard({ ...equal, forecastAdjustmentMode: "raw" }, "home");
+  // equal current readings and daily extrema cannot gain mode-only gold either
+  for (const key of ["temperature", "wind", "rain", "clouds", "humidity", "air-quality", "uv-index", "pressure"]) {
+    assert.equal(gold(selected, key, "home"), false, key);
+    assert.equal(gold(raw, key, "home"), false, `raw home ${key}`);
+  }
+});
+
+// actual local current readings count even when no forward model can qualify
+test("homepage gold tracks changed current source readings independently of forecast models", (context) => {
+  context.mock.timers.enable({ apis: ["Date"], now });
+  const input = state({ forecast: [] });
+  const selected = renderWeatherDashboard(input, "home");
+  const raw = renderWeatherDashboard({ ...input, forecastAdjustmentMode: "raw" }, "home");
+  // differing measured humidity particulate uv and pressure tendencies all receive gold
+  for (const key of ["humidity", "air-quality", "uv-index", "pressure"]) {
+    assert.equal(gold(selected, key, "home"), true, key);
+    assert.equal(gold(raw, key, "home"), false, `raw ${key}`);
+  }
+  assert.equal(gold(selected, "temperature", "home"), false);
+  assert.equal(gold(selected, "rain", "home"), false);
+});

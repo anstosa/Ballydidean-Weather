@@ -932,7 +932,7 @@ async function captureFamilyIcons(page, view) {
   return icons;
 }
 
-// capture icons governed only by the global adjustment preference
+// capture four locally biased weather-family icons
 async function captureGlobalModeIcons(page, view) {
   const selectors = view === "home"
     ? {
@@ -949,7 +949,7 @@ async function captureGlobalModeIcons(page, view) {
     };
   const icons = {};
 
-  // inspect every global-mode icon independently
+  // inspect every local-bias icon independently
   for (const [family, selector] of Object.entries(selectors)) {
     const icon = page.locator(selector);
     icons[family] = {
@@ -962,6 +962,60 @@ async function captureGlobalModeIcons(page, view) {
   }
 
   return icons;
+}
+
+// capture every adjustment-eligible weather icon
+async function captureWeatherMetricIcons(page, view) {
+  const families = [
+    "temperature",
+    "wind",
+    view === "home" ? "rain" : "rain-rate",
+    "clouds",
+    "humidity",
+    "air-quality",
+    "pressure",
+    "uv-index",
+  ];
+  return Object.fromEntries(await Promise.all(families.map(
+    // retain each final icon class and color
+    async (family) => {
+      const selector = view === "home"
+        ? `[data-condition='${family}'] .condition-label > .material-symbols-rounded`
+        : `[data-forecast-chart='${family}'] .forecast-chart-heading .material-symbols-rounded`;
+      return [family, await page.locator(selector).evaluate(
+        // read one rendered icon presentation
+        (element) => ({
+          className: element.getAttribute("class"),
+          color: getComputedStyle(element).color,
+        }),
+      )];
+    },
+  )));
+}
+
+// compare every weather icon with its actual changed-value state
+async function assertWeatherMetricIcons(page, view, adjustedFamilies, label) {
+  const gold = "rgb(197, 138, 16)";
+  const normal = "rgb(33, 26, 31)";
+  const adjusted = new Set(adjustedFamilies);
+  const icons = await captureWeatherMetricIcons(page, view);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(icons).map(
+      // reduce each rendered icon to its semantic adjustment state
+      ([family, icon]) => [family, {
+        color: icon.color,
+        marked: icon.className?.split(" ").includes("forecast-adjusted-icon") ?? false,
+      }],
+    )),
+    Object.fromEntries(Object.keys(icons).map(
+      // require gold only for families with changed displayed values
+      (family) => [family, {
+        color: adjusted.has(family) ? gold : normal,
+        marked: adjusted.has(family),
+      }],
+    )),
+    label,
+  );
 }
 
 // capture four icon-only families without their decorative headings
@@ -2007,6 +2061,27 @@ test("local observations bias four forecast families for only the next 24 hours"
       JSON.parse(await page.locator(`[data-forecast-chart='${family}']`).getAttribute("data-forecast-series"))[0].values,
     ],
   )));
+  // require all four local-bias icons to match their displayed values
+  const assertLocalIcons = async (page, view, adjusted, label) => {
+    const icons = await captureGlobalModeIcons(page, view);
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(icons).map(
+        // reduce each icon to its rendered semantic state
+        ([family, icon]) => [family, {
+          color: icon.color,
+          marked: icon.className?.split(" ").includes("forecast-adjusted-icon") ?? false,
+        }],
+      )),
+      Object.fromEntries(localFamilies.map(
+        // apply the same real-change expectation to every local family
+        (family) => [family, {
+          color: adjusted ? "rgb(197, 138, 16)" : "rgb(33, 26, 31)",
+          marked: adjusted,
+        }],
+      )),
+      label,
+    );
+  };
   // keep forecast headings clear of their selected-value bubbles
   const assertForecastLayout = async (page, width) => {
     const layout = await page.locator(collisionFamilies.map((family) => `[data-forecast-chart='${family}']`).join(", ")).evaluateAll(
@@ -2135,11 +2210,33 @@ test("local observations bias four forecast families for only the next 24 hours"
       // retain asynchronous render failures
       page.on("pageerror", (error) => pageErrors.push(error.message));
       await page.clock.setFixedTime(now);
-      await page.goto(`${fixture.origin}/forecast`, { waitUntil: "networkidle" });
+      await page.goto(fixture.origin, { waitUntil: "networkidle" });
+      const homeToggle = page.getByRole("switch", { name: "Adjusted", exact: true });
+      const adjustedHome = await captureGlobalModeData(page, "home");
+      await assertLocalIcons(page, "home", true, `adjusted home ${String(viewport.width)}px`);
+      await homeToggle.click();
+      await page.waitForFunction(
+        // wait for all four current readings to return regional
+        () => document.querySelector("[data-forecast-adjustment-toggle]")?.getAttribute("aria-checked") === "false",
+      );
+      const rawHome = await captureGlobalModeData(page, "home");
+      await assertLocalIcons(page, "home", false, `raw home ${String(viewport.width)}px`);
+      // prove every homepage marker is backed by changed visible text
+      for (const family of localFamilies) {
+        assert.notDeepEqual(adjustedHome[family], rawHome[family], `${family} homepage values did not change`);
+      }
+      await homeToggle.click();
+      await page.waitForFunction(
+        // restore the value-driven homepage markers
+        () => document.querySelector("[data-forecast-adjustment-toggle]")?.getAttribute("aria-checked") === "true",
+      );
+      await page.getByRole("link", { name: "Forecast", exact: true }).click();
+      await page.locator("[data-forecast-charts]").waitFor();
       await page.getByRole("button", { name: "5 days", exact: true }).click();
       await page.locator('[data-forecast-charts][data-forecast-days="5"]').waitFor();
       const toggle = page.getByRole("switch", { name: "Adjusted", exact: true });
       assert.equal(await toggle.getAttribute("aria-checked"), "true");
+      await assertLocalIcons(page, "forecast", true, `adjusted forecast ${String(viewport.width)}px`);
       const adjusted = await chartSeries(page);
       const adjustedTemperature = JSON.parse(
         await page.locator("[data-forecast-chart='temperature']").getAttribute("data-forecast-series"),
@@ -2181,6 +2278,7 @@ test("local observations bias four forecast families for only the next 24 hours"
       const rawTemperature = JSON.parse(
         await page.locator("[data-forecast-chart='temperature']").getAttribute("data-forecast-series"),
       );
+      await assertLocalIcons(page, "forecast", false, `raw forecast ${String(viewport.width)}px`);
       assert.doesNotMatch(await page.locator("body").innerText(), /experimental/iu);
       await assertForecastLayout(page, viewport.width);
       await assertCrosshairClear(page, viewport.width);
@@ -2269,6 +2367,7 @@ test("local observations bias four forecast families for only the next 24 hours"
       await page.getByRole("button", { name: "5 days", exact: true }).click();
       await page.locator('[data-forecast-charts][data-forecast-days="5"]').waitFor();
       assert.equal((await chartSeries(page)).humidity[3], 70);
+      await assertLocalIcons(page, "forecast", true, `restored forecast ${String(viewport.width)}px`);
       await assertForecastLayout(page, viewport.width);
 
       // exercise both fail-raw source gates once
@@ -2288,6 +2387,7 @@ test("local observations bias four forecast families for only the next 24 hours"
         await page.getByRole("button", { name: "5 days", exact: true }).click();
         await page.locator('[data-forecast-charts][data-forecast-days="5"]').waitFor();
         assert.deepEqual(await chartSeries(page), raw);
+        await assertLocalIcons(page, "forecast", false, "stale local sources");
         fixture.state.currentRecords = currentRecords.filter(
           // remove only the required regional baseline
           (record) => record.provenance.sourceKind !== "model_current",
@@ -2296,6 +2396,7 @@ test("local observations bias four forecast families for only the next 24 hours"
         await page.getByRole("button", { name: "5 days", exact: true }).click();
         await page.locator('[data-forecast-charts][data-forecast-days="5"]').waitFor();
         assert.deepEqual(await chartSeries(page), raw);
+        await assertLocalIcons(page, "forecast", false, "missing regional baseline");
       }
       assert.deepEqual(fixture.state.forecastPayload, payloadSnapshot);
       assert.deepEqual(pageErrors, []);
@@ -3938,8 +4039,20 @@ test("adjusted temperature wind and rain icons turn gold on both forecast-bearin
     const response = {
       ...payload,
       data: payload.data.map(
-        // attach active rain evidence to every displayed member
-        (record) => ({ ...record, rainAdjustment: activeRainAdjustment(record) }),
+        // make corrected hourly rain drive the displayed fallback rate
+        (record) => {
+          const hourly = {
+            ...record,
+            metrics: { ...record.metrics, precipitationRateMmPerHour: null },
+          };
+          return {
+            ...hourly,
+            rainAdjustment: {
+              ...activeRainAdjustment(hourly),
+              correctedPrecipitationMm: hourly.metrics.precipitationMm + 1,
+            },
+          };
+        },
       ),
       rainAdjustmentRuntime: activeRainRuntime(),
     };
@@ -3985,14 +4098,6 @@ test("adjusted temperature wind and rain icons turn gold on both forecast-bearin
         ),
         true,
       );
-      assert.deepEqual(
-        await page.locator("[data-condition='humidity'] .condition-label > .material-symbols-rounded").evaluate(
-          // expose humidity through the global adjustment preference
-          (element) => ({ className: element.getAttribute("class"), color: getComputedStyle(element).color }),
-        ),
-        { className: "material-symbols-rounded forecast-adjusted-icon", color: gold },
-      );
-
       await page.getByRole("link", { name: "Forecast" }).click();
       await page.locator("[data-forecast-charts]").waitFor();
       const adjustedForecast = await captureFamilyIcons(page, "forecast");
@@ -4064,11 +4169,10 @@ test("adjusted temperature wind and rain icons turn gold on both forecast-bearin
   }
 });
 
-// expose four context families whenever the global adjustment preference is on
-test("adjustment mode colors humidity air quality pressure and UV icons without changing data", { timeout: 120_000 }, async () => {
+// keep unchanged context-family icons normal in every adjustment mode
+test("unchanged humidity air quality pressure and UV icons remain normal", { timeout: 120_000 }, async () => {
   const fixture = await startFixtureServer();
   let browser;
-  const gold = "rgb(197, 138, 16)";
   const normal = "rgb(33, 26, 31)";
   const evidenceCases = [
     {
@@ -4104,7 +4208,7 @@ test("adjustment mode colors humidity air quality pressure and UV icons without 
         }],
       )),
       Object.fromEntries(Object.keys(icons).map(
-        // apply the global expectation equally across all four families
+        // apply the numeric-change expectation equally across all four families
         (family) => [family, { color, marked }],
       )),
       label,
@@ -4147,20 +4251,20 @@ test("adjustment mode colors humidity air quality pressure and UV icons without 
       // align historical fixture forecasts with their original farm day
       await page.clock.setFixedTime(new Date("2026-08-22T05:37:00.000Z"));
 
-      // separate global preference from correction evidence
+      // prove adjustment mode alone cannot color unchanged families
       for (const evidenceCase of evidenceCases) {
         fixture.state.forecastPayload = evidenceCase.payload;
         await page.goto(fixture.origin, { waitUntil: "networkidle" });
         const toggle = page.getByRole("switch", { name: "Adjusted", exact: true });
         assert.equal(await toggle.getAttribute("aria-checked"), "true", evidenceCase.label);
         const adjustedHomeData = await captureGlobalModeData(page, "home");
-        await assertGlobalIcons(page, "home", gold, true, `${evidenceCase.label} home on`);
+        await assertGlobalIcons(page, "home", normal, false, `${evidenceCase.label} home on`);
         await assertStableIcons(page, "home", `${evidenceCase.label} home exclusions`);
 
         await page.getByRole("link", { name: "Forecast", exact: true }).click();
         await page.locator("[data-forecast-charts]").waitFor();
         const adjustedForecastData = await captureGlobalModeData(page, "forecast");
-        await assertGlobalIcons(page, "forecast", gold, true, `${evidenceCase.label} forecast on`);
+        await assertGlobalIcons(page, "forecast", normal, false, `${evidenceCase.label} forecast on`);
         await assertStableIcons(page, "forecast", `${evidenceCase.label} forecast exclusions`);
         assert.deepEqual(
           Object.fromEntries(Object.entries(await captureFamilyIcons(page, "forecast")).map(
@@ -4189,15 +4293,15 @@ test("adjustment mode colors humidity air quality pressure and UV icons without 
         assert.deepEqual(await captureGlobalModeData(page, "forecast"), adjustedForecastData, evidenceCase.label);
         await toggle.click();
         await page.waitForFunction(
-          // await restoration of the global icon treatment
+          // await adjusted mode without inventing a changed value
           () => document.querySelector("[data-forecast-adjustment-toggle]")?.getAttribute("aria-checked") === "true",
         );
-        await assertGlobalIcons(page, "forecast", gold, true, `${evidenceCase.label} forecast restored`);
+        await assertGlobalIcons(page, "forecast", normal, false, `${evidenceCase.label} forecast restored`);
         assert.deepEqual(await captureGlobalModeData(page, "forecast"), adjustedForecastData, evidenceCase.label);
 
         await page.getByRole("link", { name: "Now", exact: true }).click();
         await page.locator(".weather-content[aria-busy='false']").waitFor();
-        await assertGlobalIcons(page, "home", gold, true, `${evidenceCase.label} home restored`);
+        await assertGlobalIcons(page, "home", normal, false, `${evidenceCase.label} home restored`);
         assert.deepEqual(await captureGlobalModeData(page, "home"), adjustedHomeData, evidenceCase.label);
         await toggle.click();
         await page.waitForFunction(
@@ -4209,11 +4313,134 @@ test("adjustment mode colors humidity air quality pressure and UV icons without 
         assert.deepEqual(await captureGlobalModeData(page, "home"), adjustedHomeData, evidenceCase.label);
         await toggle.click();
         await page.waitForFunction(
-          // await the next evidence case in adjusted mode
+          // await the next unchanged case in adjusted mode
           () => document.querySelector("[data-forecast-adjustment-toggle]")?.getAttribute("aria-checked") === "true",
         );
-        await assertGlobalIcons(page, "home", gold, true, `${evidenceCase.label} home rerestored`);
+        await assertGlobalIcons(page, "home", normal, false, `${evidenceCase.label} home rerestored`);
       }
+      await page.close();
+    }
+  } finally {
+    // close disposable fixture resources
+    await browser?.close();
+    fixture.server.close();
+    await once(fixture.server, "close");
+  }
+});
+
+// color only the forecast family with a changed future value in the selected range
+test("weather icons follow distant future numeric changes instead of adjustment metadata", { timeout: 120_000 }, async () => {
+  const fixture = await startFixtureServer();
+  let browser;
+  const now = new Date("2026-08-22T05:37:00.000Z");
+  const settings = { version: 1, temperature: true, wind: true, rain: true };
+  // create one active decision with only a visible temperature change
+  const payloadAt = (changedIndex) => {
+    const payload = forecastResponse("active", settings, forecast.slice(0, 120));
+    const response = {
+      ...payload,
+      data: payload.data.map(
+        // isolate one active row while every other row fails raw
+        (record, index) => {
+          // retain raw behavior outside the selected proof hour
+          if (index !== changedIndex) {
+            return {
+              ...record,
+              adjustment: rawForecastAdjustment("not_applicable", "unsupported_lead"),
+            };
+          }
+          const adjustment = activeForecastAdjustment(record, index + 1);
+          return {
+            ...record,
+            adjustment: {
+              ...adjustment,
+              adjustedMetrics: {
+                temperatureC: record.metrics.temperatureC + 2,
+                windSpeedMps: record.metrics.windSpeedMps,
+              },
+            },
+            rainAdjustment: activeRainAdjustment(record),
+          };
+        },
+      ),
+      rainAdjustmentRuntime: activeRainRuntime(),
+    };
+    const parsed = parseForecastRecordsResponse(response);
+    assert.equal(parsed.adjustmentRuntime.state, "active");
+    assert.equal(parsed.data[changedIndex]?.adjustment?.state, "active");
+    return response;
+  };
+  // read the two temperature lines that back the visible chart
+  const temperatureSeries = async (page) => JSON.parse(
+    await page.locator("[data-forecast-chart='temperature']").getAttribute("data-forecast-series"),
+  );
+
+  try {
+    browser = await launchBrowser();
+    fixture.state.currentRecords = [current];
+
+    // verify desktop and phone range behavior
+    for (const viewport of [
+      { height: 900, width: 960 },
+      { height: 844, width: 390 },
+    ]) {
+      fixture.state.forecastPayload = payloadAt(30);
+      const payloadSnapshot = structuredClone(fixture.state.forecastPayload);
+      const page = await createFixturePage(browser, { timezoneId: site.timezone, viewport });
+      const pageErrors = [];
+      // retain asynchronous render failures
+      page.on("pageerror", (error) => pageErrors.push(error.message));
+      await page.clock.setFixedTime(now);
+      await page.goto(fixture.origin, { waitUntil: "networkidle" });
+      await assertWeatherMetricIcons(page, "home", [], `distant change home ${String(viewport.width)}px`);
+
+      await page.getByRole("link", { name: "Forecast", exact: true }).click();
+      await page.locator('[data-forecast-charts][data-forecast-days="1"]').waitFor();
+      await assertWeatherMetricIcons(page, "forecast", [], `distant change today ${String(viewport.width)}px`);
+      const today = await temperatureSeries(page);
+      assert.equal(today[1].values.includes(forecast[30].metrics.temperatureC + 2), false);
+
+      await page.getByRole("button", { name: "5 days", exact: true }).click();
+      await page.locator('[data-forecast-charts][data-forecast-days="5"]').waitFor();
+      const adjusted = await temperatureSeries(page);
+      assert.equal(adjusted[0].values[30], forecast[30].metrics.apparentTemperatureC);
+      assert.equal(adjusted[1].values[30], forecast[30].metrics.temperatureC + 2);
+      assert.equal(adjusted[1].values[23], forecast[23].metrics.temperatureC);
+      await assertWeatherMetricIcons(page, "forecast", ["temperature"], `distant change five days ${String(viewport.width)}px`);
+
+      const toggle = page.getByRole("switch", { name: "Adjusted", exact: true });
+      await toggle.click();
+      await page.waitForFunction(
+        // wait for raw values and icon presentation together
+        () => document.querySelector("[data-forecast-adjustment-toggle]")?.getAttribute("aria-checked") === "false",
+      );
+      await assertWeatherMetricIcons(page, "forecast", [], `distant change raw ${String(viewport.width)}px`);
+      const raw = await temperatureSeries(page);
+      assert.equal(raw[1].values[30], forecast[30].metrics.temperatureC);
+      assert.deepEqual(raw[0], adjusted[0]);
+
+      await toggle.click();
+      await page.waitForFunction(
+        // restore the distant adjusted value
+        () => document.querySelector("[data-forecast-adjustment-toggle]")?.getAttribute("aria-checked") === "true",
+      );
+      await assertWeatherMetricIcons(page, "forecast", ["temperature"], `distant change restored ${String(viewport.width)}px`);
+
+      fixture.state.forecastPayload = payloadAt(10);
+      await page.reload({ waitUntil: "networkidle" });
+      await page.getByRole("button", { name: "5 days", exact: true }).click();
+      await page.locator('[data-forecast-charts][data-forecast-days="5"]').waitFor();
+      await assertWeatherMetricIcons(page, "forecast", [], `past-only change ${String(viewport.width)}px`);
+      assert.deepEqual((await temperatureSeries(page))[1].values, raw[1].values);
+      assert.deepEqual(payloadSnapshot, payloadAt(30));
+      assert.deepEqual(pageErrors, []);
+      assert.equal(
+        await page.evaluate(
+          // reject responsive overflow in either icon state
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        ),
+        0,
+      );
       await page.close();
     }
   } finally {

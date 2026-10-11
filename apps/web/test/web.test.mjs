@@ -2211,8 +2211,8 @@ test("temperature wind and rain settings gate their own adjusted values", () => 
   }
 });
 
-// mark only active displayed adjustment families in adjusted mode
-test("temperature wind and rain icons identify selected active forecast adjustments", () => {
+// distinguish actual changed outputs from active equal-value family metadata
+test("temperature wind and rain icons require changed displayed forecast values", () => {
   const raw = {
     ...forecastRecord,
     metadata: {
@@ -2250,9 +2250,10 @@ test("temperature wind and rain icons identify selected active forecast adjustme
     temperatureAdjustmentRuntime: temperatureCanaryRuntime(),
   };
   // parse one independently configured family combination
-  const parseFamilies = (settings) => parseForecastRecordsResponse({
+  const parseFamilies = (settings, changed = false) => parseForecastRecordsResponse({
     ...input,
     adjustmentSettings: settings,
+    data: changed ? [{ ...raw, adjustment: windCanaryAdjustment(raw), rainAdjustment: rainAdjustmentDecision(raw), temperatureAdjustment: temperatureCanaryDecision(raw) }] : input.data,
   });
   // render both forecast-bearing routes from one parsed response
   const renderViews = (parsed, mode = "adjusted", forecast = parsed.data) => {
@@ -2273,15 +2274,15 @@ test("temperature wind and rain icons identify selected active forecast adjustme
   const adjusted = renderViews(enabled);
   const regional = renderViews(enabled, "raw");
 
-  // identify every active family without changing its equal-value output
+  // active zero corrections never mark either presentation as changed
   for (const view of ["home", "forecast"]) {
     for (const family of families) {
-      assert.equal(familyIconIsAdjusted(adjusted[view], view, family), true, `${view} ${family}`);
+      assert.equal(familyIconIsAdjusted(adjusted[view], view, family), false, `${view} ${family}`);
       assert.equal(familyIconIsAdjusted(regional[view], view, family), false, `${view} raw ${family}`);
     }
   }
-  assert.equal((adjusted.home.match(/forecast-adjusted-icon/gu) ?? []).length, 7);
-  assert.equal((adjusted.forecast.match(/forecast-adjusted-icon/gu) ?? []).length, 7);
+  assert.equal((adjusted.home.match(/forecast-adjusted-icon/gu) ?? []).length, 0);
+  assert.equal((adjusted.forecast.match(/forecast-adjusted-icon/gu) ?? []).length, 0);
 
   // keep readings and serialized chart values unchanged for zero corrections
   for (const family of families) {
@@ -2303,7 +2304,7 @@ test("temperature wind and rain icons identify selected active forecast adjustme
       temperature: disabled !== "temperature",
       wind: disabled !== "wind",
       rain: disabled !== "rain-rate",
-    });
+    }, true);
     const views = renderViews(parsed);
 
     // check both presentations against the disabled family
@@ -2324,8 +2325,10 @@ test("temperature wind and rain icons identify selected active forecast adjustme
     ...input,
     adjustmentSettings: { version: 1, temperature: true, wind: true, rain: true },
     data: [{
-      ...input.data[0],
-      adjustment: { ...equalWind, candidateArtifactSha256: "f".repeat(64) },
+      ...raw,
+      temperatureAdjustment: temperatureCanaryDecision(raw),
+      rainAdjustment: rainAdjustmentDecision(raw),
+      adjustment: { ...windCanaryAdjustment(raw), candidateArtifactSha256: "f".repeat(64) },
     }],
   });
   const invalidViews = renderViews(invalid);
@@ -2349,9 +2352,10 @@ test("temperature wind and rain icons identify selected active forecast adjustme
   }
 
   const rawDisplayed = { ...raw, validAt: "2026-08-22T05:30:00.000Z" };
-  const mixedViews = renderViews(enabled, "adjusted", [rawDisplayed, enabled.data[0]]);
+  const changedEnabled = parseFamilies({ version: 1, temperature: true, wind: true, rain: true }, true);
+  const mixedViews = renderViews(changedEnabled, "adjusted", [rawDisplayed, changedEnabled.data[0]]);
   const outside = {
-    ...enabled.data[0],
+    ...changedEnabled.data[0],
     validAt: "2026-08-23T08:00:00.000Z",
   };
   const outsideViews = renderViews(missing, "adjusted", [rawDisplayed, outside]);
@@ -2369,8 +2373,8 @@ test("temperature wind and rain icons identify selected active forecast adjustme
   assert.doesNotMatch(renderWeatherDashboard(loadingState, "forecast"), /forecast-adjusted-icon/u);
 });
 
-// identify the selected mode without requiring an active model for these icons
-test("humidity air quality pressure and UV icons follow the global adjustment mode", () => {
+// equal regional-only values never acquire gold from the global mode alone
+test("humidity air quality pressure and UV icons stay normal without changed values", () => {
   const state = forecastState([forecastRecord], null);
   const modes = ["adjusted", "raw"];
   const conditions = ["humidity", "air-quality", "pressure", "uv-index"];
@@ -2383,11 +2387,11 @@ test("humidity air quality pressure and UV icons follow the global adjustment mo
       forecast: renderWeatherDashboard({ ...state, forecastAdjustmentMode: mode }, "forecast"),
     };
 
-    // apply the global mode consistently on both routes
+    // compare unchanged values consistently on both routes
     for (const view of ["home", "forecast"]) {
       // inspect every newly mode-colored icon
       for (const condition of conditions) {
-        assert.equal(familyIconIsAdjusted(rendered[mode][view], view, condition), mode === "adjusted");
+        assert.equal(familyIconIsAdjusted(rendered[mode][view], view, condition), false);
       }
       assert.equal(familyIconIsAdjusted(rendered[mode][view], view, "tide"), false);
     }
@@ -2408,9 +2412,9 @@ test("humidity air quality pressure and UV icons follow the global adjustment mo
   }
 
   const noForecast = renderWeatherDashboard({ ...state, forecast: [] }, "home");
-  // retain the selected-mode marker even without forecast adjustment evidence
+  // no current or forecast differences means no adjustment marker
   for (const condition of conditions) {
-    assert.equal(familyIconIsAdjusted(noForecast, "home", condition), true);
+    assert.equal(familyIconIsAdjusted(noForecast, "home", condition), false);
   }
 });
 

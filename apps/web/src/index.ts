@@ -5496,42 +5496,55 @@ function renderCurrent(state: DashboardState): string {
     state.selectedSite?.timezone ?? PRODUCT_SITE.timezone,
   );
   const useForecastAdjustments = state.forecastAdjustmentMode !== "raw";
+  const regional = currentWeatherReadings(state.current, "raw", state.forecast);
+  const temperatureForecast = forecastTemperature(forecast, state.units, useForecastAdjustments);
+  const windForecast = forecastWind(forecast, state.units, useForecastAdjustments);
+  const rainForecast = forecastRain(forecast, state.units, useForecastAdjustments);
+  const humidityForecast = forecastHumidity(forecast, useForecastAdjustments);
+  const airQualityForecast = forecastMaximumFixed(forecast, "pm25MicrogramsPerCubicMeter", "", 0, airQualityBand, useForecastAdjustments);
+  const uvForecast = forecastMaximumFixed(forecast, "uvIndex", "", 1, uvBand, useForecastAdjustments);
+  // homepage gold identifies changed current readings or a changed displayed daily summary
+  const changed = (keys: readonly WeatherMetricKey[], selected: ForecastCardValue, raw: ForecastCardValue): boolean =>
+    useForecastAdjustments && (keys.some(
+      // source selection counts only when two usable numeric readings actually differ
+      (key) => adjustmentValuesDiffer(current.metrics[key], regional?.metrics[key] ?? null),
+    ) || forecastReadingsDiffer(selected, raw));
   return `
     <section class="current-conditions" aria-label="Current conditions">
       ${renderConditionCard({
-          adjusted: forecastValuesAreAdjusted(forecast, ["temperatureC"], useForecastAdjustments),
+          adjusted: changed(["apparentTemperatureC", "temperatureC"], temperatureForecast, forecastTemperature(forecast, state.units, false)),
           band: temperatureBand(current.metrics.apparentTemperatureC),
           className: "temperature-condition",
           icon: "device_thermostat",
           label: "Temperature",
           measurement: formatMeasurement(current.metrics.apparentTemperatureC, "temperature", state.units, 0),
-          forecast: forecastTemperature(forecast, state.units, useForecastAdjustments),
+          forecast: temperatureForecast,
           secondary: {
             label: "Air Temp",
             measurement: formatMeasurement(current.metrics.temperatureC, "temperature", state.units, 0),
           },
         })}
       ${renderConditionCard({
-          adjusted: forecastValuesAreAdjusted(forecast, ["windSpeedMps", "windGustMps"], useForecastAdjustments),
+          adjusted: changed(["windSpeedMps", "windGustMps", "windDirectionDegrees"], windForecast, forecastWind(forecast, state.units, false)),
           band: windBand(current.metrics.windSpeedMps, windGust, state.units),
           className: "wind-condition",
           icon: "air",
           label: "Wind",
           measurement: directionalWindMeasurement,
-          forecast: forecastWind(forecast, state.units, useForecastAdjustments),
+          forecast: windForecast,
           secondary: {
             label: "Gusts",
             measurement: formatMeasurement(windGust, "windSpeed", state.units, 0),
           },
         })}
       ${renderConditionCard({
-          adjusted: forecastValuesAreAdjusted(forecast, ["precipitationMm", "precipitationRateMmPerHour"], useForecastAdjustments),
+          adjusted: changed(["precipitationRateMmPerHour"], rainForecast, forecastRain(forecast, state.units, false)),
           band: rainBand(rainRate),
           className: "rain-condition",
           icon: "rainy",
           label: "Rain",
           measurement: formatPrecipitationRate(rainRate, state.units),
-          forecast: forecastRain(forecast, state.units, useForecastAdjustments),
+          forecast: rainForecast,
           secondary: {
             label: "Accumulation",
             measurement: formatPrecipitationAccumulation(dailyRain, state.units),
@@ -5539,32 +5552,32 @@ function renderCurrent(state: DashboardState): string {
         })}
       ${renderCloudsCondition(state)}
       ${renderConditionCard({
-          adjusted: useForecastAdjustments,
+          adjusted: changed(["relativeHumidityPercent"], humidityForecast, forecastHumidity(forecast, false)),
           band: humidityBand(current.metrics.relativeHumidityPercent, current.metrics.temperatureC),
           className: "compact-condition",
           icon: "humidity_percentage",
           label: "Humidity",
           measurement: formatFixedMeasurement(current.metrics.relativeHumidityPercent, "%"),
-          forecast: forecastHumidity(forecast, useForecastAdjustments),
+          forecast: humidityForecast,
         })}
       ${renderConditionCard({
-          adjusted: useForecastAdjustments,
+          adjusted: changed(["pm25MicrogramsPerCubicMeter"], airQualityForecast, forecastMaximumFixed(forecast, "pm25MicrogramsPerCubicMeter", "", 0, airQualityBand, false)),
           band: airQualityBand(airQuality),
           className: "air-quality-condition",
           icon: "masks",
           label: "Air quality",
           measurement: formatFixedMeasurement(airQuality, "", 0),
-          forecast: forecastMaximumFixed(forecast, "pm25MicrogramsPerCubicMeter", "", 0, airQualityBand, useForecastAdjustments),
+          forecast: airQualityForecast,
         })}
       ${renderPressureCondition(state)}
       ${renderConditionCard({
-          adjusted: useForecastAdjustments,
+          adjusted: changed(["uvIndex"], uvForecast, forecastMaximumFixed(forecast, "uvIndex", "", 1, uvBand, false)),
           band: uvBand(uvIndex),
           className: "compact-condition",
           icon: "wb_sunny",
           label: "UV index",
           measurement: formatFixedMeasurement(uvIndex, ""),
-          forecast: forecastMaximumFixed(forecast, "uvIndex", "", 1, uvBand, useForecastAdjustments),
+          forecast: uvForecast,
         })}
       ${renderTideCondition(state)}
       ${renderSunsetCondition(state)}
@@ -5865,10 +5878,16 @@ function renderPressureCondition(state: DashboardState): string {
   const current = currentWeatherReadings(state.current, state.forecastAdjustmentMode, state.forecast);
   const change = current?.pressureChange3hHpa ?? null;
   const site = state.selectedSite ?? PRODUCT_SITE;
-  const maximum = strongestPressureChange(state.forecast, new Date(), site.timezone, state.forecastAdjustmentMode !== "raw");
+  const useAdjustments = state.forecastAdjustmentMode !== "raw";
+  const now = new Date();
+  const maximum = strongestPressureChange(state.forecast, now, site.timezone, useAdjustments);
+  const rawMaximum = strongestPressureChange(state.forecast, now, site.timezone, false);
+  const regional = currentWeatherReadings(state.current, "raw", state.forecast);
   return renderConditionCard({
-    // identify the selected mode without changing pressure readings
-    adjusted: state.forecastAdjustmentMode !== "raw",
+    // compare actual same-source tendencies and the displayed strongest window
+    adjusted: useAdjustments && (adjustmentValuesDiffer(change, regional?.pressureChange3hHpa ?? null) ||
+      adjustmentValuesDiffer(maximum?.changeHpa ?? null, rawMaximum?.changeHpa ?? null) ||
+      (maximum !== null && rawMaximum !== null && maximum.validAt !== rawMaximum.validAt)),
     band: { ...pressureChangeBand(change), detail: "" },
     className: "compact-condition pressure-condition",
     forecast: {
@@ -6024,11 +6043,17 @@ function renderCloudsCondition(state: DashboardState): string {
   const sun = eveningSunTimes(site, now);
   const daytime = clearestCloudRange(forecast, site.timezone, sun, useAdjustments);
   const overall = clearestCloudRange(forecast, site.timezone, undefined, useAdjustments);
+  const rawDaytime = clearestCloudRange(forecast, site.timezone, sun, false);
+  const rawOverall = clearestCloudRange(forecast, site.timezone, undefined, false);
   const differentRange = overall.value !== "—" &&
     (overall.value !== daytime.value || overall.unit !== daytime.unit);
 
   return renderConditionCard({
-    adjusted: forecastValuesAreAdjusted([...currentCloud === undefined ? [] : [currentCloud], ...forecast], ["cloudCoverPercent"], useAdjustments),
+    // gold requires a changed current cloud reading or a displayed daily comparison
+    adjusted: useAdjustments && (adjustmentValuesDiffer(cover, currentCloud?.metrics.cloudCoverPercent ?? null) ||
+      adjustmentValuesDiffer(maximumMetric(forecast, "cloudCoverPercent", true), maximumMetric(forecast, "cloudCoverPercent", false)) ||
+      adjustmentValuesDiffer(minimumMetric(forecast, "cloudCoverPercent", true), minimumMetric(forecast, "cloudCoverPercent", false)) ||
+      adjustmentMeasurementsDiffer(daytime, rawDaytime) || adjustmentMeasurementsDiffer(overall, rawOverall)),
     band: sunlightEstimate ? { ...cloudBand(cover), detail: "Sunlight estimate" } : cloudBand(cover),
     className: `compact-condition clouds-condition${sunlightEstimate ? " solar-cloud-estimate" : ""}`,
     forecast: {
@@ -7062,32 +7087,49 @@ function buildForecastCharts(
   observations: readonly ForecastObservationPoint[],
   now: number,
 ): readonly ForecastChartDefinition[] {
-  const cloudsAdjusted = forecastValuesAreAdjusted(hours, ["cloudCoverPercent"], useAdjustments);
   const observed = new Map(observations.map((point) => [Date.parse(point.validAt), point]));
   // recorded past never inherits forecast corrections or the persisted adjustment mode
-  const value = (record: WeatherRecord, key: WeatherMetricKey): number | null => Date.parse(record.validAt) < now
+  const value = (record: WeatherRecord, key: WeatherMetricKey, adjusted = useAdjustments): number | null => Date.parse(record.validAt) < now
     ? observed.get(Date.parse(record.validAt))?.metrics[key] ?? forecastMetricValue(record, key, false)
-    : forecastMetricValue(record, key, useAdjustments);
+    : forecastMetricValue(record, key, adjusted);
   // apply the selected adjustment mode only beyond the recorded past
-  const metric = (key: WeatherMetricKey): readonly (number | null)[] => hours.map(
+  const metric = (key: WeatherMetricKey, adjusted = useAdjustments): readonly (number | null)[] => hours.map(
     // align every weather metric to the shared hourly index
-    (record) => value(record, key),
+    (record) => value(record, key, adjusted),
   );
+
+  // any changed plotted hour qualifies even when the selected hour is unchanged
+  const changed = (key: WeatherMetricKey): boolean => useAdjustments && metric(key).some(
+    // recorded past and zero corrections compare equal to the same raw series
+    (reading, index) => adjustmentValuesDiffer(reading, value(hours[index]!, key, false)),
+  );
+  // compare the displayed rate fallback rather than unused precipitation fields
+  const rainRates = (adjusted: boolean): readonly (number | null)[] => hours.map(
+    // preserve direct rate then hourly amount selection in both modes
+    (record) => value(record, "precipitationRateMmPerHour", adjusted) ??
+      forecastMetricValue(record, "precipitationMm", Date.parse(record.validAt) >= now && adjusted),
+  );
+  const selectedRain = rainRates(useAdjustments);
+  const rawRain = rainRates(false);
 
   const contextChanges = forecastPressureChanges(pressureContext);
   const contextByHour = new Map(pressureContext.map(
     // index completed prior-vintage differences rather than mixing their raw pressures
     (record, index) => [`${record.provenance.sourceId}/${Date.parse(record.validAt)}`, contextChanges[index] ?? null],
   ));
-  const pressureChanges = forecastPressureChanges(records, hours).map(
+  const rawPressureChanges = forecastPressureChanges(records, hours);
+  // preserve recorded past and the isolated context fallback in both display modes
+  const pressure = (adjusted: boolean): readonly (number | null)[] => rawPressureChanges.map(
     // correct completed windows only after retaining the isolated prior-vintage fallback
     (change, index) => {
       const record = hours[index]!;
       const raw = change ?? (index < 3 ? contextByHour.get(`${record.provenance.sourceId}/${Date.parse(record.validAt)}`) ?? null : null);
       // completed observed windows take precedence without crossing pressure datums
-      return Date.parse(record.validAt) < now ? observed.get(Date.parse(record.validAt))?.pressureChange3hHpa ?? raw : forecastPressureChangeValue(record, raw, useAdjustments);
+      return Date.parse(record.validAt) < now ? observed.get(Date.parse(record.validAt))?.pressureChange3hHpa ?? raw : forecastPressureChangeValue(record, raw, adjusted);
     },
   );
+  const pressureChanges = pressure(useAdjustments);
+  const rawPressure = pressure(false);
   const pressureExtent = Math.max(6, ...pressureChanges.map(
     // center the signed scale on steady pressure without clipping rapid changes
     (value) => Math.ceil(Math.abs(value ?? 0)),
@@ -7095,7 +7137,7 @@ function buildForecastCharts(
 
   return [
     {
-      adjusted: forecastValuesAreAdjusted(hours, ["temperatureC"], useAdjustments),
+      adjusted: changed("temperatureC") || changed("apparentTemperatureC"),
       domain: { maximum: 26.666_666_666_7, minimum: -1.111_111_111_1 },
       format: "temperature",
       icon: "device_thermostat",
@@ -7108,7 +7150,7 @@ function buildForecastCharts(
       ],
     },
     {
-      adjusted: forecastValuesAreAdjusted(hours, ["windSpeedMps", "windGustMps"], useAdjustments),
+      adjusted: changed("windSpeedMps") || changed("windGustMps"),
       domain: { maximum: 22.351_999_999_5, minimum: 0 },
       format: "windSpeed",
       icon: "air",
@@ -7120,7 +7162,10 @@ function buildForecastCharts(
       ],
     },
     {
-      adjusted: forecastValuesAreAdjusted(hours, ["precipitationMm", "precipitationRateMmPerHour"], useAdjustments),
+      adjusted: useAdjustments && selectedRain.some(
+        // dry zeros and past-only corrections never color the rain icon
+        (reading, index) => adjustmentValuesDiffer(reading, rawRain[index] ?? null),
+      ),
       domain: { maximum: 25.4, minimum: 0 },
       format: "precipitationRate",
       icon: "rainy",
@@ -7128,15 +7173,11 @@ function buildForecastCharts(
       label: "Rain rate",
       series: [{
         label: "Rate",
-        values: hours.map(
-          // prefer the direct forecast rate
-          (record) => value(record, "precipitationRateMmPerHour") ??
-            forecastMetricValue(record, "precipitationMm", Date.parse(record.validAt) >= now && useAdjustments),
-        ),
+        values: selectedRain,
       }],
     },
     {
-      adjusted: cloudsAdjusted,
+      adjusted: changed("cloudCoverPercent"),
       domain: { maximum: 100, minimum: 0 },
       format: "cloudCover",
       icon: "cloud",
@@ -7145,8 +7186,7 @@ function buildForecastCharts(
       series: [{ label: "Cover", values: metric("cloudCoverPercent") }],
     },
     {
-      // mark mode-dependent presentation independently of correction evidence
-      adjusted: useAdjustments,
+      adjusted: changed("relativeHumidityPercent"),
       format: "humidity",
       icon: "humidity_percentage",
       key: "humidity",
@@ -7155,7 +7195,7 @@ function buildForecastCharts(
       temperaturesC: metric("temperatureC"),
     },
     {
-      adjusted: useAdjustments,
+      adjusted: changed("pm25MicrogramsPerCubicMeter"),
       domain: HISTORICAL_FORECAST_DOMAINS.airQuality,
       format: "airQuality",
       icon: "masks",
@@ -7164,7 +7204,7 @@ function buildForecastCharts(
       series: [{ label: "PM2.5", values: metric("pm25MicrogramsPerCubicMeter") }],
     },
     {
-      adjusted: useAdjustments,
+      adjusted: changed("uvIndex"),
       domain: FIXED_FORECAST_DOMAINS.uvIndex,
       format: "uvIndex",
       icon: "wb_sunny",
@@ -7173,7 +7213,10 @@ function buildForecastCharts(
       series: [{ label: "Index", values: metric("uvIndex") }],
     },
     {
-      adjusted: useAdjustments,
+      adjusted: useAdjustments && pressureChanges.some(
+        // compare the displayed three-hour tendency rather than absolute pressure datums
+        (reading, index) => adjustmentValuesDiffer(reading, rawPressure[index] ?? null),
+      ),
       domain: { maximum: pressureExtent, minimum: -pressureExtent },
       format: "pressureChange",
       icon: "speed",
@@ -14083,27 +14126,21 @@ export function forecastMetricValue(
   return record.metrics[metric];
 }
 
-// identify active corrections within the forecast hours actually shown
-function forecastValuesAreAdjusted(
-  records: readonly WeatherRecord[],
-  metrics: readonly WeatherMetricKey[],
-  useAdjustments: boolean,
-): boolean {
-  return useAdjustments && records.some(
-    // retain gold when any displayed hour has a usable active family output
-    (record) => metrics.some(
-      // distinguish active corrections from equal-valued or missing raw fallbacks
-      (metric) => {
-        const active = localForecastBiases.get(record)?.[metric as LocalForecastBiasMetric] !== undefined ||
-          (metric === "cloudCoverPercent" && solarCloudValues.has(record)) ||
-          (metric === "temperatureC" && record.temperatureAdjustment?.state === "active") ||
-          ((metric === "precipitationMm" || metric === "precipitationRateMmPerHour") && record.rainAdjustment?.state === "active") ||
-          (record.adjustment?.state === "active" &&
-            record.adjustment.appliedMetrics.includes(metric as ForecastAdjustmentMetric));
-        const value = forecastMetricValue(record, metric, true);
-        return active && value !== null && Number.isFinite(value);
-      },
-    ),
+// distinguish actual numeric corrections from equal clamped or unavailable outputs
+function adjustmentValuesDiffer(selected: number | null, raw: number | null): boolean {
+  return selected !== null && raw !== null && Number.isFinite(selected) && Number.isFinite(raw) && selected !== raw;
+}
+
+// compare displayed summaries without marking unavailable values or color-only changes
+function adjustmentMeasurementsDiffer(selected: FormattedMeasurement, raw: FormattedMeasurement): boolean {
+  return selected.value !== "—" && raw.value !== "—" && (selected.value !== raw.value || selected.unit !== raw.unit);
+}
+
+// restrict homepage markers to the summary values actually displayed on the card
+function forecastReadingsDiffer(selected: ForecastCardValue, raw: ForecastCardValue): boolean {
+  return selected.readings.some(
+    // align daily maxima minima and totals without trusting adjustment metadata
+    (reading, index) => raw.readings[index] !== undefined && adjustmentMeasurementsDiffer(reading.measurement, raw.readings[index]!.measurement),
   );
 }
 

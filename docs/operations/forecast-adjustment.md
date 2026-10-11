@@ -193,12 +193,17 @@ still trigger their own warnings. Missing, disabled, or invalid forecast
 adjustments fall back to raw forecast values without changing the selected
 current-source mode.
 
-Temperature, wind, and rain icons turn gold when the selected Adjusted mode has
-active corrections for that family within the displayed forecast hours. Raw,
-unavailable, disabled, and loading families retain their normal icon color.
-Gold marks the selected adjustment family; it does not correct current readings
-or change the metrics plotted in a chart. Switching the mode also selects the
-current source as described above.
+All weather metric icons use the same gold meaning: Adjusted mode has changed
+usable values, not merely enabled a model or switched the display mode. Homepage
+icons compare current selected readings with regional readings and the daily
+summaries actually shown. Forecast-page icons compare every plotted value in the
+selected range with its regional/raw counterpart, including rain's displayed
+rate fallback and pressure's same-source three-hour tendency. A changed future
+hour qualifies even when the selected hour is unchanged. Recorded historical
+values remain identical in both modes and cannot trigger gold. Equal, zero-bias,
+clamped, expired or unavailable corrections leave icons normal; Raw/off mode,
+tides and sunset are never adjustment-gold. Numeric weather outputs, qualification
+and source selection are unaffected by this presentation rule.
 
 ## Experimental WS90 sunlight cloud correction
 
