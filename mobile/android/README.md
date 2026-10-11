@@ -6,6 +6,21 @@ strictly decodes `weather-widget/v3` (and legacy v1/v2 caches), renders current 
 refreshes through a cookie-free fixed public endpoint. It is not signed for or
 submitted to Google Play.
 
+## Hosted OTA updates
+
+The existing Android WebView receives web UI releases without reinstalling the
+APK. On startup and foreground, the hosted updater checks the stable service
+worker URL. New releases download in the background with a persistent progress
+prompt. After the complete public shell and its executable checksums are
+verified, **Reload to apply** activates the waiting release. Failed downloads
+leave the current shell intact and offer **Retry download**. Cookies and local
+preferences are not cleared. Closing every old WebView can also activate a
+waiting release under the normal service-worker lifecycle.
+
+This is hosted web OTA, not native APK patching or Capgo. Widget, permission,
+and other native changes still need an Android release. See
+[the OTA runbook](../../docs/operations/android-ota-updates.md).
+
 ## Pinned toolchain
 
 - Android Gradle Plugin 9.4.0 with built-in Kotlin 2.2.10

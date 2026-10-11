@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { readdirSync, readFileSync } from "node:fs";
@@ -635,7 +636,7 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
   );
   await writeFile(
     join(fixtureRoot, "apps/web/public/service-worker.js"),
-    'const release = "__WEATHER_ASSET_VERSION__";\n',
+    'const release = "__WEATHER_ASSET_VERSION__"; const digests = __WEATHER_SHELL_ASSET_DIGESTS__;\n',
   );
   await writeFile(
     join(fixtureRoot, "config/sites/ballydidean.json"),
@@ -654,9 +655,11 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
   await writeFile(join(fixtureRoot, "apps/web/public/fonts/material-symbols-rounded-v4.woff2"), "material-symbols-rounded-font\n");
   await writeFile(join(fixtureRoot, "apps/web/public/fonts/LICENSE-material-symbols.txt"), "Apache-2.0\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/client.js"), "export { ready } from './index.js';\n");
+  await writeFile(join(fixtureRoot, "apps/web/dist/hosted-updates.js"), "export const ready = true;\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/index.js"), "export { ready } from './units.js';\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/units.js"), "export const ready = true;\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/solar-cloud.js"), "export const sunlight = true;\n");
+  await writeFile(join(fixtureRoot, "apps/web/dist/solar-cloud-evidence.js"), "export const evidence = true;\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/local-forecast-bias.js"), "export const localBias = true;\n");
   const xweatherClientId = join(fixtureRoot, "xweather-client-id");
   const xweatherClientSecret = join(fixtureRoot, "xweather-client-secret");
@@ -1150,6 +1153,7 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
     const iconFont = await fetch(`http://127.0.0.1:${webPort}/fonts/material-symbols-rounded-v4.woff2`);
     const iconFontLicense = await fetch(`http://127.0.0.1:${webPort}/fonts/LICENSE-material-symbols.txt`);
     const client = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/client.js`);
+    const hostedUpdates = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/hosted-updates.js`);
     const library = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/index.js`);
     const units = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/units.js`);
     const solarCloud = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/solar-cloud.js`);
@@ -1311,7 +1315,14 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
     assert.equal(manifest.headers.get("cache-control"), "no-cache");
     assert.equal(serviceWorker.headers.get("content-type"), "text/javascript; charset=utf-8");
     assert.equal(serviceWorker.headers.get("cache-control"), "no-store");
-    assert.match(await serviceWorker.text(), /2026\.08\.25-7/u);
+    const workerBody = await serviceWorker.text();
+    assert.match(workerBody, /2026\.08\.25-7/u);
+    assert.ok(!workerBody.includes("__WEATHER_SHELL_ASSET_DIGESTS__"));
+    const digestMap = JSON.parse(workerBody.match(/const digests = (.+);/u)[1]);
+    assert.equal(hostedUpdates.status, 200);
+    assert.equal(hostedUpdates.headers.get("cache-control"), "public, max-age=31536000, immutable");
+    assert.equal(digestMap["/assets/2026.08.25-7/hosted-updates.js"],
+      `sha256-${createHash("sha256").update(await hostedUpdates.text()).digest("base64")}`);
     assert.equal(font.headers.get("content-type"), "font/woff2");
     assert.match(font.headers.get("cache-control"), /immutable/u);
     assert.equal(fontLicense.headers.get("content-type"), "text/plain; charset=utf-8");

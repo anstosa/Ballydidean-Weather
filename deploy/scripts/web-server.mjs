@@ -171,12 +171,22 @@ const assets = new Map([
 const versionedAssets = new Map([
   ["styles.css", { cache: "public, max-age=31536000, immutable", path: join(publicRoot, "styles.css"), type: "text/css; charset=utf-8" }],
   ["client.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "client.js"), type: "text/javascript; charset=utf-8" }],
+  ["hosted-updates.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "hosted-updates.js"), type: "text/javascript; charset=utf-8" }],
   ["index.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "index.js"), type: "text/javascript; charset=utf-8" }],
   ["solar-cloud.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "solar-cloud.js"), type: "text/javascript; charset=utf-8" }],
   ["solar-cloud-evidence.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "solar-cloud-evidence.js"), type: "text/javascript; charset=utf-8" }],
   ["local-forecast-bias.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "local-forecast-bias.js"), type: "text/javascript; charset=utf-8" }],
   ["units.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "units.js"), type: "text/javascript; charset=utf-8" }],
 ]);
+
+// bind every immutable executable and stylesheet to the served worker
+const shellAssetDigests = Object.fromEntries(await Promise.all([...versionedAssets].map(
+  // hash the exact image-owned bytes before admitting the web server
+  async ([name, asset]) => [
+    `${assetPrefix}${name}`,
+    `sha256-${createHash("sha256").update(await readFile(asset.path)).digest("base64")}`,
+  ],
+)));
 
 // expose archive mutation only on the compose-private listener
 const adjustmentMaintenanceInternalServer = adjustmentMaintenanceInternalPort === null
@@ -1102,6 +1112,7 @@ function redirectRemoteAgentsBrowser(response, requestUrl) {
 function renderHtmlTemplate(source, pathname, isAdmin, analyticsEnabled) {
   return source
     .replaceAll("__WEATHER_ASSET_VERSION__", release)
+    .replaceAll("__WEATHER_SHELL_ASSET_DIGESTS__", JSON.stringify(shellAssetDigests))
     .replaceAll("__WEATHER_ADMIN__", String(isAdmin))
     .replaceAll("__WEATHER_ANALYTICS__", String(analyticsEnabled))
     .replaceAll("__WEATHER_ROUTE_PRELOAD__", forecastMapPreloadLink(pathname));

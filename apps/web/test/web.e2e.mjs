@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
@@ -1492,6 +1493,7 @@ async function startFixtureServer() {
       ["/fonts/google-sans-flex-latin.woff2", [join(publicRoot, "fonts/google-sans-flex-latin.woff2"), "font/woff2"]],
       ["/fonts/material-symbols-rounded-v4.woff2", [join(publicRoot, "fonts/material-symbols-rounded-v4.woff2"), "font/woff2"]],
       [`/assets/${fixtureAssetVersion}/client.js`, [join(distRoot, "client.js"), "text/javascript; charset=utf-8"]],
+      [`/assets/${fixtureAssetVersion}/hosted-updates.js`, [join(distRoot, "hosted-updates.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/index.js`, [join(distRoot, "index.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/units.js`, [join(distRoot, "units.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/solar-cloud.js`, [join(distRoot, "solar-cloud.js"), "text/javascript; charset=utf-8"]],
@@ -1534,6 +1536,15 @@ async function startFixtureServer() {
           url.pathname === "/privacy/" ||
           url.pathname === "/service-worker.js"
           ? source.toString("utf8").replaceAll("__WEATHER_ASSET_VERSION__", fixtureAssetVersion)
+            .replaceAll("__WEATHER_SHELL_ASSET_DIGESTS__", JSON.stringify(Object.fromEntries(
+              [...assets].filter(
+                // bind only release-versioned fixture bytes
+                ([path]) => path.startsWith(`/assets/${fixtureAssetVersion}/`),
+              ).map(
+                // use the same executable integrity contract as production
+                ([path, [file]]) => [path, `sha256-${createHash("sha256").update(readFileSync(file)).digest("base64")}`],
+              ),
+            )))
             .replaceAll(
               "__WEATHER_ADMIN__",
               String(isAdmin),
@@ -2747,7 +2758,7 @@ test("manifest and service worker provide an installable application shell", { t
       };
     });
     assert.equal(registration.active, "activated");
-    assert.equal(registration.scriptUrl, `${fixture.origin}/service-worker.js?release=browser-test`);
+    assert.equal(registration.scriptUrl, `${fixture.origin}/service-worker.js`);
     assert.equal(registration.scope, `${fixture.origin}/`);
     assert.equal(registration.updateViaCache, "none");
     assert.equal(

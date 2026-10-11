@@ -8,7 +8,9 @@ Google Play **internal testing**, with release status `completed`.
 
 It does not publish to production, submit iOS builds, or deploy the website.
 Weather is a native hosted shell, not Capacitor: no Ferry web build, Auth0,
-Firebase, Sentry, OTA, Yarn, or Ferry package identifiers are copied.
+Firebase, Sentry, Capgo, Yarn, or Ferry package identifiers are copied. Hosted
+web UI releases use [service-worker OTA](android-ota-updates.md); native APK
+and widget changes still use this Android release workflow.
 
 ## One-time setup
 

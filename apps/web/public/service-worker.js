@@ -1,6 +1,9 @@
 const release = "__WEATHER_ASSET_VERSION__";
 const cachePrefix = "ballydidean-weather-shell-";
 const shellCache = `${cachePrefix}${release}`;
+const readyPath = `/__weather-shell-ready/${release}`;
+const shellAssetDigests = __WEATHER_SHELL_ASSET_DIGESTS__;
+const updateState = { type: "WEATHER_UPDATE_STATE", release, phase: "downloading", completed: 0, total: 0 };
 const shellPaths = [
   "/",
   "/logs",
@@ -35,6 +38,7 @@ const shellPaths = [
   "/fonts/material-symbols-rounded-v4.woff2",
   `/assets/${release}/styles.css`,
   `/assets/${release}/client.js`,
+  `/assets/${release}/hosted-updates.js`,
   `/assets/${release}/index.js`,
   `/assets/${release}/units.js`,
   `/assets/${release}/solar-cloud.js`,
@@ -42,6 +46,7 @@ const shellPaths = [
   `/assets/${release}/local-forecast-bias.js`
 ];
 const shellPathSet = new Set(shellPaths);
+updateState.total = shellPaths.length;
 const dashboardPaths = new Set(["/", "/logs", "/map", "/forecast", "/trends", "/settings"]);
 const analyticsSources = new Set([
   "https://www.googletagmanager.com",
@@ -120,36 +125,114 @@ function canCacheNavigation(response) {
   );
 }
 
-// cache the versioned application shell
+// report bounded download metadata without application data
+async function reportUpdate() {
+  try {
+    const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    // notify every document observing this registration
+    for (const client of clients) {
+      client.postMessage({ ...updateState });
+    }
+  } catch {
+    // disappearing clients must not invalidate a verified installation
+  }
+}
+
+// answer waiting-worker status and exact-release activation requests
+// recover readiness after an idle waiting worker has been restarted
+async function restoreUpdateState() {
+  // avoid interfering with active installation or known failures
+  if (updateState.phase !== "downloading" || updateState.completed !== 0 || !await caches.has(shellCache)) {
+    return;
+  }
+  const cache = await caches.open(shellCache);
+  const marker = await cache.match(readyPath);
+  // trust only the final marker written after the complete install
+  if (marker !== undefined && await marker.text() === release) {
+    updateState.completed = updateState.total;
+    updateState.phase = "ready";
+  }
+}
+
+self.addEventListener("message", (event) => {
+  event.waitUntil((async () => {
+    await restoreUpdateState();
+    // return verified readiness even when the page missed installation
+    if (event.data?.type === "WEATHER_UPDATE_STATUS") {
+      event.source?.postMessage({ ...updateState });
+    }
+    // never activate incomplete or unrelated releases
+    if (event.data?.type === "WEATHER_APPLY_UPDATE" && event.data.release === release && updateState.phase === "ready") {
+      await self.skipWaiting();
+    }
+  })());
+});
+
+// download and verify the complete shell before declaring readiness
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
-    const cache = await caches.open(shellCache);
-    const shellRequests = shellPaths.map(
-      // keep administrator cookies out of the shared shell
-      (path) => new Request(path, { credentials: "omit" }),
-    );
-    await cache.addAll(shellRequests);
-
-    // sanitize each precached dashboard document
-    for (const request of shellRequests) {
-      const pathname = new URL(request.url).pathname;
-
-      // preserve static documents and assets
-      if (!dashboardPaths.has(pathname)) {
-        continue;
+    let cache;
+    try {
+      await reportUpdate();
+      const responses = [];
+      // validate all bytes before writing the staged shell
+      for (const path of shellPaths) {
+        const digest = shellAssetDigests[path];
+        // fail closed when an executable lacks its image-owned checksum
+        if (path.startsWith(`/assets/${release}/`) && !/^sha256-[A-Za-z0-9+/]{43}=$/u.test(digest ?? "")) {
+          throw new Error("Missing shell integrity");
+        }
+        const request = new Request(path, {
+          credentials: "omit",
+          cache: "reload",
+          ...(digest === undefined ? {} : { integrity: digest }),
+        });
+        let response = await fetch(request);
+        // reject transport failures and disguised module error pages
+        if (!response.ok || (path.endsWith(".js") && !response.headers.get("content-type")?.includes("javascript"))) {
+          throw new Error("Invalid shell asset");
+        }
+        // consume each transfer before using another connection
+        const bytes = await response.arrayBuffer();
+        const headers = new Headers(response.headers);
+        headers.delete("content-encoding");
+        headers.delete("content-length");
+        response = new Response(bytes, { headers, status: response.status, statusText: response.statusText });
+        // refuse private shells and a deployment changing during installation
+        if (dashboardPaths.has(path)) {
+          const body = await response.clone().text();
+          const embeddedRelease = body.match(/<meta\s+name="weather-release"\s+content="([^"]+)"/u)?.[1];
+          // keep staged routes tied to the same public release
+          if (!canCacheNavigation(response) || embeddedRelease !== release) {
+            throw new Error("Invalid shell document");
+          }
+          response = await sanitizeOfflineNavigation(response);
+        }
+        responses.push([request, response]);
+        updateState.completed += 1;
+        await reportUpdate();
       }
-
-      const response = await cache.match(request);
-
-      // fail installation before activating an unsafe shell
-      if (response === undefined) {
-        throw new Error(`Missing precached dashboard response for ${pathname}`);
+      cache = await caches.open(shellCache);
+      // commit only verified responses before reporting readiness
+      for (const [request, response] of responses) {
+        await cache.put(request, response);
       }
-
-      await cache.put(request, await sanitizeOfflineNavigation(response));
+      await cache.put(readyPath, new Response(release));
+      updateState.phase = "ready";
+      await reportUpdate();
+      // first installs have no active release to interrupt
+      if (self.registration.active === null) {
+        await self.skipWaiting();
+      }
+    } catch (error) {
+      // discard only this failed staging cache while preserving the active shell
+      if (cache !== undefined) {
+        await caches.delete(shellCache);
+      }
+      updateState.phase = "failed";
+      await reportUpdate();
+      throw error;
     }
-
-    await self.skipWaiting();
   })());
 });
 

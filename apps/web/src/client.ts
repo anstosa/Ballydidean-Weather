@@ -3,6 +3,7 @@ import {
   type WeatherDashboardController,
   type WeatherView,
 } from "./index.js";
+import { registerHostedUpdates } from "./hosted-updates.js";
 
 const root = document.querySelector<HTMLElement>("#weather-app");
 
@@ -35,37 +36,6 @@ function initializeProductionAnalytics(isAdmin: boolean): void {
   script.async = true;
   script.src = "https://www.googletagmanager.com/gtag/js?id=G-NYT2EZS8BX";
   document.head.append(script);
-}
-
-// register the installable offline shell
-async function registerServiceWorker(): Promise<void> {
-  // skip unsupported browsers
-  if (!("serviceWorker" in navigator)) {
-    return;
-  }
-
-  const release = document.querySelector<HTMLMetaElement>('meta[name="weather-release"]')?.content ?? "development";
-  const controlled = navigator.serviceWorker.controller !== null;
-  let reloading = false;
-
-  // reload one installed app after its replacement worker takes control
-  if (controlled) {
-    navigator.serviceWorker.addEventListener("controllerchange", () => {
-      // avoid one browser emitting duplicate ownership events
-      if (reloading) {
-        return;
-      }
-
-      reloading = true;
-      window.location.reload();
-    }, { once: true });
-  }
-
-  const registration = await navigator.serviceWorker.register(
-    `/service-worker.js?release=${encodeURIComponent(release)}`,
-    { scope: "/", updateViaCache: "none" },
-  );
-  await registration.update();
 }
 
 // resolve one supported browser route
@@ -198,7 +168,7 @@ if (root !== null) {
   }
 }
 
-registerServiceWorker().catch(
+registerHostedUpdates().catch(
   // keep optional install support from interrupting weather rendering
   () => undefined,
 );

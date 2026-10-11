@@ -95,6 +95,43 @@ body {
   background: var(--md-sys-color-surface);
 }
 
+/* keep the staged android update outside dashboard rerenders */
+.hosted-update-prompt {
+  position: fixed;
+  z-index: 1000;
+  right: 1rem;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  left: 1rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  max-width: 40rem;
+  margin-inline: auto;
+  padding: 1rem;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-medium);
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface-container-high);
+  box-shadow: var(--md-sys-elevation-3);
+}
+
+.hosted-update-prompt p {
+  flex: 1 1 14rem;
+  margin: 0;
+}
+
+.hosted-update-prompt button {
+  min-height: 2.75rem;
+}
+
+.hosted-update-prompt progress {
+  flex: 1 1 8rem;
+  min-width: 0;
+  max-width: 100%;
+  accent-color: var(--md-sys-color-primary);
+}
+
 /* readable standalone privacy policy */
 .privacy-page {
   width: min(100%, 44rem);

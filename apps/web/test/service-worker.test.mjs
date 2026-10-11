@@ -8,8 +8,8 @@ const analyticsPolicy =
   "default-src 'self'; connect-src 'self' https://www.googletagmanager.com https://*.google-analytics.com https://*.google.com; img-src 'self' data: https://www.googletagmanager.com https://*.google-analytics.com; script-src 'self' https://www.googletagmanager.com; style-src 'self'";
 const offlinePolicy =
   "default-src 'self'; connect-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'";
-const productionShell = '<!doctype html><html data-weather-analytics="true"><body>weather</body></html>';
-const offlineShell = '<!doctype html><html data-weather-analytics="false"><body>weather</body></html>';
+const productionShell = '<!doctype html><html data-weather-analytics="true"><head><meta name="weather-release" content="test-release"></head><body>weather</body></html>';
+const offlineShell = '<!doctype html><html data-weather-analytics="false"><head><meta name="weather-release" content="test-release"></head><body>weather</body></html>';
 
 // normalize one cache key
 function cacheKey(input) {
@@ -57,6 +57,7 @@ class WorkerRequest {
     const { mode = "cors", ...supportedInit } = init ?? {};
     const request = new Request(resolved, supportedInit);
     this.credentials = request.credentials;
+    this.integrity = request.integrity;
     this.headers = request.headers;
     this.method = request.method;
     this.mode = mode;
@@ -104,13 +105,20 @@ class MemoryCache {
 }
 
 // load one isolated service worker
-async function loadWorker({ fetcher, seededCaches = new Map() }) {
+async function loadWorker({ fetcher, seededCaches = new Map(), active = null, digests }) {
   const source = await readFile(new URL("../public/service-worker.js", import.meta.url), "utf8");
+  const assetDigests = digests ?? Object.fromEntries(
+    [...source.matchAll(/`\/assets\/\$\{release\}\/([^`]+)`/gu)].map(
+      // model the server's complete immutable asset manifest
+      (match) => [`/assets/test-release/${match[1]}`, `sha256-${Buffer.alloc(32).toString("base64")}`],
+    ),
+  );
   const listeners = new Map();
   const cachesByName = new Map(seededCaches);
   const deletedCaches = [];
   let claimed = false;
   let skipped = false;
+  const messages = [];
 
   // register one worker event
   function addEventListener(name, listener) {
@@ -146,12 +154,21 @@ async function loadWorker({ fetcher, seededCaches = new Map() }) {
       async keys() {
         return [...cachesByName.keys()];
       },
+      // inspect readiness without creating an empty cache
+      async has(name) {
+        return cachesByName.has(name);
+      },
       open,
     },
     fetch: fetcher,
     self: {
       addEventListener,
+      registration: { active },
       clients: {
+        // capture progress delivered to controlled and new documents
+        async matchAll() {
+          return [{ postMessage: (message) => messages.push(message) }];
+        },
         // record client activation
         async claim() {
           claimed = true;
@@ -164,7 +181,8 @@ async function loadWorker({ fetcher, seededCaches = new Map() }) {
       },
     },
   });
-  vm.runInContext(source.replaceAll("__WEATHER_ASSET_VERSION__", "test-release"), context);
+  vm.runInContext(source.replaceAll("__WEATHER_ASSET_VERSION__", "test-release")
+    .replaceAll("__WEATHER_SHELL_ASSET_DIGESTS__", JSON.stringify(assetDigests)), context);
 
   // dispatch one extendable lifecycle event
   async function dispatchLifecycle(name) {
@@ -196,6 +214,19 @@ async function loadWorker({ fetcher, seededCaches = new Map() }) {
     deletedCaches,
     dispatchFetch,
     dispatchLifecycle,
+    messages,
+    // dispatch one page request to the exact worker
+    async dispatchMessage(data) {
+      let pending;
+      const replies = [];
+      listeners.get("message")({
+        data,
+        source: { postMessage: (message) => replies.push(message) },
+        waitUntil: (promise) => { pending = promise; },
+      });
+      await pending;
+      return replies;
+    },
     // expose lifecycle state
     lifecycle() {
       return { claimed, skipped };
@@ -268,7 +299,7 @@ test("precache sanitizes dashboard shells without changing privacy or assets", a
 
     // return immutable assets unchanged
     if (pathname.includes(".") || pathname.startsWith("/assets/")) {
-      return new Response(assetBody, { headers: { "content-type": "application/octet-stream" } });
+      return new Response(assetBody, { headers: { "content-type": pathname.endsWith(".js") ? "text/javascript" : "application/octet-stream" } });
     }
 
     return productionResponse();
@@ -278,11 +309,7 @@ test("precache sanitizes dashboard shells without changing privacy or assets", a
   await worker.dispatchLifecycle("install");
   const cache = worker.cachesByName.get("ballydidean-weather-shell-test-release");
   assert.ok(cache);
-  const addAllOperations = cache.operations.filter(
-    // select atomic precache operations
-    (operation) => operation.name === "addAll",
-  );
-  assert.equal(addAllOperations.length, 1);
+  assert.equal(cache.entries.size, worker.messages.at(-1).total + 1);
   await assertOfflineDashboard(await cache.match(`${origin}/forecast`));
   await assertOfflineDashboard(await cache.match(`${origin}/`));
   assert.equal(await (await cache.match(`${origin}/privacy`)).text(), privacyBody);
@@ -330,6 +357,11 @@ test("navigation returns live analytics but caches only an offline-safe dashboar
     // emulate one failed authenticated navigation
     if (offline) {
       throw new Error("offline");
+    }
+
+    // supply valid compiled assets during installation
+    if (new URL(request.url).pathname.endsWith(".js")) {
+      return new Response("export {};", { headers: { "content-type": "text/javascript" } });
     }
 
     return productionResponse({ status: request.credentials === "include" ? 203 : 200 });
@@ -461,4 +493,103 @@ test("activation deletes only superseded weather shell caches", async () => {
     "unrelated-cache",
   ]);
   assert.deepEqual(worker.lifecycle(), { claimed: true, skipped: false });
+});
+
+// supply public release-bound shells and ordinary compiled assets
+async function completeShellResponse(request) {
+  // distinguish immutable modules from public documents
+  if (new URL(request.url).pathname.endsWith(".js")) {
+    return new Response("export {};", { headers: { "content-type": "text/javascript" } });
+  }
+  return productionResponse();
+}
+
+// retain the active release until a complete update is explicitly applied
+test("updates report progress and wait for exact-release activation", async () => {
+  const requests = [];
+  const oldCache = new MemoryCache(completeShellResponse);
+  const worker = await loadWorker({
+    active: {},
+    seededCaches: new Map([["ballydidean-weather-shell-old", oldCache]]),
+    // capture the cookie-free integrity-checked download boundary
+    fetcher: async (request) => {
+      requests.push(request);
+      return completeShellResponse(request);
+    },
+  });
+  await worker.dispatchMessage({ type: "WEATHER_APPLY_UPDATE", release: "test-release" });
+  assert.equal(worker.lifecycle().skipped, false);
+  await worker.dispatchLifecycle("install");
+  const ready = worker.messages.at(-1);
+  assert.equal(ready.phase, "ready");
+  assert.equal(ready.completed, ready.total);
+  assert.ok(worker.messages.some((message) => message.completed > 0 && message.completed < message.total));
+  assert.equal(worker.lifecycle().skipped, false);
+  assert.equal(worker.cachesByName.get("ballydidean-weather-shell-old"), oldCache);
+  assert.ok(requests.every((request) => request.credentials === "omit"));
+  assert.ok(requests.filter((request) => request.url.includes("/assets/")).every((request) => request.integrity.startsWith("sha256-")));
+  const [status] = await worker.dispatchMessage({ type: "WEATHER_UPDATE_STATUS" });
+  assert.equal(status.phase, "ready");
+  await worker.dispatchMessage({ type: "WEATHER_APPLY_UPDATE", release: "other-release" });
+  assert.equal(worker.lifecycle().skipped, false);
+  await worker.dispatchMessage({ type: "WEATHER_APPLY_UPDATE", release: "test-release" });
+  assert.equal(worker.lifecycle().skipped, true);
+});
+
+// restore a waiting worker after the browser terminates its idle process
+test("waiting-worker readiness survives process restart", async () => {
+  const first = await loadWorker({ fetcher: completeShellResponse, active: {} });
+  await first.dispatchLifecycle("install");
+  const restarted = await loadWorker({ fetcher: completeShellResponse, active: {}, seededCaches: first.cachesByName });
+  const [status] = await restarted.dispatchMessage({ type: "WEATHER_UPDATE_STATUS" });
+  assert.equal(status.phase, "ready");
+  assert.equal(status.completed, status.total);
+  await restarted.dispatchMessage({ type: "WEATHER_APPLY_UPDATE", release: "test-release" });
+  assert.equal(restarted.lifecycle().skipped, true);
+});
+
+// reject corrupt incomplete private or mixed-release shells without retiring the active one
+test("failed staging preserves the current shell and cannot activate", async () => {
+  // exercise independent failure boundaries
+  for (const failure of ["network", "http", "module", "private", "release", "integrity", "quota"]) {
+    const oldCache = new MemoryCache(completeShellResponse);
+    const partial = new MemoryCache(completeShellResponse);
+    // emulate a partial cache write failing under storage pressure
+    if (failure === "quota") {
+      partial.put = async () => { throw new Error("quota"); };
+    }
+    const seededCaches = new Map([["ballydidean-weather-shell-old", oldCache]]);
+    // insert only the targeted staging cache for quota failure
+    if (failure === "quota") {
+      seededCaches.set("ballydidean-weather-shell-test-release", partial);
+    }
+    const worker = await loadWorker({
+      active: {},
+      seededCaches,
+      ...(failure === "integrity" ? { digests: {} } : {}),
+      // fail one response while retaining ordinary serving
+      fetcher: async (request) => {
+        const path = new URL(request.url).pathname;
+        // simulate a failed immutable module download
+        if (path.endsWith("index.js")) {
+          // retain each transport and MIME failure independently
+          if (failure === "network") { throw new Error("offline"); }
+          if (failure === "http") { return new Response("failed", { status: 503 }); }
+          if (failure === "module") { return new Response("<html>error</html>", { headers: { "content-type": "text/html" } }); }
+        }
+        // reject user-specific and cross-release documents
+        if (path === "/forecast") {
+          if (failure === "private") { return productionResponse({ cacheControl: "private, no-store" }); }
+          if (failure === "release") { return new Response(productionShell.replace("test-release", "other-release"), { headers: { "content-type": "text/html" } }); }
+        }
+        return completeShellResponse(request);
+      },
+    });
+    await assert.rejects(worker.dispatchLifecycle("install"), undefined, failure);
+    assert.equal(worker.messages.at(-1).phase, "failed", failure);
+    assert.equal(worker.cachesByName.get("ballydidean-weather-shell-old"), oldCache, failure);
+    assert.equal(worker.cachesByName.has("ballydidean-weather-shell-test-release"), false, failure);
+    await worker.dispatchMessage({ type: "WEATHER_APPLY_UPDATE", release: "test-release" });
+    assert.equal(worker.lifecycle().skipped, false, failure);
+  }
 });
