@@ -10263,6 +10263,7 @@ test("home and forecast mastheads stay usable while pinned", { timeout: 120_000 
       await assertForecastClocks(page, viewport.width);
       // preserve full-width coverage across the exact layout breakpoint
       if (viewport.width === 1_440) {
+        // cross both sides of the mobile breakpoint
         for (const width of [673, 672]) {
           await page.setViewportSize({ height: 844, width });
           await settleLayout(page);
