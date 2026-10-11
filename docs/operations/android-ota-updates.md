@@ -43,6 +43,9 @@ process restarts. A failed newly created staging cache is discarded without
 retiring the old active cache. Same-release worker URL migrations also preserve
 the already retained shell on write failure. No partial download may activate. The old release's cache is
 retired only after successful activation; unrelated caches remain untouched.
+Runtime navigation and asset handlers only read those verified caches. Late
+requests handled by an old worker cannot recreate a retired cache or replace
+its release-bound documents with newer network HTML.
 
 TLS, the controlled release pipeline, and the worker-embedded integrity map are
 the authenticity boundary. This is not a detached-signature system, native

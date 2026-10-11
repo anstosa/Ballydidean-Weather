@@ -299,35 +299,25 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
-// update one route while retaining an offline fallback
+// prefer live routes without reopening a retired release cache
 async function networkFirstNavigation(request) {
-  const cache = await caches.open(shellCache);
-
   try {
-    const response = await fetch(request);
-
-    // retain only public route shells
-    if (canCacheNavigation(response)) {
-      await cache.put(request, await sanitizeOfflineNavigation(response.clone()));
-    }
-
-    return response;
+    return await fetch(request);
   } catch {
-    const exact = await cache.match(request);
+    const exact = await caches.match(request, { cacheName: shellCache });
 
     // prefer the requested offline route
     if (exact !== undefined) {
       return exact;
     }
 
-    return await cache.match("/") ?? Response.error();
+    return await caches.match("/", { cacheName: shellCache }) ?? Response.error();
   }
 }
 
 // use one immutable cached shell asset
 async function cacheFirstShellAsset(request) {
-  const cache = await caches.open(shellCache);
-  const cached = await cache.match(request);
+  const cached = await caches.match(request, { cacheName: shellCache });
 
   // reuse the release shell
   if (cached !== undefined) {

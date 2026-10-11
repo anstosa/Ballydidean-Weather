@@ -162,6 +162,10 @@ async function loadWorker({ fetcher, seededCaches = new Map(), active = null, di
       async has(name) {
         return cachesByName.has(name);
       },
+      // read one named cache without creating a retired shell
+      async match(request, { cacheName }) {
+        return cachesByName.get(cacheName)?.match(request);
+      },
       open,
     },
     fetch: fetcher,
@@ -353,7 +357,7 @@ test("precache contains the complete compiled static module graph", async () => 
 });
 
 // verify network and offline navigation boundaries
-test("navigation returns live analytics but caches only an offline-safe dashboard", async () => {
+test("navigation returns live analytics and falls back to the verified offline shell", async () => {
   let offline = false;
 
   // switch between online and offline navigation
@@ -381,10 +385,10 @@ test("navigation returns live analytics but caches only an offline-safe dashboar
   assert.equal(onlineResponse.headers.get("content-security-policy"), analyticsPolicy);
   assert.equal(onlineResponse.headers.get("content-length"), String(Buffer.byteLength(productionShell)));
   assert.equal(onlineResponse.headers.get("x-weather-test"), "preserved");
-  await assertOfflineDashboard(await cache.match(request), { status: 203 });
+  await assertOfflineDashboard(await cache.match(request));
 
   offline = true;
-  await assertOfflineDashboard(await worker.dispatchFetch(request), { status: 203 });
+  await assertOfflineDashboard(await worker.dispatchFetch(request));
   const missingRequest = new WorkerRequest("/trends?uncached=1", {
     credentials: "include",
     mode: "navigate",
@@ -393,7 +397,7 @@ test("navigation returns live analytics but caches only an offline-safe dashboar
 });
 
 // verify no-op sanitation preserves encoded safe responses
-test("network cache retains encoded metadata when HTML and policy are already safe", async () => {
+test("network navigation retains encoded safe response metadata without rewriting caches", async () => {
   // return one decoded body with original transfer headers
   async function fetcher() {
     return encodedOfflineResponse(offlinePolicy);
@@ -408,17 +412,11 @@ test("network cache retains encoded metadata when HTML and policy are already sa
   assert.equal(online.headers.get("content-security-policy"), offlinePolicy);
   assert.equal(online.headers.get("content-encoding"), "gzip");
   assert.equal(online.headers.get("content-length"), "42");
-  const cached = await cache.match(request);
-  assert.equal(cached.status, 203);
-  assert.equal(await cached.text(), offlineShell);
-  assert.equal(cached.headers.get("content-security-policy"), offlinePolicy);
-  assert.equal(cached.headers.get("content-encoding"), "gzip");
-  assert.equal(cached.headers.get("content-length"), "42");
-  assert.equal(cached.headers.get("x-weather-test"), "preserved");
+  assert.equal(await cache.match(request), undefined);
 });
 
 // verify CSP-only sanitation removes stale encoded-transfer metadata
-test("network cache strips encoded metadata when only the analytics policy changes", async () => {
+test("live navigation never replaces the verified shell with a rewritten response", async () => {
   // return one decoded body with an analytics-enabled policy
   async function fetcher() {
     return encodedOfflineResponse(analyticsPolicy);
@@ -433,13 +431,7 @@ test("network cache strips encoded metadata when only the analytics policy chang
   assert.equal(online.headers.get("content-security-policy"), analyticsPolicy);
   assert.equal(online.headers.get("content-encoding"), "gzip");
   assert.equal(online.headers.get("content-length"), "42");
-  const cached = await cache.match(request);
-  assert.equal(cached.status, 203);
-  assert.equal(await cached.text(), offlineShell);
-  assert.equal(cached.headers.get("content-security-policy"), offlinePolicy);
-  assert.equal(cached.headers.get("content-encoding"), null);
-  assert.equal(cached.headers.get("content-length"), null);
-  assert.equal(cached.headers.get("x-weather-test"), "preserved");
+  assert.equal(await cache.match(request), undefined);
 });
 
 // verify excluded and non-cacheable requests
@@ -470,7 +462,7 @@ test("cache boundaries preserve admin, api, privacy, and no-store behavior", asy
   assert.equal(await (await cache.match(`${origin}/logs`)).text(), "older-safe-shell");
   const privacy = await worker.dispatchFetch(new WorkerRequest("/privacy", { mode: "navigate" }));
   assert.equal(await privacy.text(), privacyBody);
-  assert.equal(await (await cache.match(`${origin}/privacy`)).text(), privacyBody);
+  assert.equal(await cache.match(`${origin}/privacy`), undefined);
   assert.equal(await worker.dispatchFetch(new WorkerRequest("/admin", { mode: "navigate" })), undefined);
   assert.equal(await worker.dispatchFetch(new WorkerRequest("/api/weather")), undefined);
   assert.equal(await cache.match(`${origin}/admin`), undefined);
@@ -626,4 +618,27 @@ test("same-release reinstalls neither restore premature readiness nor delete the
   await assert.rejects(failing.dispatchLifecycle("install"), /quota/u);
   assert.equal(failing.cachesByName.get("ballydidean-weather-shell-test-release"), existing);
   assert.equal(await (await existing.match("/__weather-shell-ready/test-release")).text(), "test-release");
+});
+
+// prevent delayed old-worker requests from recreating retired shell caches
+test("retired workers read without reopening obsolete caches", async () => {
+  let offline = false;
+  const newest = new MemoryCache(completeShellResponse);
+  const worker = await loadWorker({
+    seededCaches: new Map([["ballydidean-weather-shell-newest", newest]]),
+    // vary only transport availability for the old request handler
+    fetcher: async (request) => {
+      // expose the absence of an obsolete offline fallback
+      if (offline) {
+        throw new Error("offline");
+      }
+      return completeShellResponse(request);
+    },
+  });
+  await worker.dispatchFetch(new WorkerRequest("/fonts/google-sans-flex-latin.woff2"));
+  await worker.dispatchFetch(new WorkerRequest("/forecast", { mode: "navigate" }));
+  offline = true;
+  const response = await worker.dispatchFetch(new WorkerRequest("/forecast", { mode: "navigate" }));
+  assert.equal(response.type, "error");
+  assert.deepEqual([...worker.cachesByName.keys()], ["ballydidean-weather-shell-newest"]);
 });

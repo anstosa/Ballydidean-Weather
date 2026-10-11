@@ -36,12 +36,12 @@ test("hosted OTA aligns the legacy worker URL with the current document", { time
     await page.getByRole("button", { name: "Use Celsius" }).click();
     fixture.update("2026.10.11-2");
     await check(page);
-    await page.waitForFunction(async () => (await navigator.serviceWorker.getRegistration()).waiting?.state === "installed");
+    await waitForAsyncCondition(page, async () => (await navigator.serviceWorker.getRegistration()).waiting?.state === "installed");
     assert.equal(await page.locator("h1").textContent(), "Release 2026.10.11-1");
     // reopening the hosted page loads the new updater and migrates the stable url
     await page.reload();
-    await page.waitForFunction(async () => navigator.serviceWorker.controller?.scriptURL.endsWith("/service-worker.js") && (await navigator.serviceWorker.getRegistration()).waiting === null);
-    await page.waitForFunction(async () => !(await caches.keys()).includes("ballydidean-weather-shell-2026.10.11-1"));
+    await waitForAsyncCondition(page, async () => navigator.serviceWorker.controller?.scriptURL.endsWith("/service-worker.js") && (await navigator.serviceWorker.getRegistration()).waiting === null);
+    await waitForAsyncCondition(page, async () => !(await caches.keys()).includes("ballydidean-weather-shell-2026.10.11-1"));
     assert.equal(await page.locator("h1").textContent(), "Release 2026.10.11-2");
     assert.equal(await page.locator("#unit").textContent(), "Celsius");
     assert.equal(await page.locator(".hosted-update-prompt").count(), 0);
@@ -51,6 +51,27 @@ test("hosted OTA aligns the legacy worker URL with the current document", { time
     await fixture.close();
   }
 });
+
+// resolve asynchronous browser predicates before judging readiness
+async function waitForAsyncCondition(page, predicate) {
+  const deadline = Date.now() + 15_000;
+  // retry only this disposable test's asynchronous lifecycle observation
+  while (Date.now() < deadline) {
+    try {
+      // require the resolved boolean rather than a truthy promise object
+      if (await page.evaluate(predicate)) {
+        return;
+      }
+    } catch (error) {
+      // allow only the expected context replacement during update reload
+      if (!/Execution context was destroyed|Cannot find context with specified id/u.test(error.message)) {
+        throw error;
+      }
+    }
+    await page.waitForTimeout(50);
+  }
+  throw new Error("Hosted worker did not reach the expected lifecycle state");
+}
 
 // trigger an actual worker byte comparison without navigating away
 async function check(page) {
