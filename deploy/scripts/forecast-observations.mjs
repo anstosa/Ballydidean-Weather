@@ -1,5 +1,6 @@
 import {
   buildForecastObservationPoints,
+  buildSolarCloudEvidence,
   fromSiteWallClock,
   parseForecastRecordsResponse,
   toSiteWallClock,
@@ -65,7 +66,8 @@ export class ForecastObservationCache {
 
   // fully page the two existing core read contracts without changing core or evidence capture
   async #fill(start, through) {
-    const from = new Date(Date.parse(start) - 3 * 3_600_000).toISOString();
+    // recover still-live daytime evidence across midnight with its regional pairing halo
+    const from = new Date(Math.min(Date.parse(start) - 3 * 3_600_000, Date.parse(through) - 24 * 3_600_000 - 20 * 60_000)).toISOString();
     const abort = new AbortController();
     const signal = abort.signal;
     const timer = setTimeout(() => abort.abort(), this.#timeoutMs);
@@ -133,7 +135,22 @@ export class ForecastObservationCache {
     try {
       const [physical, regional] = await Promise.all([readKind("physical_sensor"), readKind("model_current")]);
       signal.throwIfAborted();
-      return { generatedAt: through, data: buildForecastObservationPoints([...physical, ...regional], start, through) };
+      const records = [...physical, ...regional];
+      const data = buildForecastObservationPoints(records, start, through);
+      let solarCloudEvidence = null;
+      try {
+        solarCloudEvidence = buildSolarCloudEvidence(records, {
+          latitude: 47.950429954185445, longitude: -122.42797012608193,
+        }, through);
+      } catch {
+        // optional pairing refusal leaves the complete recorded projection independently usable
+      }
+      signal.throwIfAborted();
+      // calculation time cannot silently exceed the same bounded complete-fill deadline
+      if (performance.now() >= deadline) {
+        throw new Error("Forecast observation deadline exceeded");
+      }
+      return { generatedAt: through, data, solarCloudEvidence };
     } finally {
       clearTimeout(timer);
       abort.abort();

@@ -131,7 +131,7 @@ test("recorded projection expires and handles farm-local DST days", async () => 
   now = new Date("2026-11-02T08:01:00.000Z");
   const next = await cache.get();
   assert.equal(next.data.length, 1);
-  assert.equal(requests.at(-1).searchParams.get("from"), "2026-11-02T05:00:00.000Z");
+  assert.equal(requests.at(-1).searchParams.get("from"), "2026-11-01T07:41:00.000Z");
 });
 
 // bound repeated public failure load without caching partial data as a success
@@ -151,4 +151,48 @@ test("failed fills have a short retry cooldown before complete recovery", async 
   broken = false;
   assert.ok((await cache.get()).data.length > 0);
   assert.equal(calls, before + 2);
+});
+
+// a restarted edge recovers yesterday's original daylight pair without changing today's graph
+test("shared completed archive recovers daylight evidence across local midnight", async () => {
+  const now = new Date("2026-06-22T08:01:00.000Z");
+  const physical = { ...record("ws90", "2026-06-21T20:00:00.000Z"), metrics: { ...record(1).metrics, solarRadiationWm2: 800 } };
+  const regional = { ...record("regional", "2026-06-21T19:55:00.000Z"), metrics: { ...record(1).metrics, cloudCoverPercent: 80 },
+    provenance: { ...record(1).provenance, providerKey: "open-meteo", sourceId: "model", sourceKey: "open-meteo-current-v1", sourceKind: "model_current", stationSlug: "open-meteo-virtual" } };
+  const urls = [];
+  const cache = new ForecastObservationCache({ origin: "http://api:3001", now: () => now, fetcher: async (input) => {
+    const url = new URL(input);
+    urls.push(url);
+    return page([url.searchParams.get("sourceKind") === "physical_sensor" ? physical : regional]);
+  } });
+  const [observations, evidence] = await Promise.all([cache.get(), cache.get()]);
+  assert.equal(observations, evidence);
+  assert.equal(urls.length, 2);
+  assert.equal(urls[0].searchParams.get("from"), "2026-06-21T07:41:00.000Z");
+  assert.equal(evidence.solarCloudEvidence.evaluatedAt, "2026-06-21T20:00:00.000Z");
+  assert.equal(evidence.solarCloudEvidence.ws90.recordId, "ws90");
+  assert.equal(evidence.solarCloudEvidence.regional.recordId, "regional");
+  assert.equal(observations.data.length, 2);
+  assert.deepEqual(observations.data[0].metrics, {});
+  assert.equal(JSON.stringify(evidence.solarCloudEvidence).includes("metadata"), false);
+});
+
+// refuse pathological optional pair growth without discarding a fully recorded graph
+test("optional solar comparison refusal leaves complete observations available", async () => {
+  const now = new Date("2026-06-22T05:00:00.000Z");
+  const physical = Array.from({ length: 257 }, (_, index) => ({ ...record(index, "2026-06-21T20:00:00.000Z"), metrics: { ...record(1).metrics, solarRadiationWm2: 0 } }));
+  const regional = Array.from({ length: 250 }, (_, index) => ({ ...record(`model-${index}`, "2026-06-21T20:00:00.000Z"), metrics: { ...record(1).metrics, cloudCoverPercent: 80 },
+    provenance: { ...record(1).provenance, providerKey: "open-meteo", sourceId: "model", sourceKey: "open-meteo-current-v1", sourceKind: "model_current", stationSlug: "open-meteo-virtual" } }));
+  const cache = new ForecastObservationCache({ origin: "http://api:3001", now: () => now, fetcher: async (input) => {
+    const url = new URL(input);
+    // page the complete physical revision population before evaluating the optional pair budget
+    if (url.searchParams.get("sourceKind") === "physical_sensor") {
+      return url.searchParams.has("cursor") ? page(physical.slice(250)) : page(physical.slice(0, 250), "more");
+    }
+    return page(regional);
+  } });
+  const body = await cache.get();
+  assert.equal(body.solarCloudEvidence, null);
+  assert.equal(body.data.find((point) => point.validAt === "2026-06-21T20:00:00.000Z").metrics.cloudCoverPercent, 80);
+  assert.equal(await cache.get(), body);
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildSolarCloudEvidence,
   currentWeatherIcon,
   DEFAULT_UNIT_PREFERENCES,
   forecastMetricValue,
@@ -417,4 +418,118 @@ test("current polling deduplicates failures and late route responses", async (co
   await late;
   assert.equal(controller.view, "logs");
   assert.equal(controller.state.current, retained);
+});
+
+// retain exact daytime archive evidence for future hours but never for nighttime now
+function retainedEvidence() {
+  const physical = ws90();
+  const model = regional();
+  return buildSolarCloudEvidence([
+    { ...physical, provenance: { ...physical.provenance, sourceKey: "ecowitt-88f15505d89f-local-live-v1" } },
+    { ...model, provenance: { ...model.provenance, sourceKey: "open-meteo-current-v1" } },
+  ], site, "2026-06-22T05:00:00.000Z");
+}
+
+// shared server evidence survives new viewers while elapsed hours and current artwork stay raw
+test("retained daylight adjusts only future forecasts at night and fades at original expiry", () => {
+  const night = new Date("2026-06-22T05:00:00.000Z");
+  const state = dashboardState({
+    solarCloudEvidence: retainedEvidence(),
+    current: [ws90({ validAt: night.toISOString(), receivedAt: night.toISOString(), solarRadiationWm2: 0 }), regional({ validAt: night.toISOString(), receivedAt: night.toISOString() })],
+    forecast: [forecast("2026-06-22T04:00:00.000Z", 90), forecast("2026-06-22T05:00:00.000Z", 90),
+      forecast("2026-06-22T08:00:00.000Z", 90), forecast("2026-06-22T19:00:00.000Z", 90), forecast("2026-06-22T20:00:00.000Z", 90)],
+  });
+  const projected = withSolarCloudAdjustment(state, night);
+  assert.equal(cloud(projected.current[1]), 80);
+  assert.deepEqual(projected.forecast.map((value) => cloud(value)), [90, 40, 50, 90 - 80 / 24, 90]);
+  assert.deepEqual(currentWeatherIcon(state, night), currentWeatherIcon({ ...state, forecastAdjustmentMode: "raw" }, night));
+  assert.deepEqual(withSolarCloudAdjustment({ ...projected, forecastAdjustmentMode: "raw" }, night).forecast.map((value) => cloud(value)), [90, 90, 90, 90, 90]);
+  assert.deepEqual(withSolarCloudAdjustment(projected, new Date("2026-06-22T20:00:00.000Z")).forecast.map((value) => cloud(value)), [90, 90, 90, 90, 90]);
+  assert.equal(state.current[1].metrics.cloudCoverPercent, 80);
+  assert.equal(JSON.stringify(projected.forecast).includes("solar-cloud"), false);
+});
+
+// zero-bias live evidence retires a previously retained correction without extending its horizon
+test("new live daytime zero correction supersedes retained evidence", () => {
+  const later = new Date("2026-06-21T21:00:00.000Z");
+  const state = dashboardState({ solarCloudEvidence: retainedEvidence(),
+    current: [ws90({ validAt: later.toISOString(), receivedAt: later.toISOString() }), regional({ validAt: later.toISOString(), receivedAt: later.toISOString(), cloudCoverPercent: 0 })],
+    forecast: [forecast("2026-06-21T22:00:00.000Z", 90)],
+  });
+  assert.equal(cloud(withSolarCloudAdjustment(state, later).forecast[0]), 90);
+});
+
+// one independent optional request can be adopted across weather routes and forecast ranges
+test("daylight recovery is nonblocking singleflight throttled and generation fenced", async (context) => {
+  const night = new Date("2026-06-22T05:00:00.000Z");
+  context.mock.timers.enable({ apis: ["Date"], now: night });
+  const pending = deferredResponse();
+  let evidenceReads = 0;
+  let deferred = true;
+  let fail = false;
+  const controller = new WeatherDashboardController({ storage: null, view: "forecast", fetcher: async (input) => {
+    const url = String(input);
+    // isolate slow evidence from all required weather products
+    if (url.endsWith("/solar-cloud-evidence")) {
+      evidenceReads += 1;
+      // the first route and range share one unresolved archive read
+      if (deferred) {
+        return pending.promise;
+      }
+      return fail ? new Response("offline", { status: 503 }) : Response.json({ contractVersion: "solar-cloud-evidence/v1", generatedAt: new Date().toISOString(), evidence: retainedEvidence() });
+    }
+    // a complete empty observation projection is independent of cloud evidence
+    if (url.endsWith("/forecast-observations")) {
+      return Response.json({ generatedAt: night.toISOString(), data: [] });
+    }
+    return Response.json({ site, data: url.includes("/forecast?") ? [forecast("2026-06-22T06:00:00.000Z", 90)] : url.endsWith("/current") ? [regional()] : [] });
+  } });
+  await controller.initialize();
+  assert.equal(controller.state.loading, false);
+  assert.equal(controller.state.solarCloudEvidence, null);
+  assert.equal(evidenceReads, 1);
+  await controller.setForecastDays(5);
+  controller.toggleForecastAdjustmentMode();
+  await controller.setView("home");
+  assert.equal(evidenceReads, 1);
+  deferred = false;
+  pending.resolve(Response.json({ contractVersion: "solar-cloud-evidence/v1", generatedAt: night.toISOString(), evidence: retainedEvidence() }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(controller.state.solarCloudEvidence, retainedEvidence());
+  await controller.refreshCurrentReadings();
+  assert.equal(evidenceReads, 1);
+  context.mock.timers.setTime(night.getTime() + 5 * 60_000);
+  fail = true;
+  await controller.refreshCurrentReadings();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(evidenceReads, 2);
+  assert.deepEqual(controller.state.solarCloudEvidence, retainedEvidence());
+  await controller.refreshCurrentReadings();
+  assert.equal(evidenceReads, 2);
+});
+
+// a nonweather route cannot receive late optional evidence from a former generation
+test("late daylight evidence does not commit on unrelated routes", async (context) => {
+  const night = new Date("2026-06-22T05:00:00.000Z");
+  context.mock.timers.enable({ apis: ["Date"], now: night });
+  const pending = deferredResponse();
+  let reads = 0;
+  const controller = new WeatherDashboardController({ view: "forecast", storage: null, fetcher: async (input) => {
+    // only the optional evidence request remains unresolved
+    if (String(input).endsWith("/solar-cloud-evidence")) {
+      reads += 1;
+      return reads === 1 ? pending.promise : Response.json({ contractVersion: "solar-cloud-evidence/v1", generatedAt: night.toISOString(), evidence: retainedEvidence() });
+    }
+    return Response.json({ site, data: [] });
+  } });
+  await controller.initialize();
+  await controller.setView("settings");
+  pending.resolve(Response.json({ contractVersion: "solar-cloud-evidence/v1", generatedAt: night.toISOString(), evidence: retainedEvidence() }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.state.solarCloudEvidence, null);
+  assert.equal(reads, 1);
+  await controller.setView("home");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reads, 2);
+  assert.deepEqual(controller.state.solarCloudEvidence, retainedEvidence());
 });

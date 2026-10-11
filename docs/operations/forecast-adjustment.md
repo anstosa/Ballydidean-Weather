@@ -205,8 +205,9 @@ current source as described above.
 With Adjusted on, the dashboard can raise or lower the current regional cloud
 estimate and the next 24 hours of Open-Meteo cloud forecasts using the on-site
 WS90 `solarRadiationWm2` reading. The Clouds card, its daily extrema and clearest
-window, the forecast cloud chart, and live Now artwork use the same selected
-values. Changed cloud icons are gold; the card identifies the sunlight estimate
+window and the forecast cloud chart use the selected forward values. Current
+cover and live Now artwork require a fresh qualifying daytime reading; they
+remain regional at night even when a daytime forecast correction is retained. Changed cloud icons are gold; the card identifies the sunlight estimate
 without experimental wording. The proxy remains experimental and unqualified;
 removing the display label does not promote a model. Raw/off mode remains
 regional-only for current and future conditions.
@@ -232,7 +233,8 @@ At the observation and evaluation times, solar elevation must be at least
 15 degrees and expected clear-sky irradiance at least 200 W/m². Radiation must
 be greater than 5 and no greater than 2500 W/m²; ratios above 1.5 times clear-sky
 irradiance are rejected. Missing, stale, delayed, suspicious, nighttime, and
-low-sun inputs preserve raw cloud values. These conservative experimental
+low-sun inputs preserve raw current cloud values. A previously qualifying daytime
+pair can still correct future hours until its original expiry. These conservative experimental
 gates are defaults, not empirically calibrated thresholds.
 
 Solar position follows [NOAA's solar calculations](https://gml.noaa.gov/grad/solcalc/calcdetails.html).
@@ -253,11 +255,24 @@ observation time. A future hour receives
 `bias × max(0, 1 - (hour - observationTime) / 24 hours)`, clamped to 0–100%.
 Past hours and hours at or beyond `observationTime + 24 hours` remain exact raw.
 Re-rendering an unchanged reading never slides its horizon forward. Each new
-accepted reading replaces the bias; once current inputs stop qualifying, the
-entire experimental projection retires rather than persisting stale evidence.
+accepted reading replaces the bias, including a genuine zero correction. When
+current inputs stop qualifying, Now retires to regional values while only future
+hours retain the newest qualifying daytime correction until its original expiry.
+Reloads and new nighttime visitors recover the same compact source pair from
+`GET /api/v1/sites/ballydidean/solar-cloud-evidence`, not browser storage. The
+versioned response contains original scalar values, observation/reception times
+and exact WS90/regional source identities, never a serialized bias or private
+sensor metadata. The browser re-evaluates daylight and sample ages at the original
+maximum reception time; response generation, refetching and rendering cannot
+renew expiry. Wrong-source, future, invalid or expired evidence fails raw.
 
-Visible Home and Forecast pages refresh only `/current` once per minute and
-on connectivity or visibility resume. Requests do not overlap, late responses
+Visible Home and Forecast pages refresh `/current` once per minute and
+on connectivity or visibility resume. The optional queryless daylight-evidence
+read is independently throttled to five minutes and singleflight, never blocks
+required weather products, and is not refetched solely by adjustment toggles or
+forecast range changes. It shares the completed bounded archive fill with
+`forecast-observations`; failures retain genuine last-good evidence only until
+its fixed original expiry. Requests do not overlap, late responses
 from former routes/full loads are ignored, and failures retain last-good raw
 records while re-evaluating correction expiry. Forecast selection is retained
 across these current-only redraws. Artwork
@@ -1538,8 +1553,13 @@ See the official [Previous Runs](https://open-meteo.com/en/docs/previous-runs-ap
 
 The elapsed portion of each forecast chart uses recorded hourly values in both
 display modes. The fixed web-edge `forecast-observations` route fully pages the
-existing core physical and regional-current history from local midnight minus
-three hours through one fixed server timestamp. A completed compact projection
+existing core physical and regional-current history from the earlier of local
+midnight minus three hours or the fixed server timestamp minus 24 hours and
+20 minutes. The additional pairing halo recovers still-live daytime cloud
+evidence across midnight without changing the plotted current-day geometry or
+public `{ generatedAt, data }` observation envelope. The shared fill retains its
+20,000-row, 24-MiB, 128-pages-per-kind and 30-second bounds; daylight pairing also
+has a 64,000-comparison cap and refuses rather than publishing a partial result. A completed compact projection
 is shared for five minutes; failed, oversized, timed-out or cursor-invalid fills
 are not published. Paging is not a database snapshot: later revisions are
 incorporated on the next fill. Core, schema and model evidence capture are unchanged.

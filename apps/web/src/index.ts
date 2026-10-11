@@ -9,7 +9,10 @@ import {
   type UnitPreferences,
   type UnitPreferenceStorage,
 } from "./units.js";
-import { createSolarCloudBias, projectSolarCloudCover, type SolarCloudSample } from "./solar-cloud.js";
+import { createSolarCloudBias, projectSolarCloudCover, type SolarCloudBias, type SolarCloudSample } from "./solar-cloud.js";
+import { parseSolarCloudEvidenceResponse, solarCloudBiasFromEvidence, type SolarCloudEvidence } from "./solar-cloud-evidence.js";
+export { buildSolarCloudEvidence, parseSolarCloudEvidenceResponse, solarCloudBiasFromEvidence } from "./solar-cloud-evidence.js";
+export type { SolarCloudEvidence } from "./solar-cloud-evidence.js";
 import {
   createLocalForecastBias,
   projectLocalForecastBias,
@@ -526,9 +529,9 @@ export function withLocalForecastAdjustments<T extends Pick<DashboardState, "cur
   ) };
 }
 
-// project fresh on-site sunlight without changing normalized records or governed families
+// retain daytime forecast evidence without inferring nighttime current clouds
 export function withSolarCloudAdjustment<T extends Pick<DashboardState, "current" | "selectedSite"> &
-  Partial<Pick<DashboardState, "forecast" | "forecastAdjustmentMode">>>(state: T, now = new Date()): T {
+  Partial<Pick<DashboardState, "forecast" | "forecastAdjustmentMode" | "solarCloudEvidence">>>(state: T, now = new Date()): T {
   // discard former render-only projections before re-evaluating freshness
   const rawRecord = (record: WeatherRecord): WeatherRecord => solarCloudValues.has(record) ? { ...record } : record;
   const current = state.current.map(rawRecord);
@@ -559,13 +562,19 @@ export function withSolarCloudAdjustment<T extends Pick<DashboardState, "current
       freshnessStatus: record.freshness.status, recordId: record.id, sourceId: record.provenance.sourceId,
     };
   const site = state.selectedSite ?? PRODUCT_SITE;
-  const bias = createSolarCloudBias({ ...site, now: now.toISOString(), ws90: sample(ws90, "solarRadiationWm2"), regional: sample(regional, "cloudCoverPercent") });
-  // missing stale or low-sun readings preserve every raw value
-  if (bias === null) {
-    return raw;
-  }
+  const currentBias = createSolarCloudBias({ ...site, now: now.toISOString(), ws90: sample(ws90, "solarRadiationWm2"), regional: sample(regional, "cloudCoverPercent") });
+  const retainedBias = solarCloudBiasFromEvidence(state.solarCloudEvidence, site, now);
+  // a newer live daytime pair including zero bias supersedes older retained evidence
+  const forecastBias = currentBias === null ? retainedBias : retainedBias === null ||
+    Date.parse(currentBias.observedAt) > Date.parse(retainedBias.observedAt) ||
+    (currentBias.observedAt === retainedBias.observedAt && Date.parse(currentBias.evaluatedAt) >= Date.parse(retainedBias.evaluatedAt))
+    ? currentBias : retainedBias;
   // retain corrected values only on trusted ephemeral render clones
-  const project = (record: WeatherRecord, targetAt: string): WeatherRecord => {
+  const project = (record: WeatherRecord, targetAt: string, bias: SolarCloudBias | null): WeatherRecord => {
+    // missing expired or low-sun current evidence preserves its regional value
+    if (bias === null) {
+      return record;
+    }
     const value = projectSolarCloudCover(record.metrics.cloudCoverPercent, targetAt, bias);
     // omit unchanged unavailable and out-of-horizon values
     if (value === null || !Number.isFinite(value) || value === record.metrics.cloudCoverPercent) {
@@ -579,12 +588,13 @@ export function withSolarCloudAdjustment<T extends Pick<DashboardState, "current
     ...raw,
     current: current.map(
       // current estimates apply at evaluation time rather than the model's older interval
-      (record) => record === regional ? project(record, now.toISOString()) : record,
+      (record) => record === regional ? project(record, now.toISOString(), currentBias) : record,
     ),
     ...forecast === undefined ? {} : { forecast: forecast.map(
-      // leave other providers and historical products untouched
-      (record) => record.provenance.providerKey === "open-meteo" && record.provenance.sourceKind === "forecast"
-        ? project(record, record.validAt) : record,
+      // retained evidence affects only future regional hours never elapsed graph history
+      (record) => record.provenance.providerKey === "open-meteo" && record.provenance.sourceKind === "forecast" &&
+        record.provenance.stationSlug === "open-meteo-virtual" && Date.parse(record.validAt) >= now.getTime()
+        ? project(record, record.validAt, forecastBias) : record,
     ) },
   };
 }
@@ -1149,6 +1159,7 @@ export interface DashboardState {
   readonly adminAdjustmentScorecardState: ForecastAdjustmentScorecardLoadState;
   readonly forecast: readonly WeatherRecord[];
   readonly forecastPressureContext: readonly WeatherRecord[];
+  readonly solarCloudEvidence: SolarCloudEvidence | null;
   readonly forecastObservations: readonly ForecastObservationPoint[];
   readonly forecastObservationsReady: boolean;
   readonly forecastObservationsLoading: boolean;
@@ -1311,6 +1322,7 @@ const EMPTY_STATE: DashboardState = {
   adminAdjustmentScorecardState: "loading",
   forecast: [],
   forecastPressureContext: [],
+  solarCloudEvidence: null,
   forecastObservations: [],
   forecastObservationsReady: false,
   forecastObservationsLoading: false,
@@ -3766,6 +3778,8 @@ export class WeatherDashboardController {
   #currentGeneration = 0;
   #lastForecastRefreshAt = 0;
   #lastForecastObservationRefreshAt = 0;
+  #lastSolarCloudEvidenceRefreshAt = 0;
+  #solarCloudEvidenceRequest: Promise<SolarCloudEvidence | null> | null = null;
   #forecastObservationRequest: Promise<readonly ForecastObservationPoint[]> | null = null;
   #view: WeatherView;
   #state: DashboardState;
@@ -3895,6 +3909,10 @@ export class WeatherDashboardController {
     if (refreshObservations) {
       void this.refreshForecastObservations(generation);
     }
+    // share a bounded optional daylight read on both weather routes independent of toggles
+    if (Date.now() - this.#lastSolarCloudEvidenceRefreshAt >= 5 * 60_000) {
+      void this.refreshSolarCloudEvidence(generation);
+    }
     // throttle failed forecast attempts as well as successful reads
     if (refreshForecast) {
       this.#lastForecastRefreshAt = Date.now();
@@ -3951,6 +3969,41 @@ export class WeatherDashboardController {
       await refresh;
     } finally {
       this.#currentRefresh = null;
+    }
+  }
+
+  // recover the last genuine daylight pair without blocking required weather products
+  private async refreshSolarCloudEvidence(generation: number): Promise<void> {
+    const site = this.#state.selectedSite;
+    // optional evidence belongs only to the fixed home and forecast product
+    if (site === null || (this.#view !== "home" && this.#view !== "forecast")) {
+      return;
+    }
+    // route and horizon changes may adopt an existing request without adding archive load
+    if (this.#solarCloudEvidenceRequest === null && Date.now() - this.#lastSolarCloudEvidenceRefreshAt < 5 * 60_000) {
+      return;
+    }
+    this.#lastSolarCloudEvidenceRefreshAt = Date.now();
+    const request = this.#solarCloudEvidenceRequest ?? getSolarCloudEvidence(this.#fetcher, this.#apiBaseUrl, site);
+    this.#solarCloudEvidenceRequest = request;
+    try {
+      const evidence = await request;
+      // a late response cannot overwrite a newer route generation or a different site
+      if (generation === this.#currentGeneration && this.#state.selectedSite?.slug === site.slug &&
+        (this.#view === "home" || this.#view === "forecast")) {
+        this.#lastSolarCloudEvidenceRefreshAt = Date.now();
+        this.patch({ solarCloudEvidence: evidence });
+      } else if (this.#solarCloudEvidenceRequest === request) {
+        // discarded success permits immediate cache-backed recovery on a returning weather route
+        this.#lastSolarCloudEvidenceRefreshAt = 0;
+      }
+    } catch {
+      // retain only genuine last-good evidence whose original expiry is checked on every render
+    } finally {
+      // only the shared request owner clears its in-flight identity
+      if (this.#solarCloudEvidenceRequest === request) {
+        this.#solarCloudEvidenceRequest = null;
+      }
     }
   }
 
@@ -4117,6 +4170,10 @@ export class WeatherDashboardController {
     // fence background reads from the former forecast range
     this.#currentGeneration += 1;
     this.patch({ error: null, forecastDays: days, loading: true });
+    // adopt a pending daylight read without refetching solely for a horizon change
+    if (this.#solarCloudEvidenceRequest !== null) {
+      void this.refreshSolarCloudEvidence(this.#currentGeneration);
+    }
     // adopt the same pending archive read without issuing another horizon-dependent request
     if (this.#forecastObservationRequest !== null) {
       void this.refreshForecastObservations(this.#currentGeneration);
@@ -4415,6 +4472,10 @@ export class WeatherDashboardController {
         : this.#state.adminAdjustmentScorecardPublicationState,
     });
 
+    // daylight recovery never delays required current or future weather reads
+    if (this.#view === "home" || this.#view === "forecast") {
+      void this.refreshSolarCloudEvidence(generation);
+    }
     // optional archive work cannot hold the required weather products in loading state
     if (this.#view === "forecast") {
       void this.refreshForecastObservations(generation);
@@ -14683,6 +14744,24 @@ async function getForecastObservations(fetcher: typeof fetch, apiBaseUrl: string
       throw new Error("Recorded forecast history is unavailable");
     }
     return parseForecastObservationResponse(await response.json());
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// fetch only the compact fixed-site daylight evidence without exposing archive geometry
+async function getSolarCloudEvidence(fetcher: typeof fetch, apiBaseUrl: string, site: WeatherSite): Promise<SolarCloudEvidence | null> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 35_000);
+  try {
+    const response = await fetcher(`${normalizeBaseUrl(apiBaseUrl)}/sites/${encodeURIComponent(site.slug)}/solar-cloud-evidence`, {
+      headers: { accept: "application/json" }, signal: abort.signal,
+    });
+    // optional failure never removes separately loaded weather or renews retained evidence
+    if (!response.ok) {
+      throw new Error("Solar cloud evidence is unavailable");
+    }
+    return parseSolarCloudEvidenceResponse(await response.json(), site);
   } finally {
     clearTimeout(timer);
   }

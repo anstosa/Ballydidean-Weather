@@ -173,6 +173,7 @@ const versionedAssets = new Map([
   ["client.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "client.js"), type: "text/javascript; charset=utf-8" }],
   ["index.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "index.js"), type: "text/javascript; charset=utf-8" }],
   ["solar-cloud.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "solar-cloud.js"), type: "text/javascript; charset=utf-8" }],
+  ["solar-cloud-evidence.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "solar-cloud-evidence.js"), type: "text/javascript; charset=utf-8" }],
   ["local-forecast-bias.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "local-forecast-bias.js"), type: "text/javascript; charset=utf-8" }],
   ["units.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "units.js"), type: "text/javascript; charset=utf-8" }],
 ]);
@@ -264,8 +265,8 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    // aggregate only the fixed recorded graph product without altering forecast evidence
-    if (requestUrl.pathname === "/api/v1/sites/ballydidean/forecast-observations") {
+    // share one bounded archive fill without altering recorded or qualified forecast products
+    if (requestUrl.pathname === "/api/v1/sites/ballydidean/forecast-observations" || requestUrl.pathname === "/api/v1/sites/ballydidean/solar-cloud-evidence") {
       // reject all browser-controlled archive geometry and mutation methods
       if (request.method !== "GET" && request.method !== "HEAD") {
         sendText(response, 405, "method not allowed\n", { Allow: "GET, HEAD" });
@@ -277,7 +278,11 @@ const server = createServer(async (request, response) => {
         return;
       }
       try {
-        const body = JSON.stringify(await forecastObservationCache.get());
+        const cached = await forecastObservationCache.get();
+        // preserve the existing observation envelope and expose only compact source evidence
+        const body = JSON.stringify(requestUrl.pathname.endsWith("/solar-cloud-evidence")
+          ? { contractVersion: "solar-cloud-evidence/v1", generatedAt: cached.generatedAt, evidence: cached.solarCloudEvidence }
+          : { generatedAt: cached.generatedAt, data: cached.data });
         setSecurityHeaders(response);
         response.writeHead(200, {
           "Cache-Control": "public, max-age=60, s-maxage=60",
