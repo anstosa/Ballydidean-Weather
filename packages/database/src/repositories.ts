@@ -2580,6 +2580,7 @@ export async function persistEcmwfTemperatureCanaryRun(
         );
         const logicalReceivedAt = requireRow(received.rows[0],
           "ECMWF temperature revision receipt").logicalReceivedAt.toISOString();
+        await client.query("SAVEPOINT ecmwf_temperature_revision_archive");
         try {
           const bestMatchRows = await selectEcmwfTemperatureBestMatchRows(
             client,
@@ -2604,8 +2605,12 @@ export async function persistEcmwfTemperatureCanaryRun(
             siteSlug: validated.siteSlug,
             upstreamModel: validated.upstreamModel,
           });
+          await client.query("RELEASE SAVEPOINT ecmwf_temperature_revision_archive");
         } catch {
-          // preserve temperature serving after a bounded revision archive failure
+          // retain source hours while removing aborted SQL and partial archive writes
+          await client.query("ROLLBACK TO SAVEPOINT ecmwf_temperature_revision_archive");
+          await client.query("RELEASE SAVEPOINT ecmwf_temperature_revision_archive");
+          publication = null;
         }
       }
       return { publication, run: projectEcmwfTemperatureCanaryRun(stored) };
@@ -3512,12 +3517,16 @@ async function archiveChangedWeatherRevisions(
       sourceKey: source.sourceKey,
     }),
   );
+  await session.client.query("SAVEPOINT weather_revision_archive");
   try {
     const publication = await archiver(session.client, revisions);
+    await session.client.query("RELEASE SAVEPOINT weather_revision_archive");
     // omit irrelevant weather products without fabricating a gap
     return publication === null ? [] : [publication];
   } catch {
-    // preserve ordinary ingestion after a bounded revision archive failure
+    // recover aborted SQL before finalizing the ordinary ingestion checkpoint
+    await session.client.query("ROLLBACK TO SAVEPOINT weather_revision_archive");
+    await session.client.query("RELEASE SAVEPOINT weather_revision_archive");
     return [];
   }
 }

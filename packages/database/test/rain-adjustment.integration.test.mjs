@@ -92,6 +92,44 @@ test("rain serving is an immutable bounded projection with private inputs", { ti
     }
     await assert.rejects(appendRainAdjustmentRun(ingest, { ...run, modelSha256: "e".repeat(64),
       firstReceivedAt: decision.toISOString() }), /source is unavailable/u);
+    await owner.query("CREATE TABLE archive_probe (identity text); GRANT INSERT ON archive_probe TO weather_ingest");
+    // retain serving after either an aborted SQL archive or a plain archive failure
+    for (const [index, failSql] of [true, false].entries()) {
+      const failedArchiveRun = { ...run, modelSha256: String(index + 1).repeat(64) };
+      let archiveCalled = false;
+      assert.equal(await appendRainAdjustmentRun(ingest, failedArchiveRun,
+        // force the optional archive to fail inside the serving transaction
+        async (queryable) => {
+          archiveCalled = true;
+          await queryable.query("INSERT INTO archive_probe VALUES ($1)", [failedArchiveRun.modelSha256]);
+          // exercise PostgreSQL's aborted transaction state
+          if (failSql) {
+            await queryable.query("SELECT 1 / 0");
+          }
+          throw new Error("archive unavailable");
+        }), true);
+      assert.equal(archiveCalled, true);
+      const stored = await owner.query(
+        "SELECT hours FROM rain_adjustment_runs WHERE run_initialized_at = $1 AND model_sha256 = $2",
+        [failedArchiveRun.runInitializedAt, failedArchiveRun.modelSha256],
+      );
+      assert.deepEqual(stored.rows[0]?.hours, run.hours);
+      assert.equal((await owner.query("SELECT count(*)::integer AS count FROM archive_probe")).rows[0].count, 0);
+      assert.equal(await appendRainAdjustmentRun(ingest, failedArchiveRun), false);
+    }
+    let published = false;
+    const archivedRun = { ...run, modelSha256: "3".repeat(64) };
+    assert.equal(await appendRainAdjustmentRun(ingest, archivedRun,
+      // prove publication observes the committed serving row from another connection
+      async () => ({
+        async publish() {
+          const visible = await owner.query("SELECT hours FROM rain_adjustment_runs WHERE model_sha256 = $1",
+            [archivedRun.modelSha256]);
+          assert.deepEqual(visible.rows[0]?.hours, run.hours);
+          published = true;
+        },
+      })), true);
+    assert.equal(published, true);
   } finally {
     await Promise.all([owner?.end(), ingest?.end(), api?.end(), exporter?.end(), admin.end()]);
     await stopPostgres(server);

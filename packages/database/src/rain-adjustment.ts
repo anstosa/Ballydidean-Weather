@@ -169,6 +169,7 @@ export async function appendRainAdjustmentRun(
     inserted = row !== undefined;
     // archive only the new immutable serving revision and never backfill conflict rows
     if (row !== undefined && revisionArchiver !== undefined) {
+      await client.query("SAVEPOINT rain_adjustment_revision_archive");
       try {
         publication = await revisionArchiver(client, {
           generatedAt: row.generatedAt.toISOString(),
@@ -178,8 +179,12 @@ export async function appendRainAdjustmentRun(
           runInitializedAt: row.runInitializedAt.toISOString(),
           storedContentSha256: row.storedContentSha256,
         });
+        await client.query("RELEASE SAVEPOINT rain_adjustment_revision_archive");
       } catch {
-        // preserve ordinary serving after a bounded revision archive failure
+        // clear aborted SQL and partial archive writes without losing the serving row
+        await client.query("ROLLBACK TO SAVEPOINT rain_adjustment_revision_archive");
+        await client.query("RELEASE SAVEPOINT rain_adjustment_revision_archive");
+        publication = null;
       }
     }
     await client.query("COMMIT");

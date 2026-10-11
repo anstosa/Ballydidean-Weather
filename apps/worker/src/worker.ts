@@ -492,11 +492,21 @@ async function runWorkerIterationWithState(
 
   // trigger the stable private capture key after all retained producers have run
   if (options.adjustmentMaintenanceCapture !== undefined) {
+    const captureStartedAt = now().getTime();
     try {
       const capture = adjustmentMaintenanceCaptureDueAt(new Date(loopAt));
       await options.adjustmentMaintenanceCapture(capture);
     } catch {
       // keep public ingestion and serving available when graph capture is blocked
+      diagnosticWriter(createWorkerDiagnostic({
+        count: 0,
+        durationMs: elapsedMilliseconds(captureStartedAt, now()),
+        errorCode: "adjustment_maintenance_capture_failed",
+        event: "source_run",
+        release: options.version,
+        runId: null,
+        sourceId: "adjustment-maintenance-capture",
+      }));
     }
   }
 
@@ -752,6 +762,7 @@ export function createEcmwfTemperatureRevisionArchiver(
     }
     let revisionReceipt: AdjustmentRevisionCommitReceipt;
     // bind the durable complete run inside the same serving transaction
+    await queryable.query("SAVEPOINT ecmwf_temperature_revision_bind");
     try {
       revisionReceipt = (await bindAdjustmentEcmwfTemperatureRevision(queryable, {
         ...databaseKey,
@@ -759,7 +770,11 @@ export function createEcmwfTemperatureRevisionArchiver(
         projectionSha256: identity,
         stageReceiptSha256: stageReceipt.stageReceiptSha256,
       })).revisionReceipt;
+      await queryable.query("RELEASE SAVEPOINT ecmwf_temperature_revision_bind");
     } catch {
+      // recover SQL failure before retaining a permanent gap for the staged body
+      await queryable.query("ROLLBACK TO SAVEPOINT ecmwf_temperature_revision_bind");
+      await queryable.query("RELEASE SAVEPOINT ecmwf_temperature_revision_bind");
       const gap = ecmwfTemperatureRevisionGap(logicalKeySha256, identity, "database_bind_failed");
       await markAdjustmentRevisionGap(queryable, "ecmwf_temperature", databaseKey, gap);
       return { publish: () => recordWorkerRevisionGap(client, gap) };
@@ -994,6 +1009,7 @@ export function createWeatherAdjustmentRevisionArchiver(
     }
     let revisionReceipts: readonly AdjustmentRevisionCommitReceipt[];
     // bind the one durable body to every exact grouped serving revision
+    await queryable.query("SAVEPOINT weather_revision_bind");
     try {
       const batch = await bindAdjustmentWeatherRevisions(queryable, revisions.map((revision) => ({
         productRunAt: revision.record.productRunAt,
@@ -1015,7 +1031,11 @@ export function createWeatherAdjustmentRevisionArchiver(
         // retain the server-assigned global-frontier receipts unchanged
         (entry) => entry.revisionReceipt as unknown as AdjustmentRevisionCommitReceipt,
       );
+      await queryable.query("RELEASE SAVEPOINT weather_revision_bind");
     } catch {
+      // remove partial pointers and frontier ordinals before marking every grouped gap
+      await queryable.query("ROLLBACK TO SAVEPOINT weather_revision_bind");
+      await queryable.query("RELEASE SAVEPOINT weather_revision_bind");
       const gaps = await markWeatherAdjustmentRevisionGaps(
         queryable,
         revisions,

@@ -203,6 +203,41 @@ async function loadWorker({ fetcher, seededCaches = new Map() }) {
   };
 }
 
+// collect every compiled static module reachable from one entry point
+async function compiledStaticModulePaths(entry) {
+  const distRoot = new URL("../dist/", import.meta.url);
+  const pending = [new URL(entry, distRoot)];
+  const paths = new Set();
+
+  // traverse the compiled module graph once
+  while (pending.length > 0) {
+    const moduleUrl = pending.pop();
+    const assetPath = `/assets/test-release/${decodeURIComponent(moduleUrl.href.slice(distRoot.href.length))}`;
+
+    // skip modules already inspected
+    if (paths.has(assetPath)) {
+      continue;
+    }
+
+    paths.add(assetPath);
+    const source = await readFile(moduleUrl, "utf8");
+
+    // follow static imports and re-exports
+    for (const match of source.matchAll(/(?:import|export)\s+(?:[^"']*?\s+from\s+)?["'](\.[^"']+)["']/gu)) {
+      const dependency = new URL(match[1], moduleUrl);
+
+      // keep the browser shell inside the compiled web package
+      if (!dependency.href.startsWith(distRoot.href)) {
+        throw new Error(`Compiled browser dependency escapes dist: ${dependency.href}`);
+      }
+
+      pending.push(dependency);
+    }
+  }
+
+  return paths;
+}
+
 // assert one cached dashboard is analytics-safe
 async function assertOfflineDashboard(response, { status = 200 } = {}) {
   assert.ok(response);
@@ -253,6 +288,37 @@ test("precache sanitizes dashboard shells without changing privacy or assets", a
   assert.equal(await (await cache.match(`${origin}/privacy`)).text(), privacyBody);
   assert.equal(await (await cache.match(`${origin}/assets/test-release/client.js`)).text(), assetBody);
   assert.deepEqual(worker.lifecycle(), { claimed: false, skipped: true });
+});
+
+// verify every compiled browser dependency is available before the network disappears
+test("precache contains the complete compiled static module graph", async () => {
+  // return compatible shell and asset responses
+  async function fetcher(request) {
+    const pathname = new URL(request.url).pathname;
+
+    // keep compiled modules distinguishable from documents
+    if (pathname.startsWith("/assets/")) {
+      return new Response("export {};", { headers: { "content-type": "text/javascript" } });
+    }
+
+    return productionResponse();
+  }
+
+  const worker = await loadWorker({ fetcher });
+  await worker.dispatchLifecycle("install");
+  const cache = worker.cachesByName.get("ballydidean-weather-shell-test-release");
+  assert.ok(cache);
+  const cachedPaths = new Set(
+    [...cache.entries.keys()].map(
+      // compare cache entries by same-origin pathname
+      (url) => new URL(url).pathname,
+    ),
+  );
+  const missingPaths = [...await compiledStaticModulePaths("client.js")].filter(
+    // retain only uncached compiled dependencies
+    (path) => !cachedPaths.has(path),
+  );
+  assert.deepEqual(missingPaths, []);
 });
 
 // verify network and offline navigation boundaries

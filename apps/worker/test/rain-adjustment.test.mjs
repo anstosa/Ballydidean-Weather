@@ -780,17 +780,27 @@ test("rain gate revision stages before the transactional bind and publishes afte
     storedContentSha256: createHash("sha256").update("stored-rain-jsonb").digest("hex"),
   };
   const events = [];
+  let bindFailure = false;
+  let recoveredGap;
   let stageAttempts = 0;
   let stageReceipt;
   let stagedProjection;
+  let transactionAborted = false;
   const client = {
+    // publish only a successfully bound rain revision
     async publishRevision(projection, receivedStage, revisionReceipt) {
+      // prohibit publication after a failed database bind
+      if (bindFailure) assert.fail("failed rain bind was published");
       events.push("publish-revision");
       assert.equal(receivedStage, stageReceipt);
       assert.equal(revisionReceipt.stageReceiptSha256, stageReceipt.stageReceiptSha256);
       assert.ok(Buffer.from(projection).length > 0);
     },
-    async recordRevisionGap(gap) { events.push(`revision-gap:${gap.reason}`); },
+    // retain the staged rain body's terminal disposition
+    async recordRevisionGap(gap) {
+      events.push(`revision-gap:${gap.reason}`);
+      recoveredGap = gap;
+    },
     async stageRevision(projection) {
       events.push("stage-revision");
       stageAttempts += 1;
@@ -816,25 +826,64 @@ test("rain gate revision stages before the transactional bind and publishes afte
     },
   };
   const queryable = {
+    // route only the exact rain bind transaction statements
     async query(sql, values) {
-      assert.match(sql, /weather_bind_rain_gate_revision_v1/u);
-      events.push("bind-revision");
-      const pointer = JSON.parse(values[0]);
-      return { rows: [{ value: {
-        contractVersion: "adjustment-revision-row-receipt/v1",
-        revisionReceipt: {
-          archiveCommitOrdinal: "12",
-          archiveCommittedAt: "2026-09-14T08:05:12.000Z",
-          contractVersion: "adjustment-revision-commit-receipt/v1",
-          frontierSha256: "a".repeat(64),
-          predecessorFrontierSha256: "b".repeat(64),
-          projectionIdentitySha256: pointer.projectionIdentitySha256,
-          projectionKind: "rain_gate_input",
-          projectionSha256: pointer.projectionSha256,
-          receiptSha256: "c".repeat(64),
-          stageReceiptSha256: pointer.stageReceiptSha256,
-        },
-      } }] };
+      const statement = sql.trim();
+      // reject every operation while the rain bind error is unrecovered
+      if (transactionAborted && statement !==
+          "ROLLBACK TO SAVEPOINT rain_adjustment_revision_bind") {
+        throw new Error("current transaction is aborted");
+      }
+      // open the bounded rain bind recovery scope
+      if (statement === "SAVEPOINT rain_adjustment_revision_bind") {
+        events.push("bind-savepoint");
+        return { rows: [] };
+      }
+      // bind the staged rain body inside the savepoint
+      if (statement.includes("weather_bind_rain_gate_revision_v1")) {
+        events.push("bind-revision");
+        // emulate one SQL error that aborts the transaction
+        if (bindFailure) {
+          transactionAborted = true;
+          throw new Error("rain bind failed");
+        }
+        const pointer = JSON.parse(values[0]);
+        return { rows: [{ value: {
+          contractVersion: "adjustment-revision-row-receipt/v1",
+          revisionReceipt: {
+            archiveCommitOrdinal: "12",
+            archiveCommittedAt: "2026-09-14T08:05:12.000Z",
+            contractVersion: "adjustment-revision-commit-receipt/v1",
+            frontierSha256: "a".repeat(64),
+            predecessorFrontierSha256: "b".repeat(64),
+            projectionIdentitySha256: pointer.projectionIdentitySha256,
+            projectionKind: "rain_gate_input",
+            projectionSha256: pointer.projectionSha256,
+            receiptSha256: "c".repeat(64),
+            stageReceiptSha256: pointer.stageReceiptSha256,
+          },
+        } }] };
+      }
+      // restore queryability before writing the terminal marker
+      if (statement === "ROLLBACK TO SAVEPOINT rain_adjustment_revision_bind") {
+        events.push("bind-rollback");
+        transactionAborted = false;
+        return { rows: [] };
+      }
+      // release the successful rain bind scope
+      if (statement === "RELEASE SAVEPOINT rain_adjustment_revision_bind") {
+        events.push("bind-release");
+        return { rows: [] };
+      }
+      // persist the terminal disposition only after recovery
+      if (statement.includes("weather_mark_adjustment_revision_gap_v1")) {
+        const gap = JSON.parse(values[2]);
+        events.push("mark-gap");
+        return { rows: [{ value: { ...gap,
+          contractVersion: "adjustment-revision-gap-marker/v1",
+          storedContentSha256: stored.storedContentSha256 } }] };
+      }
+      throw new Error(`unexpected rain revision query: ${statement}`);
     },
   };
   const publication = await createRainAdjustmentRevisionArchiver(
@@ -845,7 +894,8 @@ test("rain gate revision stages before the transactional bind and publishes afte
     // release the simulated spool without delaying the focused test
     async () => { events.push("stage-wait"); },
   )(queryable, stored);
-  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-revision"]);
+  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-savepoint",
+    "bind-revision", "bind-release"]);
   assert.equal(stagedProjection.contractVersion, "adjustment-rain-gate-feature-projection/v2");
   assert.equal(stagedProjection.source.sourceId, forecastCapture().claimId);
   assert.equal(stagedProjection.rows.length, 23);
@@ -856,8 +906,27 @@ test("rain gate revision stages before the transactional bind and publishes afte
   assert.equal(Buffer.from(stagedProjection.rows[0].rawTargetHourTemperatureC64, "hex").readDoubleBE(),
     12);
   await publication.publish();
-  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-revision",
-    "publish-revision"]);
+  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-savepoint",
+    "bind-revision", "bind-release", "publish-revision"]);
+
+  events.length = 0;
+  bindFailure = true;
+  const recoveryPublication = await createRainAdjustmentRevisionArchiver(
+    queryable,
+    client,
+    captureEpoch,
+    evaluation,
+  )(queryable, stored);
+  await recoveryPublication.publish();
+  assert.deepEqual(events, ["stage-revision", "bind-savepoint", "bind-revision",
+    "bind-rollback", "bind-release", "mark-gap", "revision-gap:database_bind_failed"]);
+  assert.deepEqual(recoveredGap, {
+    logicalKeySha256: recoveredGap.logicalKeySha256,
+    projectionIdentitySha256: stageReceipt.projectionIdentitySha256,
+    projectionKind: "rain_gate_input",
+    projectionSha256: stageReceipt.projectionIdentitySha256,
+    reason: "database_bind_failed",
+  });
 });
 
 test("rain control revision durably stages state before scoring and database bind", async () => {
@@ -918,25 +987,40 @@ test("rain control revision durably stages state before scoring and database bin
     },
   };
   const queryable = {
+    // route only the exact control bind transaction statements
     async query(sql, values) {
-      assert.match(sql, /weather_bind_rain_gate_revision_v1/u);
-      events.push("bind-revision");
-      const pointer = JSON.parse(values[0]);
-      return { rows: [{ value: {
-        contractVersion: "adjustment-revision-row-receipt/v1",
-        revisionReceipt: {
-          archiveCommitOrdinal: "13",
-          archiveCommittedAt: "2026-09-14T08:05:12.000Z",
-          contractVersion: "adjustment-revision-commit-receipt/v1",
-          frontierSha256: "a".repeat(64),
-          predecessorFrontierSha256: "b".repeat(64),
-          projectionIdentitySha256: pointer.projectionIdentitySha256,
-          projectionKind: "rain_gate_input",
-          projectionSha256: pointer.projectionSha256,
-          receiptSha256: "c".repeat(64),
-          stageReceiptSha256: pointer.stageReceiptSha256,
-        },
-      } }] };
+      const statement = sql.trim();
+      // open the bounded control bind recovery scope
+      if (statement === "SAVEPOINT rain_adjustment_revision_bind") {
+        events.push("bind-savepoint");
+        return { rows: [] };
+      }
+      // bind the staged control body inside the savepoint
+      if (statement.includes("weather_bind_rain_gate_revision_v1")) {
+        events.push("bind-revision");
+        const pointer = JSON.parse(values[0]);
+        return { rows: [{ value: {
+          contractVersion: "adjustment-revision-row-receipt/v1",
+          revisionReceipt: {
+            archiveCommitOrdinal: "13",
+            archiveCommittedAt: "2026-09-14T08:05:12.000Z",
+            contractVersion: "adjustment-revision-commit-receipt/v1",
+            frontierSha256: "a".repeat(64),
+            predecessorFrontierSha256: "b".repeat(64),
+            projectionIdentitySha256: pointer.projectionIdentitySha256,
+            projectionKind: "rain_gate_input",
+            projectionSha256: pointer.projectionSha256,
+            receiptSha256: "c".repeat(64),
+            stageReceiptSha256: pointer.stageReceiptSha256,
+          },
+        } }] };
+      }
+      // release the successful control bind scope
+      if (statement === "RELEASE SAVEPOINT rain_adjustment_revision_bind") {
+        events.push("bind-release");
+        return { rows: [] };
+      }
+      throw new Error(`unexpected rain control revision query: ${statement}`);
     },
   };
   const publication = await createRainAdjustmentRevisionArchiver(
@@ -949,7 +1033,7 @@ test("rain control revision durably stages state before scoring and database bin
     rainIncumbentRuntime(),
   )(queryable, stored);
   assert.deepEqual(events, ["stage-state", "state-wait", "stage-state", "stage-revision",
-    "bind-revision"]);
+    "bind-savepoint", "bind-revision", "bind-release"]);
   assert.equal(projection.contractVersion, "adjustment-rain-gate-control-projection/v3");
   assert.equal(projection.stateSha256, candidate.controlStateSha256);
   assert.equal(projection.ordinalArtifactSha256, candidate.ordinalArtifactSha256);
@@ -961,7 +1045,7 @@ test("rain control revision durably stages state before scoring and database bin
     rainIncumbentRuntime().comparatorAuthority.receiptMemberSha256);
   await publication.publish();
   assert.deepEqual(events, ["stage-state", "state-wait", "stage-state", "stage-revision",
-    "bind-revision", "publish-revision"]);
+    "bind-savepoint", "bind-revision", "bind-release", "publish-revision"]);
 });
 
 test("rain control projection failure abandons only the exact staged state", async () => {

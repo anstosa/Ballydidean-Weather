@@ -56,18 +56,29 @@ test("maintenance capture scheduling uses stable six-hour due clocks", () => {
   );
 });
 
+// preserve successful native publication and terminal bind-error recovery
 test("temperature native revision stages all eighteen hours before its transactional bind", async () => {
   const events = [];
+  let bindFailure = false;
+  let recoveredGap;
   let stageAttempts = 0;
   let stageReceipt;
+  let transactionAborted = false;
   const client = {
+    // publish only a successfully bound native revision
     async publishRevision(projection, receivedStage, revisionReceipt) {
+      // prohibit publication after a failed database bind
+      if (bindFailure) assert.fail("failed temperature bind was published");
       events.push("publish-revision");
       assert.equal(receivedStage, stageReceipt);
       assert.equal(revisionReceipt.stageReceiptSha256, stageReceipt.stageReceiptSha256);
       assert.ok(Buffer.from(projection).length > 0);
     },
-    async recordRevisionGap(gap) { events.push(`revision-gap:${gap.reason}`); },
+    // retain the exact terminal body disposition
+    async recordRevisionGap(gap) {
+      events.push(`revision-gap:${gap.reason}`);
+      recoveredGap = gap;
+    },
     async stageRevision(projection) {
       events.push("stage-revision");
       stageAttempts += 1;
@@ -97,25 +108,64 @@ test("temperature native revision stages all eighteen hours before its transacti
     },
   };
   const queryable = {
+    // route only the exact bind transaction statements
     async query(sql, values) {
-      assert.match(sql, /weather_bind_ecmwf_temperature_revision_v1/u);
-      events.push("bind-revision");
-      const pointer = JSON.parse(values[0]);
-      return { rows: [{ value: {
-        contractVersion: "adjustment-revision-row-receipt/v1",
-        revisionReceipt: {
-          archiveCommitOrdinal: "13",
-          archiveCommittedAt: "2026-10-08T00:06:01.000Z",
-          contractVersion: "adjustment-revision-commit-receipt/v1",
-          frontierSha256: "a".repeat(64),
-          predecessorFrontierSha256: "b".repeat(64),
-          projectionIdentitySha256: pointer.projectionIdentitySha256,
-          projectionKind: "native_source",
-          projectionSha256: pointer.projectionSha256,
-          receiptSha256: "c".repeat(64),
-          stageReceiptSha256: pointer.stageReceiptSha256,
-        },
-      } }] };
+      const statement = sql.trim();
+      // reject every operation while the bind error is unrecovered
+      if (transactionAborted && statement !==
+          "ROLLBACK TO SAVEPOINT ecmwf_temperature_revision_bind") {
+        throw new Error("current transaction is aborted");
+      }
+      // open the bounded bind recovery scope
+      if (statement === "SAVEPOINT ecmwf_temperature_revision_bind") {
+        events.push("bind-savepoint");
+        return { rows: [] };
+      }
+      // bind the staged body inside the savepoint
+      if (statement.includes("weather_bind_ecmwf_temperature_revision_v1")) {
+        events.push("bind-revision");
+        // emulate one SQL error that aborts the transaction
+        if (bindFailure) {
+          transactionAborted = true;
+          throw new Error("temperature bind failed");
+        }
+        const pointer = JSON.parse(values[0]);
+        return { rows: [{ value: {
+          contractVersion: "adjustment-revision-row-receipt/v1",
+          revisionReceipt: {
+            archiveCommitOrdinal: "13",
+            archiveCommittedAt: "2026-10-08T00:06:01.000Z",
+            contractVersion: "adjustment-revision-commit-receipt/v1",
+            frontierSha256: "a".repeat(64),
+            predecessorFrontierSha256: "b".repeat(64),
+            projectionIdentitySha256: pointer.projectionIdentitySha256,
+            projectionKind: "native_source",
+            projectionSha256: pointer.projectionSha256,
+            receiptSha256: "c".repeat(64),
+            stageReceiptSha256: pointer.stageReceiptSha256,
+          },
+        } }] };
+      }
+      // restore queryability before writing the terminal marker
+      if (statement === "ROLLBACK TO SAVEPOINT ecmwf_temperature_revision_bind") {
+        events.push("bind-rollback");
+        transactionAborted = false;
+        return { rows: [] };
+      }
+      // release the successful bind scope
+      if (statement === "RELEASE SAVEPOINT ecmwf_temperature_revision_bind") {
+        events.push("bind-release");
+        return { rows: [] };
+      }
+      // persist the terminal disposition only after recovery
+      if (statement.includes("weather_mark_adjustment_revision_gap_v1")) {
+        const gap = JSON.parse(values[2]);
+        events.push("mark-gap");
+        return { rows: [{ value: { ...gap,
+          contractVersion: "adjustment-revision-gap-marker/v1",
+          storedContentSha256: revision.contentHash } }] };
+      }
+      throw new Error(`unexpected temperature revision query: ${statement}`);
     },
   };
   const revision = {
@@ -177,23 +227,54 @@ test("temperature native revision stages all eighteen hours before its transacti
     queryable,
     revision,
   );
-  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-revision"]);
+  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-savepoint",
+    "bind-revision", "bind-release"]);
   await publication.publish();
-  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-revision",
-    "publish-revision"]);
+  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-savepoint",
+    "bind-revision", "bind-release", "publish-revision"]);
+
+  events.length = 0;
+  bindFailure = true;
+  const recoveryPublication = await createEcmwfTemperatureRevisionArchiver(
+    queryable,
+    client,
+    captureEpoch,
+  )(queryable, revision);
+  await recoveryPublication.publish();
+  assert.deepEqual(events, ["stage-revision", "bind-savepoint", "bind-revision", "bind-rollback",
+    "bind-release", "mark-gap", "revision-gap:database_bind_failed"]);
+  assert.deepEqual(recoveredGap, {
+    logicalKeySha256: recoveredGap.logicalKeySha256,
+    projectionIdentitySha256: stageReceipt.projectionIdentitySha256,
+    projectionKind: "native_source",
+    projectionSha256: stageReceipt.projectionIdentitySha256,
+    reason: "database_bind_failed",
+  });
 });
 
+// retain every grouped receipt or every terminal row gap
 test("complete Best Match run uses one stage and one ordered 168-receipt publication", async () => {
   const events = [];
+  let bindFailure = false;
+  const markedKeys = [];
+  let recoveredGap;
   let stageAttempts = 0;
   let stageReceipt;
+  let transactionAborted = false;
   const client = {
+    // publish only the fully bound batch
     async publishRevisionBatch(_projection, receivedStage, receipts) {
+      // prohibit publication after a failed grouped bind
+      if (bindFailure) assert.fail("failed grouped bind was published");
       events.push("publish-revision-batch");
       assert.equal(receivedStage, stageReceipt);
       assert.equal(receipts.length, 168);
     },
-    async recordRevisionGap(gap) { events.push(`revision-gap:${gap.reason}`); },
+    // retain the grouped body's terminal disposition
+    async recordRevisionGap(gap) {
+      events.push(`revision-gap:${gap.reason}`);
+      recoveredGap = gap;
+    },
     async stageRevision(projection) {
       events.push("stage-revision");
       stageAttempts += 1;
@@ -218,32 +299,72 @@ test("complete Best Match run uses one stage and one ordered 168-receipt publica
     },
   };
   const queryable = {
+    // route only the exact grouped bind transaction statements
     async query(sql, values) {
-      assert.match(sql, /weather_bind_weather_record_revisions_v1/u);
-      events.push("bind-revision-batch");
-      const pointers = JSON.parse(values[0]);
-      return { rows: [{ value: {
-        contractVersion: "adjustment-revision-batch-receipt/v1",
-        receipts: pointers.map((pointer, index) => ({
-          projectionKind: "actual_best_match",
-          revisionReceipt: {
-            archiveCommitOrdinal: String(index + 14),
-            archiveCommittedAt: "2026-10-08T00:06:01.000Z",
-            contractVersion: "adjustment-revision-commit-receipt/v1",
-            frontierSha256: createHash("sha256").update(`frontier-${index}`).digest("hex"),
-            predecessorFrontierSha256: createHash("sha256")
-              .update(`frontier-${index - 1}`).digest("hex"),
-            projectionIdentitySha256: pointer.projectionIdentitySha256,
+      const statement = sql.trim();
+      // reject every operation while the batch bind error is unrecovered
+      if (transactionAborted && statement !== "ROLLBACK TO SAVEPOINT weather_revision_bind") {
+        throw new Error("current transaction is aborted");
+      }
+      // open the bounded grouped bind recovery scope
+      if (statement === "SAVEPOINT weather_revision_bind") {
+        events.push("bind-savepoint");
+        return { rows: [] };
+      }
+      // bind every staged row inside the savepoint
+      if (statement.includes("weather_bind_weather_record_revisions_v1")) {
+        events.push("bind-revision-batch");
+        // emulate one SQL error that aborts the transaction
+        if (bindFailure) {
+          transactionAborted = true;
+          throw new Error("grouped weather bind failed");
+        }
+        const pointers = JSON.parse(values[0]);
+        return { rows: [{ value: {
+          contractVersion: "adjustment-revision-batch-receipt/v1",
+          receipts: pointers.map((pointer, index) => ({
             projectionKind: "actual_best_match",
-            projectionSha256: pointer.projectionSha256,
-            receiptSha256: createHash("sha256").update(`receipt-${index}`).digest("hex"),
-            stageReceiptSha256: pointer.stageReceiptSha256,
-          },
-          sourceId: "7",
-          storedContentSha256: pointer.storedContentSha256,
-          validAt: pointer.validAt,
-        })),
-      } }] };
+            revisionReceipt: {
+              archiveCommitOrdinal: String(index + 14),
+              archiveCommittedAt: "2026-10-08T00:06:01.000Z",
+              contractVersion: "adjustment-revision-commit-receipt/v1",
+              frontierSha256: createHash("sha256").update(`frontier-${index}`).digest("hex"),
+              predecessorFrontierSha256: createHash("sha256")
+                .update(`frontier-${index - 1}`).digest("hex"),
+              projectionIdentitySha256: pointer.projectionIdentitySha256,
+              projectionKind: "actual_best_match",
+              projectionSha256: pointer.projectionSha256,
+              receiptSha256: createHash("sha256").update(`receipt-${index}`).digest("hex"),
+              stageReceiptSha256: pointer.stageReceiptSha256,
+            },
+            sourceId: "7",
+            storedContentSha256: pointer.storedContentSha256,
+            validAt: pointer.validAt,
+          })),
+        } }] };
+      }
+      // restore queryability before writing row markers
+      if (statement === "ROLLBACK TO SAVEPOINT weather_revision_bind") {
+        events.push("bind-rollback");
+        transactionAborted = false;
+        return { rows: [] };
+      }
+      // release the successful grouped bind scope
+      if (statement === "RELEASE SAVEPOINT weather_revision_bind") {
+        events.push("bind-release");
+        return { rows: [] };
+      }
+      // persist each row-specific terminal disposition after recovery
+      if (statement.includes("weather_mark_adjustment_revision_gap_v1")) {
+        const key = JSON.parse(values[1]);
+        const gap = JSON.parse(values[2]);
+        events.push("mark-gap");
+        markedKeys.push(key);
+        return { rows: [{ value: { ...gap,
+          contractVersion: "adjustment-revision-gap-marker/v1",
+          storedContentSha256: key.storedContentSha256 } }] };
+      }
+      throw new Error(`unexpected grouped revision query: ${statement}`);
     },
   };
   const metrics = Object.fromEntries([
@@ -285,10 +406,36 @@ test("complete Best Match run uses one stage and one ordered 168-receipt publica
     revisions,
   );
   assert.ok(publication);
-  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-revision-batch"]);
+  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-savepoint",
+    "bind-revision-batch", "bind-release"]);
   await publication.publish();
-  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-revision-batch",
-    "publish-revision-batch"]);
+  assert.deepEqual(events, ["stage-revision", "stage-wait", "stage-revision", "bind-savepoint",
+    "bind-revision-batch", "bind-release", "publish-revision-batch"]);
+
+  events.length = 0;
+  bindFailure = true;
+  const recoveryPublication = await createWeatherAdjustmentRevisionArchiver(
+    queryable,
+    client,
+    captureEpoch,
+  )(queryable, revisions);
+  assert.ok(recoveryPublication);
+  await recoveryPublication.publish();
+  assert.deepEqual(events.slice(0, 5), ["stage-revision", "bind-savepoint",
+    "bind-revision-batch", "bind-rollback", "bind-release"]);
+  assert.deepEqual(events.slice(5, -1), Array(revisions.length).fill("mark-gap"));
+  assert.equal(events.at(-1), "revision-gap:database_bind_failed");
+  assert.equal(markedKeys.length, revisions.length);
+  // compare every marker to its serving revision identity
+  assert.deepEqual(markedKeys.map((key) => key.storedContentSha256),
+    revisions.map((revision) => revision.contentHash));
+  assert.deepEqual(recoveredGap, {
+    logicalKeySha256: recoveredGap.logicalKeySha256,
+    projectionIdentitySha256: stageReceipt.projectionIdentitySha256,
+    projectionKind: "actual_best_match",
+    projectionSha256: stageReceipt.projectionIdentitySha256,
+    reason: "database_bind_failed",
+  });
 });
 
 test("scheduled windows cap stale checkpoints to provider limits", () => {

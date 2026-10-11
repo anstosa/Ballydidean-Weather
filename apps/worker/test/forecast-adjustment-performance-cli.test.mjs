@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
 import { gzipSync } from "node:zlib";
 
 import { RAIN_COLLECTION_STATIONS } from "@weather/domain";
 
+import { buildAdjustmentEvaluationPackage } from
+  "../../../deploy/scripts/adjustment-evaluation-package.mjs";
+
 import {
   composeVerifiedPerformancePackagePairs,
+  loadVerifiedPerformancePackages,
   loadTemperaturePerformanceData,
   normalizeVerifiedPerformanceTimestamps,
   requirePrivatePerformanceOutput,
@@ -43,6 +48,69 @@ async function privateTestDirectory(prefix) {
   return await mkdtemp(join(root, prefix));
 }
 
+// hash exact fixture bytes
+function fixtureSha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+// build the smallest real adjustment package accepted by the paired loader
+async function buildEmptyAdjustmentPackage(root, packageRoot, localDate) {
+  const migrationRoot = resolve(import.meta.dirname, "../../../packages/database/migrations");
+  const migrationNames = (await readdir(migrationRoot))
+    // retain the ordered database ledger only
+    .filter((name) => name.endsWith(".sql"))
+    .sort();
+  const migrationChecksums = await Promise.all(migrationNames.map(
+    // bind every migration fixture byte exactly
+    async (name) => fixtureSha256(await readFile(join(migrationRoot, name))),
+  ));
+  const migrationHistorySha256 = fixtureSha256(Buffer.from(migrationNames.map(
+    // serialize the ledger like the package contract
+    (name, index) => `${name}:${migrationChecksums[index]}`,
+  ).join("\n")));
+  const snapshotPath = join(root, "empty-edge-snapshot.json");
+  await writeFile(snapshotPath, `${JSON.stringify({
+    contractVersion: "forecast-adjustment-evidence-snapshot/v1",
+    entries: [],
+    frozenAt: "2026-10-07T12:00:00.000Z",
+    watermarkSha256: fixtureSha256(Buffer.from("[]")),
+  })}\n`);
+  const manifestRecord = {
+    payload: {
+      contract_version: "adjustment-evaluation-export-manifest/v1",
+      migration_checksums: migrationChecksums,
+      migration_history_sha256: migrationHistorySha256,
+      migration_names: migrationNames,
+      query_contract_sha256:
+        "c860039c72818a9b813ed9f9d93f5d8e115f4144e99d698734e9159ca3457bd4",
+      query_contract_version: "adjustment-evaluation-export-query/v1",
+      row_schema_sha256:
+        "c21782034130d003e4af48fada4c8f6545f6f1c4dff550f92d0523c7d96d20e2",
+      schema_migration: "0017_adjustment_evaluation_export.sql",
+      site_key: "ballydidean",
+      site_timezone: "America/Los_Angeles",
+    },
+    record_type: "manifest",
+    transaction: {
+      created_at_utc: "2026-10-07T12:00:00.000000Z",
+      from_local_date: localDate,
+      idle_in_transaction_session_timeout: "30s",
+      isolation_level: "repeatable read",
+      lock_timeout: "5s",
+      read_only: "on",
+      statement_timeout: "5min",
+      to_local_date: localDate,
+    },
+  };
+  await buildAdjustmentEvaluationPackage({
+    edgeSnapshotPath: snapshotPath,
+    fromLocalDate: localDate,
+    input: Readable.from([`${JSON.stringify(manifestRecord)}\n`]),
+    packageRoot,
+    toLocalDate: localDate,
+  });
+}
+
 // prohibit file-only commands from writing into serving or linked directories
 test("performance outputs reject serving paths and symbolic ancestry", async () => {
   const root = await privateTestDirectory("performance-private-");
@@ -68,6 +136,50 @@ test("verified package timestamps share canonical instants and conservative rece
     localDate: "2026-09-30",
     sourceKey: "unchanged",
   });
+});
+
+// reject forecast member replacement after the package verifier returns
+test("verified forecast rows rebind exact member bytes before decoding", async () => {
+  const root = await privateTestDirectory("performance-member-rebind-");
+  const adjustmentPackage = join(root, "adjustment");
+  const forecastPackage = join(root, "forecast");
+  const memberPath = "members/2026-10-01/station-hour/fixture.jsonl.gz";
+  const memberAbsolutePath = join(forecastPackage, memberPath);
+  const originalBytes = gzipSync(Buffer.from('{"record_kind":"station_hour","value":1}\n'), {
+    level: 9,
+    mtime: 0,
+  });
+  const replacementBytes = gzipSync(Buffer.from('{"record_kind":"station_hour","value":2}\n'), {
+    level: 9,
+    mtime: 0,
+  });
+  assert.equal(replacementBytes.byteLength, originalBytes.byteLength);
+  await buildEmptyAdjustmentPackage(root, adjustmentPackage, "2026-10-01");
+  await mkdir(join(forecastPackage, "members/2026-10-01/station-hour"), { recursive: true });
+  await writeFile(memberAbsolutePath, originalBytes);
+  const manifestBytes = Buffer.from(`${JSON.stringify({
+    createdAtUtc: "2026-10-07T12:00:00.000Z",
+    fromLocalDate: "2026-10-01",
+    members: [{
+      path: memberPath,
+      sha256: fixtureSha256(originalBytes),
+      sizeBytes: originalBytes.byteLength,
+    }],
+    siteKey: "ballydidean",
+    toLocalDate: "2026-10-01",
+  })}\n`);
+  await writeFile(join(forecastPackage, "manifest.json"), manifestBytes);
+
+  await assert.rejects(loadVerifiedPerformancePackages({
+    adjustmentPackage,
+    forecastPackage,
+  }, {
+    // replace one same-size valid gzip member after verification
+    verifyForecastPackage: async () => {
+      await writeFile(memberAbsolutePath, replacementBytes);
+      return fixtureSha256(manifestBytes);
+    },
+  }), /forecast package member changed after verification/u);
 });
 
 // build one closed unavailable aggregate

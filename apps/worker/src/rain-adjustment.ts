@@ -618,6 +618,7 @@ export function createRainAdjustmentRevisionArchiver(
     }
     let revisionReceipt: AdjustmentRevisionCommitReceipt;
     // bind the durable body to the exact current rain gate in the same transaction
+    await queryable.query("SAVEPOINT rain_adjustment_revision_bind");
     try {
       revisionReceipt = (await bindAdjustmentRainGateRevision(queryable, {
         ...databaseKey,
@@ -625,7 +626,11 @@ export function createRainAdjustmentRevisionArchiver(
         projectionSha256: identity,
         stageReceiptSha256: stageReceipt.stageReceiptSha256,
       })).revisionReceipt;
+      await queryable.query("RELEASE SAVEPOINT rain_adjustment_revision_bind");
     } catch {
+      // recover SQL failure before committing the serving row's permanent gap
+      await queryable.query("ROLLBACK TO SAVEPOINT rain_adjustment_revision_bind");
+      await queryable.query("RELEASE SAVEPOINT rain_adjustment_revision_bind");
       const gap = rainAdjustmentRevisionGap(logicalKeySha256, identity, "database_bind_failed");
       await markAdjustmentRevisionGap(queryable, "rain_gate", databaseKey, gap);
       return { publish: () => recordRainAdjustmentRevisionGap(client, gap) };

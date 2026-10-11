@@ -262,7 +262,15 @@ async function readVerifiedForecastRows(
   for (const memberValue of members) {
     const member = object(memberValue, "forecast package member");
     const path = text(member.path, "forecast package member path");
-    const plaintext = gunzipSync(await readFile(join(packageRoot, path))).toString("utf8");
+    const compressed = await readFile(join(packageRoot, path));
+
+    // rebind materialized bytes to the verified member descriptor
+    if (compressed.byteLength !== finite(member.sizeBytes, "forecast package member size") ||
+      sha256(compressed) !== text(member.sha256, "forecast package member hash")) {
+      throw new Error("forecast package member changed after verification");
+    }
+
+    const plaintext = gunzipSync(compressed).toString("utf8");
 
     // decode every nonempty canonical member row
     for (const line of plaintext.trimEnd().split("\n")) {

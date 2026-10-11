@@ -4,6 +4,8 @@ import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
+import { ADJUSTMENT_FIT_RUNTIME_GENERATED_FILES } from "./adjustment_maintenance_runtime_manifest.mjs";
+
 import {
   ADJUSTMENT_MAINTENANCE_RUNTIME_ADAPTER_GENERATED_FILES,
   ADJUSTMENT_MAINTENANCE_RUNTIME_ADAPTER_SOURCE_FILES,
@@ -843,7 +845,12 @@ test("portable adapter exposes exact source identities and a closed installed ma
   ));
   assert.equal(ADJUSTMENT_MAINTENANCE_RUNTIME_ADAPTER_GENERATED_FILES.length, 33);
   assert.equal(ADJUSTMENT_MAINTENANCE_RUNTIME_ADAPTER_SOURCE_FILES.length, 40);
-  for (const entry of ADJUSTMENT_MAINTENANCE_RUNTIME_ADAPTER_GENERATED_FILES) {
+  assert.equal(ADJUSTMENT_FIT_RUNTIME_GENERATED_FILES.length, 12);
+  // enforce the installed adapter and fit-only compiler snapshots together
+  for (const entry of [
+    ...ADJUSTMENT_MAINTENANCE_RUNTIME_ADAPTER_GENERATED_FILES,
+    ...ADJUSTMENT_FIT_RUNTIME_GENERATED_FILES,
+  ]) {
     assert.deepEqual(
       await readFile(resolve(import.meta.dirname, "../..", entry.snapshot)),
       await readFile(resolve(import.meta.dirname, "../..", entry.generatedSource)),

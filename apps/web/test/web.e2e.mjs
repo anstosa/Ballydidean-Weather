@@ -2754,17 +2754,26 @@ test("manifest and service worker provide an installable application shell", { t
       await page.evaluate(async () => (await caches.keys()).includes("ballydidean-weather-shell-browser-test")),
       true,
     );
-    await page.context().setOffline(true);
+    await page.reload({ waitUntil: "networkidle" });
     assert.equal(
-      await page.evaluate(
-        // prove a cached route survives network loss
-        async () => await fetch("/forecast").then(
-          // read one offline shell response
-          (response) => response.status,
-        ),
-      ),
-      200,
+      await page.evaluate(() => navigator.serviceWorker.controller !== null),
+      true,
     );
+    const devtools = await page.context().newCDPSession(page);
+    await devtools.send("Network.setCacheDisabled", { cacheDisabled: true });
+    const offlinePageErrors = [];
+    page.on(
+      "pageerror",
+      // collect module bootstrap failures
+      (error) => {
+        offlinePageErrors.push(error.message);
+      },
+    );
+    await page.context().setOffline(true);
+    await page.goto(`${fixture.origin}/forecast`, { waitUntil: "domcontentloaded" });
+    await page.locator(".forecast-masthead").waitFor();
+    assert.equal(await page.getByRole("link", { name: "Forecast", exact: true }).getAttribute("aria-current"), "page");
+    assert.deepEqual(offlinePageErrors, []);
     assert.equal(
       await page.evaluate(
         // keep display preferences available offline

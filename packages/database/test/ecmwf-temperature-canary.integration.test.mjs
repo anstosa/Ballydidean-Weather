@@ -307,6 +307,46 @@ test("ECMWF temperature sidecar is immutable private and single-run", async () =
       ),
       { code: "42501" },
     );
+    await ownerPool.query("CREATE TABLE archive_probe (identity text); GRANT INSERT ON archive_probe TO weather_ingest");
+    // retain the complete source run after optional archive failures
+    for (const [index, failSql] of [true, false].entries()) {
+      const shiftMs = (index + 2) * 6 * 3_600_000;
+      const shiftedRunAt = new Date(Date.parse(input.runInitializedAt) + shiftMs).toISOString();
+      const shiftedInput = {
+        ...input,
+        hours: input.hours.map(
+          // retain exact initialization-to-valid-time geometry
+          (hour) => ({ ...hour, validAt: new Date(Date.parse(hour.validAt) + shiftMs).toISOString() }),
+        ),
+        providerResponseSha256: String(index + 1).repeat(64),
+        receivedAt: new Date(Date.parse(input.receivedAt) + shiftMs).toISOString(),
+        recentErrorState: {
+          ...input.recentErrorState,
+          targetRunInitializedAt: shiftedRunAt,
+          windowEndValidAt: new Date(Date.parse(input.recentErrorState.windowEndValidAt) + shiftMs).toISOString(),
+        },
+        runInitializedAt: shiftedRunAt,
+      };
+      let archiveCalled = false;
+      const retained = await persistEcmwfTemperatureCanaryRun(ingestPool, shiftedInput,
+        // reject archive SQL without sacrificing the already inserted source hours
+        async (queryable) => {
+          archiveCalled = true;
+          await queryable.query("INSERT INTO archive_probe VALUES ($1)", [shiftedRunAt]);
+          // exercise the database-aborted transaction branch
+          if (failSql) {
+            await queryable.query("SELECT 1 / 0");
+          }
+          throw new Error("archive unavailable");
+        });
+      assert.equal(archiveCalled, true);
+      const stored = await ownerPool.query(
+        "SELECT count(*)::integer AS count FROM ecmwf_temperature_canary_hours WHERE run_id = $1",
+        [retained.id],
+      );
+      assert.equal(stored.rows[0].count, 18);
+      assert.equal((await ownerPool.query("SELECT count(*)::integer AS count FROM archive_probe")).rows[0].count, 0);
+    }
   } finally {
     await apiPool?.end().catch(() => undefined);
     await ingestPool?.end().catch(() => undefined);

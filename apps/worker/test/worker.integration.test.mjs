@@ -761,6 +761,47 @@ test("worker iteration preserves restart success and emits allowlisted diagnosti
   assert.equal(JSON.stringify(diagnostics).includes("diagnostic-secret"), false);
 });
 
+// report optional capture failures without exposing provider errors or losing loop success
+test("maintenance capture failures emit bounded diagnostics while ingestion stays available", async () => {
+  const site = await loadSiteConfiguration(sitePath);
+  // cover network rejection and the trigger's non-2xx rejection
+  for (const message of ["fetch failed Bearer capture-secret", "adjustment maintenance capture failed"]) {
+    const diagnostics = [];
+    const heartbeat = [];
+    const repository = scheduledRepository([]);
+    // retain the ordinary heartbeat independently from the optional capture
+    repository.updateWorkerHeartbeat = async (_pool, input) => { heartbeat.push(input); };
+    const result = await runWorkerIteration({}, {
+      // surface the same rejection contract used by the private HTTP trigger
+      adjustmentMaintenanceCapture: async () => { throw new Error(message); },
+      // collect only the allowlisted diagnostic payload
+      diagnosticWriter: (diagnostic) => { diagnostics.push(diagnostic); },
+      instance: "worker-test",
+      lastSuccessAt: "2026-08-21T05:20:00.000Z",
+      // hold the loop clock stable for deterministic duration and due identity
+      now: () => new Date("2026-08-22T05:20:00.000Z"),
+      repository,
+      site,
+      version: "release-test",
+    });
+    assert.equal(result.lastSuccessAt, "2026-08-21T05:20:00.000Z");
+    assert.equal(heartbeat.length, 1);
+    assert.deepEqual(diagnostics.filter(
+      // select the optional capture's fixed diagnostic source
+      (entry) => entry.source_id === "adjustment-maintenance-capture",
+    ), [{
+      count: 0,
+      duration_ms: 0,
+      error_code: "adjustment_maintenance_capture_failed",
+      event: "source_run",
+      release: "release-test",
+      run_id: null,
+      source_id: "adjustment-maintenance-capture",
+    }]);
+    assert.equal(JSON.stringify(diagnostics).includes("capture-secret"), false);
+  }
+});
+
 // preserve durable success when a restarted worker has no due sources
 test("worker iteration preserves restart success with no due sources", async () => {
   const site = await loadSiteConfiguration(sitePath);

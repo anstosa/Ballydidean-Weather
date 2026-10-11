@@ -1829,6 +1829,53 @@ test(
           vendor: "Ecowitt",
         });
       });
+      // preserve ordinary ingestion and its checkpoint when the optional archive fails
+      await context.test("scheduled serving survives archive SQL and plain errors", async () => {
+        const session = await requireSession(pool, currentSource.id);
+        try {
+          await pool.query("CREATE TABLE archive_probe (identity text)");
+          // exercise both database-aborted and JavaScript-only failures
+          for (const [index, failSql] of [true, false].entries()) {
+            const validAt = `2026-09-01T0${String(index)}:00:00.000Z`;
+            const end = `2026-09-01T0${String(index)}:15:00.000Z`;
+            const checkpoint = await getScheduledCheckpoint(session);
+            const run = await createRun(session, currentSource, "scheduled", validAt, end);
+            let archiveCalled = false;
+            await completeScheduledIngestion(session, {
+              attempts: 1,
+              expectedCheckpointVersion: checkpoint.version,
+              lastValidAt: validAt,
+              providerCursor: null,
+              records: [makeRecord(currentSource.id, "model_current", validAt)],
+              // fail inside the existing serving transaction
+              async revisionArchiver(queryable) {
+                archiveCalled = true;
+                await queryable.query("INSERT INTO archive_probe VALUES ($1)", [validAt]);
+                // trigger the PostgreSQL transaction-aborted path
+                if (failSql) {
+                  await queryable.query("SELECT 1 / 0");
+                }
+                throw new Error("archive unavailable");
+              },
+              runId: run.id,
+              windowEndExclusive: end,
+              windowStart: validAt,
+            });
+            assert.equal(archiveCalled, true);
+            const stored = await pool.query(
+              "SELECT temperature_c FROM weather_records WHERE source_id = $1 AND valid_at = $2",
+              [currentSource.id, validAt],
+            );
+            assert.equal(stored.rows[0]?.temperature_c, 10);
+            const state = await pool.query("SELECT state FROM ingestion_runs WHERE id = $1", [run.id]);
+            assert.equal(state.rows[0].state, "succeeded");
+            assert.equal((await pool.query("SELECT count(*)::integer AS count FROM archive_probe")).rows[0].count, 0);
+            assert.equal((await getScheduledCheckpoint(session)).version, checkpoint.version + 1);
+          }
+        } finally {
+          await session.release();
+        }
+      });
     } finally {
       await Promise.all([pool.end(), adminPool.end()]);
       await stopPostgres(server);
