@@ -105,7 +105,7 @@ class MemoryCache {
 }
 
 // load one isolated service worker
-async function loadWorker({ fetcher, seededCaches = new Map(), active = null, digests }) {
+async function loadWorker({ fetcher, seededCaches = new Map(), active = null, digests, failWrites = false }) {
   const source = await readFile(new URL("../public/service-worker.js", import.meta.url), "utf8");
   const assetDigests = digests ?? Object.fromEntries(
     [...source.matchAll(/`\/assets\/\$\{release\}\/([^`]+)`/gu)].map(
@@ -132,6 +132,10 @@ async function loadWorker({ fetcher, seededCaches = new Map(), active = null, di
     // initialize one absent cache
     if (cache === undefined) {
       cache = new MemoryCache(fetcher);
+      // emulate storage pressure after a new staging cache is opened
+      if (failWrites) {
+        cache.put = async () => { throw new Error("quota"); };
+      }
       cachesByName.set(name, cache);
     }
 
@@ -553,19 +557,11 @@ test("failed staging preserves the current shell and cannot activate", async () 
   // exercise independent failure boundaries
   for (const failure of ["network", "http", "module", "private", "release", "integrity", "quota"]) {
     const oldCache = new MemoryCache(completeShellResponse);
-    const partial = new MemoryCache(completeShellResponse);
-    // emulate a partial cache write failing under storage pressure
-    if (failure === "quota") {
-      partial.put = async () => { throw new Error("quota"); };
-    }
     const seededCaches = new Map([["ballydidean-weather-shell-old", oldCache]]);
-    // insert only the targeted staging cache for quota failure
-    if (failure === "quota") {
-      seededCaches.set("ballydidean-weather-shell-test-release", partial);
-    }
     const worker = await loadWorker({
       active: {},
       seededCaches,
+      failWrites: failure === "quota",
       ...(failure === "integrity" ? { digests: {} } : {}),
       // fail one response while retaining ordinary serving
       fetcher: async (request) => {
@@ -592,4 +588,42 @@ test("failed staging preserves the current shell and cannot activate", async () 
     await worker.dispatchMessage({ type: "WEATHER_APPLY_UPDATE", release: "test-release" });
     assert.equal(worker.lifecycle().skipped, false, failure);
   }
+});
+
+// keep the same release safe while migrating from a legacy worker script url
+test("same-release reinstalls neither restore premature readiness nor delete the active cache", async () => {
+  const initial = await loadWorker({ fetcher: completeShellResponse });
+  await initial.dispatchLifecycle("install");
+  const existing = initial.cachesByName.get("ballydidean-weather-shell-test-release");
+  let releaseDownload;
+  const gate = new Promise((resolveDownload) => { releaseDownload = resolveDownload; });
+  let reachedDownload;
+  const reached = new Promise((resolveReached) => { reachedDownload = resolveReached; });
+  const replacement = await loadWorker({
+    active: {},
+    seededCaches: initial.cachesByName,
+    // pause before any completed download while the old readiness marker exists
+    fetcher: async (request) => {
+      reachedDownload();
+      await gate;
+      return completeShellResponse(request);
+    },
+  });
+  const installation = replacement.dispatchLifecycle("install");
+  await reached;
+  const [pending] = await replacement.dispatchMessage({ type: "WEATHER_UPDATE_STATUS" });
+  assert.equal(pending.phase, "downloading");
+  assert.equal(pending.completed, 0);
+  await replacement.dispatchMessage({ type: "WEATHER_APPLY_UPDATE", release: "test-release" });
+  assert.equal(replacement.lifecycle().skipped, false);
+  releaseDownload();
+  await installation;
+  assert.equal(replacement.messages.at(-1).completed, replacement.messages.at(-1).total);
+  assert.equal(replacement.cachesByName.get("ballydidean-weather-shell-test-release"), existing);
+  // retain the active same-release shell when replacement writes fail
+  existing.put = async () => { throw new Error("quota"); };
+  const failing = await loadWorker({ active: {}, fetcher: completeShellResponse, seededCaches: initial.cachesByName });
+  await assert.rejects(failing.dispatchLifecycle("install"), /quota/u);
+  assert.equal(failing.cachesByName.get("ballydidean-weather-shell-test-release"), existing);
+  assert.equal(await (await existing.match("/__weather-shell-ready/test-release")).text(), "test-release");
 });

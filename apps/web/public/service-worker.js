@@ -4,6 +4,7 @@ const shellCache = `${cachePrefix}${release}`;
 const readyPath = `/__weather-shell-ready/${release}`;
 const shellAssetDigests = __WEATHER_SHELL_ASSET_DIGESTS__;
 const updateState = { type: "WEATHER_UPDATE_STATE", release, phase: "downloading", completed: 0, total: 0 };
+let installing = false;
 const shellPaths = [
   "/",
   "/logs",
@@ -142,7 +143,7 @@ async function reportUpdate() {
 // recover readiness after an idle waiting worker has been restarted
 async function restoreUpdateState() {
   // avoid interfering with active installation or known failures
-  if (updateState.phase !== "downloading" || updateState.completed !== 0 || !await caches.has(shellCache)) {
+  if (installing || updateState.phase !== "downloading" || updateState.completed !== 0 || !await caches.has(shellCache)) {
     return;
   }
   const cache = await caches.open(shellCache);
@@ -170,8 +171,12 @@ self.addEventListener("message", (event) => {
 
 // download and verify the complete shell before declaring readiness
 self.addEventListener("install", (event) => {
+  installing = true;
+  updateState.phase = "downloading";
+  updateState.completed = 0;
   event.waitUntil((async () => {
     let cache;
+    let createdCache = false;
     try {
       await reportUpdate();
       const responses = [];
@@ -212,6 +217,7 @@ self.addEventListener("install", (event) => {
         updateState.completed += 1;
         await reportUpdate();
       }
+      createdCache = !await caches.has(shellCache);
       cache = await caches.open(shellCache);
       // commit only verified responses before reporting readiness
       for (const [request, response] of responses) {
@@ -226,12 +232,14 @@ self.addEventListener("install", (event) => {
       }
     } catch (error) {
       // discard only this failed staging cache while preserving the active shell
-      if (cache !== undefined) {
+      if (cache !== undefined && createdCache) {
         await caches.delete(shellCache);
       }
       updateState.phase = "failed";
       await reportUpdate();
       throw error;
+    } finally {
+      installing = false;
     }
   })());
 });

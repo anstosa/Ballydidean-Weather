@@ -39,8 +39,9 @@ Private or no-store dashboard responses cannot enter the shared shell.
 
 Only after every verified response has been written is a final readiness marker
 stored. The marker lets an idle waiting worker recover readiness after its
-process restarts. Any failed staging writes are discarded without retiring the
-old active cache. No partial download may activate. The old release's cache is
+process restarts. A failed newly created staging cache is discarded without
+retiring the old active cache. Same-release worker URL migrations also preserve
+the already retained shell on write failure. No partial download may activate. The old release's cache is
 retired only after successful activation; unrelated caches remain untouched.
 
 TLS, the controlled release pipeline, and the worker-embedded integrity map are

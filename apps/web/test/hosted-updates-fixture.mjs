@@ -10,7 +10,7 @@ const compiledRoot = join(root, "apps/web/dist");
 export const androidWebViewAgent = "Mozilla/5.0 (Linux; Android 16; Pixel 4 Build/AP; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/140.0.0.0 Mobile Safari/537.36";
 
 // run real release transitions against the compiled updater and worker
-export async function startHostedUpdateFixture() {
+export async function startHostedUpdateFixture({ legacy = false } = {}) {
   let release = "2026.10.11-1";
   let corrupt = false;
   let downloadGate = null;
@@ -31,7 +31,9 @@ export async function startHostedUpdateFixture() {
         document.getElementById('celsius').addEventListener('click', () => {
           localStorage.setItem('unit', 'Celsius'); document.getElementById('unit').textContent = 'Celsius';
         });
-        registerHostedUpdates().catch(() => {});
+        ${legacy && version === "2026.10.11-1"
+          ? "navigator.serviceWorker.register('/service-worker.js?release=2026.10.11-1', { scope: '/', updateViaCache: 'none' }).then((registration) => registration.update()).catch(() => {});"
+          : "registerHostedUpdates().catch(() => {});"}
         document.body.dataset.booted = '${version}';`);
     }
     return readFileSync(join(name === "styles.css" ? publicRoot : compiledRoot, name));

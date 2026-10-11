@@ -25,6 +25,33 @@ function chromiumPath() {
   );
 }
 
+// migrate a retained legacy registration and an already-staged new release
+test("hosted OTA aligns the legacy worker URL with the current document", { timeout: 60_000 }, async () => {
+  const fixture = await startHostedUpdateFixture({ legacy: true });
+  const browser = await chromium.launch({ headless: true, executablePath: chromiumPath() });
+  const page = await browser.newPage({ userAgent: androidWebViewAgent });
+  try {
+    await page.goto(`${fixture.origin}/forecast`);
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+    await page.getByRole("button", { name: "Use Celsius" }).click();
+    fixture.update("2026.10.11-2");
+    await check(page);
+    await page.waitForFunction(async () => (await navigator.serviceWorker.getRegistration()).waiting?.state === "installed");
+    assert.equal(await page.locator("h1").textContent(), "Release 2026.10.11-1");
+    // reopening the hosted page loads the new updater and migrates the stable url
+    await page.reload();
+    await page.waitForFunction(async () => navigator.serviceWorker.controller?.scriptURL.endsWith("/service-worker.js") && (await navigator.serviceWorker.getRegistration()).waiting === null);
+    await page.waitForFunction(async () => !(await caches.keys()).includes("ballydidean-weather-shell-2026.10.11-1"));
+    assert.equal(await page.locator("h1").textContent(), "Release 2026.10.11-2");
+    assert.equal(await page.locator("#unit").textContent(), "Celsius");
+    assert.equal(await page.locator(".hosted-update-prompt").count(), 0);
+    assert.equal(await page.evaluate(async () => (await caches.keys()).includes("ballydidean-weather-shell-2026.10.11-1")), false);
+  } finally {
+    await browser.close();
+    await fixture.close();
+  }
+});
+
 // trigger an actual worker byte comparison without navigating away
 async function check(page) {
   await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
