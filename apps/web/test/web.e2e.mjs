@@ -5166,6 +5166,7 @@ test("forecast masthead keeps its range controls on one responsive row", { timeo
           }
 
           const mastheadBounds = masthead.getBoundingClientRect();
+          const mastheadStyle = getComputedStyle(masthead);
           const headingBounds = heading.getBoundingClientRect();
           const selectorBounds = selector.getBoundingClientRect();
           const actionsBounds = actions.getBoundingClientRect();
@@ -5205,7 +5206,10 @@ test("forecast masthead keeps its range controls on one responsive row", { timeo
             headingRight: headingBounds.right,
             headerOverflow: masthead.scrollWidth - masthead.clientWidth,
             mobileRangeBelow: selectorBounds.top >= Math.max(headingBounds.bottom, actionsBounds.bottom),
-            mobileRangeWidthDifference: Math.abs(selectorBounds.width - mastheadBounds.width),
+            mobileRangeWidthDifference: Math.abs(
+              selectorBounds.width - mastheadBounds.width +
+              Number.parseFloat(mastheadStyle.paddingLeft) + Number.parseFloat(mastheadStyle.paddingRight),
+            ),
             nextSiblingIsActions: selector.nextElementSibling === actions,
             pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
             rangeCenter: selectorBounds.top + selectorBounds.height / 2,
@@ -10095,7 +10099,7 @@ test("home and forecast mastheads stay usable while pinned", { timeout: 120_000 
     await settleLayout(page);
   };
   // measure a pinned route header and the chrome below it
-  const assertPinnedMasthead = async (page, route, width) => {
+  const assertPinnedMasthead = async (page, route, width, expectLayered = true) => {
     const selector = route === "forecast" ? ".forecast-masthead" : ".home-masthead";
     const layout = await page.locator(selector).evaluate(
       // inspect final browser geometry and stacking
@@ -10107,9 +10111,13 @@ test("home and forecast mastheads stay usable while pinned", { timeout: 120_000 
         const range = masthead.querySelector(".forecast-range-selector")?.getBoundingClientRect();
         const navigation = document.querySelector(".section-nav")?.getBoundingClientRect();
         const weatherContent = document.querySelector(".weather-content");
+        const clientWidth = document.documentElement.clientWidth;
         const probeX = bounds.left + bounds.width / 2;
         const probeY = Math.max(bounds.top, bounds.bottom - 2);
         const hitStack = document.elementsFromPoint(probeX, probeY);
+        const leftEdgeHit = document.elementFromPoint(1, probeY);
+        const rightEdgeHit = document.elementFromPoint(clientWidth - 2, probeY);
+        const expectedControlInset = width <= 672 ? 8 : Math.max(16, (clientWidth - 1_248) / 2);
         const background = style.backgroundColor;
         const backgroundAlpha = background === "transparent"
           ? 0
@@ -10119,12 +10127,20 @@ test("home and forecast mastheads stay usable while pinned", { timeout: 120_000 
           controlsContained: heading !== undefined && toggle !== undefined &&
             heading.top >= bounds.top - 1 && heading.bottom <= bounds.bottom + 1 &&
             toggle.top >= bounds.top - 1 && toggle.bottom <= bounds.bottom + 1,
+          controlsTrackAligned: heading !== undefined && toggle !== undefined &&
+            Math.abs(heading.left - expectedControlInset) < 1 &&
+            Math.abs(toggle.right - (clientWidth - expectedControlInset)) < 1,
+          expectedControlInset,
           headerHitFirst: masthead.contains(hitStack[0] ?? null),
+          headerLeft: bounds.left,
+          headerRight: bounds.right,
+          headerWidth: bounds.width,
           headingVisible: heading !== undefined && heading.bottom > 0 && heading.top < innerHeight,
           layeredOverContent: weatherContent !== null && hitStack.some(
             // find the obscured route content in the hit-test stack
             (element) => element === weatherContent || weatherContent.contains(element),
           ),
+          leftEdgeHitFirst: masthead.contains(leftEdgeHit),
           navigationBelow: navigation !== undefined && navigation.top >= bounds.bottom - 1,
           opaque: backgroundAlpha === 1,
           overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -10133,9 +10149,11 @@ test("home and forecast mastheads stay usable while pinned", { timeout: 120_000 
           rangeContained: route !== "forecast" || range !== undefined &&
             range.top >= bounds.top - 1 && range.bottom <= bounds.bottom + 1,
           routeClass: masthead.classList.contains(`${route}-masthead`),
+          rightEdgeHitFirst: masthead.contains(rightEdgeHit),
           top: bounds.top,
           topOffset: style.top,
           toggleVisible: toggle !== undefined && toggle.bottom > 0 && toggle.top < innerHeight,
+          viewportWidth: clientWidth,
           width,
           zIndex: Number.parseFloat(style.zIndex),
         };
@@ -10143,15 +10161,27 @@ test("home and forecast mastheads stay usable while pinned", { timeout: 120_000 
       { route, width },
     );
     assert.equal(layout.position, "sticky", `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
-    assert.equal(layout.pinned, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
+    // require the sticky top only after content moves behind the header
+    if (expectLayered) {
+      assert.equal(layout.pinned, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
+    }
     assert.equal(layout.routeClass, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
     assert.equal(layout.headingVisible, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
     assert.equal(layout.toggleVisible, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
     assert.equal(layout.controlsContained, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
+    assert.equal(layout.controlsTrackAligned, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
     assert.equal(layout.rangeContained, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
     assert.equal(layout.opaque, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
     assert.equal(layout.headerHitFirst, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
-    assert.equal(layout.layeredOverContent, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
+    assert.equal(layout.leftEdgeHitFirst, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
+    assert.equal(layout.rightEdgeHitFirst, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
+    assert.equal(Math.abs(layout.headerLeft) < 1, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
+    assert.equal(Math.abs(layout.headerRight - layout.viewportWidth) < 1, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
+    assert.equal(Math.abs(layout.headerWidth - layout.viewportWidth) < 1, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
+    // require underlying content only after document scrolling
+    if (expectLayered) {
+      assert.equal(layout.layeredOverContent, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
+    }
     assert.equal(layout.zIndex >= 1, true, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
     assert.equal(layout.overflow, 0, `${route} ${String(width)}px: ${JSON.stringify(layout)}`);
 
@@ -10202,6 +10232,8 @@ test("home and forecast mastheads stay usable while pinned", { timeout: 120_000 
       page.on("pageerror", (error) => pageErrors.push(error.message));
       await page.clock.setFixedTime(new Date("2026-08-22T05:37:00.000Z"));
       await page.goto(fixture.origin, { waitUntil: "networkidle" });
+      await settleLayout(page);
+      await assertPinnedMasthead(page, "home", viewport.width, false);
       await pinMasthead(page);
       await assertPinnedMasthead(page, "home", viewport.width);
       const homeToggle = page.getByRole("switch", { name: "Adjusted", exact: true });
@@ -10213,6 +10245,9 @@ test("home and forecast mastheads stay usable while pinned", { timeout: 120_000 
       // keep the forecast controls actionable while their header is pinned
       await page.getByRole("link", { name: "Forecast", exact: true }).click();
       await page.locator('[data-forecast-charts][data-forecast-days="1"]').waitFor();
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await settleLayout(page);
+      await assertPinnedMasthead(page, "forecast", viewport.width, false);
       await page.getByRole("button", { name: "5 days", exact: true }).click();
       await page.locator('[data-forecast-charts][data-forecast-days="5"]').waitFor();
       await page.evaluate(() => {
@@ -10226,6 +10261,19 @@ test("home and forecast mastheads stay usable while pinned", { timeout: 120_000 
       await settleLayout(page);
       await assertPinnedMasthead(page, "forecast", viewport.width);
       await assertForecastClocks(page, viewport.width);
+      // preserve full-width coverage across the exact layout breakpoint
+      if (viewport.width === 1_440) {
+        for (const width of [673, 672]) {
+          await page.setViewportSize({ height: 844, width });
+          await settleLayout(page);
+          await assertPinnedMasthead(page, "forecast", width);
+          await assertForecastClocks(page, width);
+        }
+        await page.setViewportSize(viewport);
+        await settleLayout(page);
+        await assertPinnedMasthead(page, "forecast", viewport.width);
+        await assertForecastClocks(page, viewport.width);
+      }
       const forecastToggle = page.getByRole("switch", { name: "Adjusted", exact: true });
       await forecastToggle.click();
       assert.equal(await forecastToggle.getAttribute("aria-checked"), "false");
@@ -10272,10 +10320,7 @@ test("home and forecast mastheads stay usable while pinned", { timeout: 120_000 
       await page.locator(".home-masthead").waitFor();
       await page.evaluate(() => window.scrollTo(0, 0));
       await settleLayout(page);
-      assert.equal(
-        await page.locator(".home-masthead").evaluate((masthead) => masthead.getBoundingClientRect().top >= 0),
-        true,
-      );
+      await assertPinnedMasthead(page, "home", viewport.width, false);
       await pinMasthead(page);
       await assertPinnedMasthead(page, "home", viewport.width);
 

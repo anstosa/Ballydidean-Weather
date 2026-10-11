@@ -309,6 +309,30 @@ a {
   padding: 1.5rem 0;
 }
 
+/* give sticky weather headers the viewport while retaining centered content tracks */
+.shell:has(> :is(.home-masthead, .forecast-masthead)) {
+  --weather-page-gutter: max(1rem, calc((100% - 78rem) / 2));
+
+  grid-template-columns: var(--weather-page-gutter) 5.75rem minmax(0, 1fr) var(--weather-page-gutter);
+  column-gap: 0;
+  width: 100%;
+}
+
+/* align full-width header controls with the existing content edges */
+.shell:has(> :is(.home-masthead, .forecast-masthead)) > .masthead {
+  padding-inline: var(--weather-page-gutter);
+}
+
+/* retain the desktop rail and its gap inside the centered content tracks */
+.shell:has(> :is(.home-masthead, .forecast-masthead)) > .section-nav {
+  grid-column: 2;
+}
+
+.shell:has(> :is(.home-masthead, .forecast-masthead)) > .weather-content {
+  grid-column: 3;
+  margin-left: 1rem;
+}
+
 .masthead {
   --masthead-title-size: clamp(2.2rem, 5vw, 3.5rem);
   /* match the complete forecast range including its padding and border */
@@ -4578,6 +4602,15 @@ td small {
     display: block;
     width: min(100% - 1rem, 78rem);
     padding: 0.55rem 0 calc(6rem + env(safe-area-inset-bottom));
+  }
+
+  /* retain phone content insets without narrowing the sticky header backdrop */
+  .shell:has(> :is(.home-masthead, .forecast-masthead)) {
+    --weather-page-gutter: 0.5rem;
+  }
+
+  .shell:has(> :is(.home-masthead, .forecast-masthead)) > .weather-content {
+    margin-inline: var(--weather-page-gutter);
   }
 
   .section-nav {
