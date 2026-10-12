@@ -15,20 +15,18 @@ const requiredSecrets = [
   "PLAY_SERVICE_ACCOUNT_JSON",
 ];
 
-// isolate release preparation with fake credentials and a fixed utc clock
+// isolate release preparation with fake credentials and a fixed workflow counter
 async function fixture(t, overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), "weather-release-test-"));
   // remove only this test's private temporary directory
   t.after(async () => await rm(root, { recursive: true, force: true }));
-  const bin = join(root, "bin");
-  await mkdir(bin);
-  await writeFile(join(bin, "date"), '#!/usr/bin/env bash\nprintf "%s\\n" "${TEST_VERSION_CODE:-262661530}"\n', { mode: 0o700 });
   const env = {
-    PATH: `${bin}:${process.env.PATH}`,
+    PATH: process.env.PATH,
     RUNNER_TEMP: root,
     GITHUB_ENV: join(root, "environment"),
     GITHUB_OUTPUT: join(root, "outputs"),
     GITHUB_REF_TYPE: "branch",
+    GITHUB_RUN_NUMBER: "6",
     REQUESTED_VERSION_NAME: "0.1.0",
     ANDROID_UPLOAD_KEYSTORE_BASE64: Buffer.from("fixture-key-not-a-keystore").toString("base64"),
     ANDROID_UPLOAD_KEYSTORE_PASSWORD: "fixture-store-password",
@@ -55,7 +53,7 @@ test("Android release preparation retains the requested version and private cred
   const result = prepare(env);
   assert.equal(result.status, 0, result.stderr);
   const key = join(root, "weather-android-signing", "upload.jks");
-  assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"), "code=262661530\nname=1.2.3-beta.1\n");
+  assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"), "code=262850157\nname=1.2.3-beta.1\n");
   const account = join(root, "weather-android-signing", "play-service-account.json");
   assert.equal(await readFile(env.GITHUB_ENV, "utf8"), `ANDROID_UPLOAD_KEYSTORE_FILE=${key}\nPLAY_SERVICE_ACCOUNT_FILE=${account}\n`);
   assert.equal(await readFile(key, "utf8"), "fixture-key-not-a-keystore");
@@ -96,7 +94,7 @@ test("Android build tags retain the explicitly chosen version name", async (t) =
     });
     const result = prepare(env);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"), `code=262661530\nname=${version}\n`);
+    assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"), `code=262850157\nname=${version}\n`);
   }
   const { env } = await fixture(t, {
     GITHUB_REF_TYPE: "tag",
@@ -176,21 +174,57 @@ test("Android release preparation refuses existing key material", async (t) => {
   assert.equal(await readFile(join(directory, "upload.jks"), "utf8"), "untouched");
 });
 
-// keep ferry's utc clock convention independent of caller workflow run numbers
-test("Android version codes use a validated decimal UTC clock", async (t) => {
+// increase codes by one per new workflow run without timestamp jumps
+test("Android version codes increment from the last published timestamp code", async (t) => {
   const { env } = await fixture(t);
-  const valid = spawnSync("bash", [codeScript], { env, encoding: "utf8" });
-  assert.equal(valid.status, 0, valid.stderr);
-  assert.equal(valid.stdout, "262661530\n");
-  // reject a broken date command rather than emitting an unsafe version
-  for (const code of ["000000000", "date-error", "2100000001", "262661530\nname=bad"]) {
+  // preserve the migration baseline, adjacent increments and the play upper boundary
+  for (const [run, code] of [["6", 262850157], ["7", 262850158], ["8", 262850159], ["1837149849", 2100000000]]) {
     const result = spawnSync("bash", [codeScript], {
-      env: { ...env, TEST_VERSION_CODE: code },
+      env: { ...env, GITHUB_RUN_NUMBER: run },
       encoding: "utf8",
     });
-    assert.notEqual(result.status, 0, code);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `${code}\n`);
+  }
+});
+
+// retries retain artifact identity rather than silently allocating another release
+test("Android version codes do not change when a workflow is retried", async (t) => {
+  const { env } = await fixture(t);
+  // retry counts cannot affect the release counter
+  for (const attempt of ["1", "2", "100"]) {
+    const result = spawnSync("bash", [codeScript], {
+      env: { ...env, GITHUB_RUN_ATTEMPT: attempt },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "262850157\n");
+  }
+});
+
+// reject counter resets, injection and overflow before printing workflow output
+test("Android version codes fail closed on invalid or exhausted counters", async (t) => {
+  const { env } = await fixture(t);
+  // bound decimal parsing before shell arithmetic and refuse old workflow runs
+  for (const run of ["", "0", "1", "5", "06", "-6", "6.0", "date-error", "1837149850", "9999999999", "999999999999999999999", "6\nname=bad", "6+1", "$(id)"]) {
+    const result = spawnSync("bash", [codeScript], {
+      env: { ...env, GITHUB_RUN_NUMBER: run },
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0, run);
     assert.equal(result.stdout, "");
   }
+});
+
+// invalid release counters cannot leave private credentials or partial outputs
+test("Android release preparation validates its counter before restoring credentials", async (t) => {
+  const { root, env } = await fixture(t, { GITHUB_RUN_NUMBER: "" });
+  const result = prepare(env);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /GITHUB_RUN_NUMBER/u);
+  await assert.rejects(access(join(root, "weather-android-signing")));
+  await assert.rejects(access(env.GITHUB_OUTPUT));
+  await assert.rejects(access(env.GITHUB_ENV));
 });
 
 // bind publishing to Weather's exact validated commit and bounded artifacts

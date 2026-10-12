@@ -78,11 +78,28 @@ generates a fresh numeric version code as usual. Never move the original
 `android-v0.1.0` tag, and wait for the new exact-commit **Check** before pushing
 the new build tag. This tag path also works before the workflow reaches `main`.
 
-The workflow retains Ferry FYI's UTC `yyDDDHHmm` numeric version-code scheme,
-not the caller's Actions run number. Releases are serialized, but this scheme
-has minute precision: do not publish the same UTC minute twice. Existing apps
-must have a highest Play version code below the newly generated value. These
-checks do not query or modify Play's existing versions for you.
+Numeric version codes now use the publisher's `GITHUB_RUN_NUMBER` counter,
+not a timestamp. Workflow run **5** published the final timestamp-based code
+**262850156**. The replacement formula is `262850156 + (run_number - 5)`, so
+run **6** uses **262850157**, run **7** uses **262850158**, and so on. Failed or
+canceled runs may leave small gaps. Version names remain explicitly chosen and
+can repeat; the already published `0.1.2` release is unchanged.
+
+Rerunning a workflow retains its version code. Once that code has been uploaded
+to Play, start a **new** workflow dispatch or immutable build tag instead of
+retrying the old run. This also applies when upload succeeded but a later step
+failed. Do not rerun old releases after newer codes have been published. Release
+jobs are serialized, but GitHub does not guarantee queue order; an out-of-order
+older code can be rejected by Play rather than replacing a newer release.
+
+The generator rejects missing or malformed counters, runs at or below **5**,
+and codes above Play's **2100000000** limit. It does not query Play or allocate
+codes for uploads made outside this workflow. Before renaming/recreating the
+publisher workflow, migrating repositories, or uploading manually, revalidate
+the counter baseline against the highest code already used in Play. Never lower
+a published code or reuse an already uploaded code. See
+[Android versioning](https://developer.android.com/studio/publish/versioning#versioningsettings)
+and [GitHub workflow counters](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context).
 
 The workflow checks the Gradle wrapper and brand assets, builds unit tests and
 Release lint, then builds both signed Release artifacts. It verifies Weather's
