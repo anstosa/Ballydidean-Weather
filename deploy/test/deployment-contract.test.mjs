@@ -620,7 +620,7 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
   await mkdir(join(fixtureRoot, "config/sites"), { recursive: true });
   await writeFile(
     join(fixtureRoot, "apps/web/public/index.html"),
-    '<!doctype html><html data-weather-admin="__WEATHER_ADMIN__" data-weather-analytics="__WEATHER_ANALYTICS__"><title>Weather</title><link rel="manifest" href="/manifest.webmanifest">__WEATHER_ROUTE_PRELOAD__<link rel="stylesheet" href="/assets/__WEATHER_ASSET_VERSION__/styles.css"><script type="module" src="/assets/__WEATHER_ASSET_VERSION__/client.js"></script></html>\n',
+    '<!doctype html><html data-weather-admin="__WEATHER_ADMIN__" data-weather-analytics="__WEATHER_ANALYTICS__"><title>Weather</title><meta name="weather-revision" content="__WEATHER_GIT_REVISION__"><link rel="manifest" href="/manifest.webmanifest">__WEATHER_ROUTE_PRELOAD__<link rel="stylesheet" href="/assets/__WEATHER_ASSET_VERSION__/styles.css"><script type="module" src="/assets/__WEATHER_ASSET_VERSION__/client.js"></script></html>\n',
   );
   await writeFile(
     join(fixtureRoot, "apps/web/public/admin-login.html"),
@@ -657,6 +657,7 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
   await writeFile(join(fixtureRoot, "apps/web/dist/client.js"), "export { ready } from './index.js';\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/hosted-updates.js"), "export const ready = true;\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/app-install.js"), "export const install = true;\n");
+  await writeFile(join(fixtureRoot, "apps/web/dist/app-version.js"), "export const version = true;\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/index.js"), "export { ready } from './units.js';\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/units.js"), "export const ready = true;\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/solar-cloud.js"), "export const sunlight = true;\n");
@@ -824,6 +825,7 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
       WEATHER_ADMIN_BOOTSTRAP_TOKEN_PATH: adminBootstrapTokenPath,
       WEATHER_PROPERTY_SENSOR_LAYOUT_PATH: propertySensorLayoutPath,
       WEATHER_RELEASE: "2026.08.25-7",
+      WEATHER_WEB_REVISION: "0123456789abcdef0123456789abcdef01234567",
       WEATHER_XWEATHER_CLIENT_ID_FILE: xweatherClientId,
       WEATHER_XWEATHER_CLIENT_SECRET_FILE: xweatherClientSecret,
       WEATHER_XWEATHER_MAP_ORIGIN: `http://127.0.0.1:${xweatherPort}`,
@@ -1156,6 +1158,7 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
     const client = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/client.js`);
     const hostedUpdates = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/hosted-updates.js`);
     const appInstall = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/app-install.js`);
+    const appVersion = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/app-version.js`);
     const library = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/index.js`);
     const units = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/units.js`);
     const solarCloud = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/solar-cloud.js`);
@@ -1309,6 +1312,7 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
     assert.match(trendsBody, /\/assets\/2026\.08\.25-7\/client\.js/u);
     assert.match(settingsBody, /\/assets\/2026\.08\.25-7\/styles\.css/u);
     assert.match(settingsBody, /\/assets\/2026\.08\.25-7\/client\.js/u);
+    assert.match(settingsBody, /name="weather-revision" content="0123456789abcdef0123456789abcdef01234567"/u);
     assert.equal(brand.headers.get("content-type"), "image/svg+xml");
     assert.equal(favicon.headers.get("content-type"), "image/svg+xml");
     assert.equal(pwaFavicon.headers.get("content-type"), "image/png");
@@ -1329,6 +1333,9 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
     assert.equal(appInstall.headers.get("cache-control"), "public, max-age=31536000, immutable");
     assert.equal(digestMap["/assets/2026.08.25-7/app-install.js"],
       `sha256-${createHash("sha256").update(await appInstall.text()).digest("base64")}`);
+    assert.equal(appVersion.status, 200);
+    assert.equal(digestMap["/assets/2026.08.25-7/app-version.js"],
+      `sha256-${createHash("sha256").update(await appVersion.text()).digest("base64")}`);
     assert.equal(font.headers.get("content-type"), "font/woff2");
     assert.match(font.headers.get("cache-control"), /immutable/u);
     assert.equal(fontLicense.headers.get("content-type"), "text/plain; charset=utf-8");
@@ -2596,6 +2603,9 @@ test("image builds share one compilation and export exact comparison bytes", () 
   assert.equal((dockerfile.match(/RUN npm run build/gu) ?? []).length, 1);
   assert.match(dockerfile, /COPY scripts\/build-workspaces\.mjs scripts\/build-workspaces\.mjs/u);
   assert.match(dockerfile, /FROM scratch AS image-check-files[\s\S]*COPY --from=build \/opt\/weather\/packages\/forecast-adjustment\/dist \/forecast-adjustment\/dist/u);
+  assert.match(dockerfile, /FROM runtime AS web[\s\S]*ARG WEATHER_WEB_REVISION=development\nENV WEATHER_WEB_REVISION=\$\{WEATHER_WEB_REVISION\}/u);
+  const publisher = read(".github/workflows/publish-images.yml");
+  assert.equal((publisher.match(/--build-arg "WEATHER_WEB_REVISION=\$\{GITHUB_SHA\}"/gu) ?? []).length, 2);
   const ignored = read(".dockerignore").split("\n");
   assert.ok(ignored.includes("**/dist"));
   assert.ok(ignored.includes("node_modules"));

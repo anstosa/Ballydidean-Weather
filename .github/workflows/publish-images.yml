@@ -118,6 +118,7 @@ jobs:
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag weather-server:inspect --load .
           docker buildx build --platform linux/arm64 --target web \
+            --build-arg "WEATHER_WEB_REVISION=${GITHUB_SHA}" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag weather-web:inspect --load .
       - name: Extract exact build-stage comparison files
@@ -143,6 +144,7 @@ jobs:
           # the same builder reuses the inspected compilation layers
           for target in server web; do
             docker buildx build --platform linux/arm64 --target "${target}" \
+              --build-arg "WEATHER_WEB_REVISION=${GITHUB_SHA}" \
               --provenance=true --push \
               --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
               --tag "ghcr.io/anstosa/weather-${target}:${RELEASE}" .

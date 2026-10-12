@@ -5383,6 +5383,7 @@ function renderUnitSettings(units: UnitPreferences): string {
           </div>
         </form>
       </section>
+      <footer class="settings-version" role="group" aria-label="Application version" data-app-version></footer>
     </div>
   `;
 }

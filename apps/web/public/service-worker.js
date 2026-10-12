@@ -41,6 +41,7 @@ const shellPaths = [
   `/assets/${release}/client.js`,
   `/assets/${release}/hosted-updates.js`,
   `/assets/${release}/app-install.js`,
+  `/assets/${release}/app-version.js`,
   `/assets/${release}/index.js`,
   `/assets/${release}/units.js`,
   `/assets/${release}/solar-cloud.js`,

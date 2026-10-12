@@ -150,6 +150,12 @@ class MainActivity : Activity() {
     // apply the production web boundary
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView(view: WebView) {
+        // retain native-shell detection and expose this apk's identity before navigation
+        view.settings.userAgentString = HostedAppIdentity.userAgent(
+            view.settings.userAgentString,
+            BuildConfig.VERSION_NAME,
+            BuildConfig.VERSION_CODE,
+        )
         view.settings.javaScriptEnabled = true
         view.settings.domStorageEnabled = true
         view.settings.allowFileAccess = false

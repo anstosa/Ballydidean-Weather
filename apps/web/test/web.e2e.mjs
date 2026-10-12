@@ -19,6 +19,7 @@ const repositoryRoot = resolve(import.meta.dirname, "../../..");
 const publicRoot = join(repositoryRoot, "apps/web/public");
 const distRoot = join(repositoryRoot, "apps/web/dist");
 const fixtureAssetVersion = "browser-test";
+const fixtureRevision = "0123456789abcdef0123456789abcdef01234567";
 const fixtureAdminSession = "fixture-admin-session";
 const transparentPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -1496,6 +1497,7 @@ async function startFixtureServer() {
       [`/assets/${fixtureAssetVersion}/client.js`, [join(distRoot, "client.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/hosted-updates.js`, [join(distRoot, "hosted-updates.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/app-install.js`, [join(distRoot, "app-install.js"), "text/javascript; charset=utf-8"]],
+      [`/assets/${fixtureAssetVersion}/app-version.js`, [join(distRoot, "app-version.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/index.js`, [join(distRoot, "index.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/units.js`, [join(distRoot, "units.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/solar-cloud.js`, [join(distRoot, "solar-cloud.js"), "text/javascript; charset=utf-8"]],
@@ -1538,6 +1540,7 @@ async function startFixtureServer() {
           url.pathname === "/privacy/" ||
           url.pathname === "/service-worker.js"
           ? source.toString("utf8").replaceAll("__WEATHER_ASSET_VERSION__", fixtureAssetVersion)
+            .replaceAll("__WEATHER_GIT_REVISION__", fixtureRevision)
             .replaceAll("__WEATHER_SHELL_ASSET_DIGESTS__", JSON.stringify(Object.fromEntries(
               [...assets].filter(
                 // bind only release-versioned fixture bytes
@@ -2679,6 +2682,72 @@ test("forecast history uses recorded hourly conditions before raw regional fallb
   } finally {
     // close disposable browser resources
     await browser?.close();
+    fixture.server.close();
+    await once(fixture.server, "close");
+  }
+});
+
+// show source and native identity after preferences without changing installation reminders
+test("settings versions show the real native build and loaded web revision", { timeout: 120_000 }, async () => {
+  const fixture = await startFixtureServer();
+  const browser = await launchBrowser();
+  try {
+    // verify browser, installed web app, version-aware native and legacy native contexts
+    for (const mode of ["web", "android-browser", "native", "legacy-native", "standalone"]) {
+      const isNative = mode === "native" || mode === "legacy-native";
+      const page = await createFixturePage(browser, {
+        viewport: { width: 390, height: 844 },
+        userAgent: isNative
+          ? `Mozilla/5.0 (Linux; Android 16; Pixel; wv) AppleWebKit/537.36${mode === "native" ? " BallydideanWeather/0.1.2 BallydideanWeatherBuild/262852359" : ""}`
+          : mode === "web" ? "Chrome" : "Android Chrome",
+      });
+      // represent a home-screen launch without changing the browser version source
+      if (mode === "standalone") {
+        await page.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true }));
+      }
+      const errors = [];
+      // fail independently on renderer exceptions
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(`${fixture.origin}/settings`, { waitUntil: "networkidle" });
+      const footer = page.getByRole("group", { name: "Application version" });
+      await footer.locator("dl").waitFor();
+      const expected = isNative ? [
+        mode === "native" ? "0.1.2 (build 262852359)" : "Not reported by this app build",
+        "browser-test (0123456)",
+      ] : ["0123456"];
+      assert.deepEqual(await footer.locator("dd").allTextContents(), expected);
+      assert.equal(await page.locator(".settings-page > :last-child").getAttribute("class"), "settings-version");
+      // keep the browser's persistent installation banner at the opposite end of settings
+      if (mode === "android-browser") {
+        assert.equal(await page.locator(".settings-page > :first-child").getAttribute("class"), "app-install-banner");
+      }
+      await footer.scrollIntoViewIfNeeded();
+      const bounds = await footer.boundingBox();
+      const nav = await page.locator(".section-nav").boundingBox();
+      assert.ok(bounds.y + bounds.height <= nav.y, "version footer should scroll clear of navigation");
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({ path: join(process.env.WEATHER_SCREENSHOT_DIR ?? "/tmp", `weather-settings-version-${mode}.png`) });
+      // preserve both identifiers during preference-triggered rerenders
+      await page.locator("select[name='temperature']").selectOption("celsius");
+      await page.getByRole("button", { name: "Save units" }).click();
+      assert.deepEqual(await footer.locator("dd").allTextContents(), expected);
+      // retain the same footer when desktop navigation becomes a side rail
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      assert.deepEqual(await footer.locator("dd").allTextContents(), expected);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      const session = await page.context().newCDPSession(page);
+      await session.send("Network.setCacheDisabled", { cacheDisabled: true });
+      // await actual activation before judging the verified offline application
+      await page.evaluate(async () => await navigator.serviceWorker.ready);
+      await page.context().setOffline(true);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await footer.locator("dl").waitFor();
+      assert.deepEqual(await footer.locator("dd").allTextContents(), expected);
+      assert.deepEqual(errors, []);
+      await page.close();
+    }
+  } finally {
+    await browser.close();
     fixture.server.close();
     await once(fixture.server, "close");
   }

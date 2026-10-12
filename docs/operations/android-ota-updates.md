@@ -28,6 +28,16 @@ user agent; no native bridge, added permission, or app-store release is needed.
 Ordinary browser clients retain automatic update activation without a native
 prompt. A custom WebView user-agent override could disable native recognition.
 
+Settings shows the installed APK version name and build code separately from
+the loaded OTA release and its short source revision. Native builds append
+bounded `BallydideanWeather/...` and `BallydideanWeatherBuild/...` products to
+the default WebView user agent before navigation, retaining its `; wv` marker.
+This introduces no JavaScript bridge or permission. Older APKs honestly show
+that their native identity is unreported until updated through Google Play.
+Ordinary browsers and installed web apps show only the short Git revision.
+The source revision is baked into the exact web image and embedded in the
+document; it identifies the loaded UI, never a queued or latest server update.
+
 ## Release and safety boundary
 
 The web server embeds SHA-256 subresource-integrity values for every

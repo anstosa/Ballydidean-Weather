@@ -5,6 +5,7 @@ import {
 } from "./index.js";
 import { registerHostedUpdates } from "./hosted-updates.js";
 import { createAppInstallPrompt } from "./app-install.js";
+import { renderApplicationVersions } from "./app-version.js";
 
 const root = document.querySelector<HTMLElement>("#weather-app");
 
@@ -164,7 +165,10 @@ if (root !== null) {
   bindBrowserNavigation(root, controller);
   const installation = createAppInstallPrompt(root);
   // synchronize installation surfaces after dashboard navigation and refreshes
-  controller.subscribe(() => installation.update(controller.view));
+  controller.subscribe(() => {
+    installation.update(controller.view);
+    renderApplicationVersions(root);
+  });
   try {
     initializeProductionAnalytics(isAdmin);
   } catch {

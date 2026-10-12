@@ -63,6 +63,11 @@ class HostedShellInstrumentationTest {
             val webView = webView(activity)
             awaitHeading(webView, "Fixture home")
             awaitPageComplete(webView)
+            // verify the running apk exposes its own build without losing hosted-shell detection
+            val userAgent = evaluate(webView, "navigator.userAgent") as String
+            assertTrue(userAgent.contains("; wv)"))
+            assertTrue(userAgent.contains(" BallydideanWeather/${BuildConfig.VERSION_NAME} "))
+            assertTrue(userAgent.endsWith("BallydideanWeatherBuild/${BuildConfig.VERSION_CODE}"))
             click(webView, "Open fixture forecast")
             awaitHeading(webView, "Fixture forecast")
             awaitPageComplete(webView)

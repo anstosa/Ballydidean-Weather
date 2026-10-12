@@ -78,6 +78,12 @@ const adjustmentMaintenanceInternalPort = parseOptionalPort(
   process.env.WEATHER_ADJUSTMENT_MAINTENANCE_INTERNAL_PORT,
 );
 const release = parseAssetRelease(process.env.WEATHER_RELEASE ?? "development");
+// bind rendered metadata to the source revision baked into this exact web image
+const webRevision = process.env.WEATHER_WEB_REVISION ?? "development";
+// reject invalid identities before rendering any application document
+if (webRevision !== "development" && !/^[a-f0-9]{40}$/u.test(webRevision)) {
+  throw new Error("invalid web source revision");
+}
 const productionAnalytics = process.env.NODE_ENV === "production" && release !== "development";
 const homeNetworkMatcher = new HomeNetworkMatcher();
 const forecastMapPreloadSite = await loadForecastMapPreloadSite(
@@ -173,6 +179,7 @@ const versionedAssets = new Map([
   ["client.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "client.js"), type: "text/javascript; charset=utf-8" }],
   ["hosted-updates.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "hosted-updates.js"), type: "text/javascript; charset=utf-8" }],
   ["app-install.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "app-install.js"), type: "text/javascript; charset=utf-8" }],
+  ["app-version.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "app-version.js"), type: "text/javascript; charset=utf-8" }],
   ["index.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "index.js"), type: "text/javascript; charset=utf-8" }],
   ["solar-cloud.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "solar-cloud.js"), type: "text/javascript; charset=utf-8" }],
   ["solar-cloud-evidence.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "solar-cloud-evidence.js"), type: "text/javascript; charset=utf-8" }],
@@ -1113,6 +1120,7 @@ function redirectRemoteAgentsBrowser(response, requestUrl) {
 function renderHtmlTemplate(source, pathname, isAdmin, analyticsEnabled) {
   return source
     .replaceAll("__WEATHER_ASSET_VERSION__", release)
+    .replaceAll("__WEATHER_GIT_REVISION__", webRevision)
     .replaceAll("__WEATHER_SHELL_ASSET_DIGESTS__", JSON.stringify(shellAssetDigests))
     .replaceAll("__WEATHER_ADMIN__", String(isAdmin))
     .replaceAll("__WEATHER_ANALYTICS__", String(analyticsEnabled))
