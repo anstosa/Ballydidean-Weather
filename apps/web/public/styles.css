@@ -132,6 +132,105 @@ body {
   accent-color: var(--md-sys-color-primary);
 }
 
+/* share a readable install surface without competing with weather alerts */
+.app-install-toast,
+.app-install-banner {
+  position: relative;
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-medium);
+  color: var(--md-sys-color-on-secondary-container);
+  background: var(--md-sys-color-secondary-container);
+  overflow-wrap: anywhere;
+}
+
+/* keep the floating prompt above the measured navigation and device inset */
+.app-install-toast {
+  position: fixed;
+  z-index: 30;
+  right: max(0.75rem, env(safe-area-inset-right));
+  bottom: calc(5.4rem + env(safe-area-inset-bottom));
+  left: max(0.75rem, env(safe-area-inset-left));
+  max-width: 28rem;
+  max-height: calc(100dvh - 6.5rem - env(safe-area-inset-bottom));
+  margin-inline: auto;
+  padding-right: 3.25rem;
+  overflow-y: auto;
+  box-shadow: var(--md-sys-elevation-3);
+}
+
+.app-install-copy strong {
+  font-size: 1rem;
+}
+
+.app-install-copy p,
+.app-install-testing {
+  margin: 0.3rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.app-install-testing {
+  font-size: 0.75rem;
+}
+
+.app-install-action {
+  display: block;
+  width: fit-content;
+  min-height: 2.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--md-sys-shape-full);
+  color: var(--md-sys-color-on-primary);
+  background: var(--md-sys-color-primary);
+  font-size: 0.875rem;
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.app-install-action:hover {
+  text-decoration: underline;
+}
+
+.app-install-instructions ol {
+  margin: 0.75rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.app-install-instructions li + li {
+  margin-top: 0.4rem;
+}
+
+/* keep dismissal reachable without covering installation instructions */
+.app-install-dismiss {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0;
+  border: 0;
+  color: var(--md-sys-color-on-secondary-container);
+  background: transparent;
+  font-size: 1.75rem;
+}
+
+.app-install-dismiss:hover:not(:disabled) {
+  color: var(--md-sys-color-on-secondary-container);
+  background: rgb(0 0 0 / 8%);
+  box-shadow: none;
+}
+
+.app-install-banner {
+  margin-bottom: 1.25rem;
+}
+
 /* readable standalone privacy policy */
 .privacy-page {
   width: min(100%, 44rem);
@@ -343,7 +442,7 @@ a {
   column-gap: 1rem;
   width: min(78rem, calc(100% - 2rem));
   margin: 0 auto;
-  padding: 1.5rem 0;
+  padding: 1.5rem 0 calc(1.5rem + var(--app-install-height, 0px));
 }
 
 /* give sticky weather headers the viewport while retaining centered content tracks */
@@ -4638,7 +4737,7 @@ td small {
   .shell {
     display: block;
     width: min(100% - 1rem, 78rem);
-    padding: 0.55rem 0 calc(6rem + env(safe-area-inset-bottom));
+    padding: 0.55rem 0 calc(6rem + env(safe-area-inset-bottom) + var(--app-install-height, 0px));
   }
 
   /* retain phone content insets without narrowing the sticky header backdrop */

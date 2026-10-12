@@ -6,7 +6,8 @@ import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-import { chromium } from "playwright";
+import { chromium, webkit } from "playwright";
+import { APP_INSTALL_DISMISSED_KEY, ANDROID_STORE_URL, ANDROID_TESTING_URL } from "../dist/app-install.js";
 import {
   eveningSunTimes,
   FORECAST_ADJUSTMENT_MODE_STORAGE_KEY,
@@ -1494,6 +1495,7 @@ async function startFixtureServer() {
       ["/fonts/material-symbols-rounded-v4.woff2", [join(publicRoot, "fonts/material-symbols-rounded-v4.woff2"), "font/woff2"]],
       [`/assets/${fixtureAssetVersion}/client.js`, [join(distRoot, "client.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/hosted-updates.js`, [join(distRoot, "hosted-updates.js"), "text/javascript; charset=utf-8"]],
+      [`/assets/${fixtureAssetVersion}/app-install.js`, [join(distRoot, "app-install.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/index.js`, [join(distRoot, "index.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/units.js`, [join(distRoot, "units.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/solar-cloud.js`, [join(distRoot, "solar-cloud.js"), "text/javascript; charset=utf-8"]],
@@ -2677,6 +2679,151 @@ test("forecast history uses recorded hourly conditions before raw regional fallb
   } finally {
     // close disposable browser resources
     await browser?.close();
+    fixture.server.close();
+    await once(fixture.server, "close");
+  }
+});
+
+// prove platform instructions, persistent dismissal and rendered navigation clearance
+for (const platform of ["ios", "android"]) {
+  test(`mobile installation ${platform} survives navigation and keeps settings available`, { timeout: 60_000 }, async () => {
+    const fixture = await startFixtureServer();
+    const browser = platform === "ios" ? await webkit.launch({ headless: true }) : await launchBrowser();
+    try {
+      const page = await createFixturePage(browser, {
+        serviceWorkers: "block",
+        viewport: { width: 390, height: 844 },
+        userAgent: platform === "ios"
+          ? "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1"
+          : "Mozilla/5.0 (Linux; Android 16; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+      });
+      const errors = [];
+      // surface bootstrap failures independently of visible prompt assertions
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(fixture.origin, { waitUntil: "networkidle" });
+      const toast = page.getByRole("complementary", { name: "Install Weather" });
+      await toast.waitFor({ state: "visible" });
+      // check the real fixed navigation rather than a hardcoded offset
+      const assertClearance = async () => {
+        await page.waitForFunction(() => {
+          const toast = document.querySelector(".app-install-toast")?.getBoundingClientRect();
+          const nav = document.querySelector(".section-nav");
+          return toast !== undefined && toast.top >= 0 && toast.bottom <= innerHeight &&
+            (getComputedStyle(nav).position !== "fixed" || toast.bottom <= nav.getBoundingClientRect().top - 10);
+        });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      };
+      await assertClearance();
+      // verify the action appropriate to each mobile browser
+      if (platform === "ios") {
+        await toast.locator("summary").click();
+        assert.match(await toast.locator("ol").textContent(), /Share menu.*Add to Home Screen.*Open as Web App/su);
+        assert.equal(await toast.locator("a").count(), 0);
+      } else {
+        assert.equal(await toast.getByRole("link", { name: "Install from Google Play" }).getAttribute("href"), ANDROID_TESTING_URL);
+        assert.equal(await toast.getByRole("link", { name: "Open the Play Store" }).getAttribute("href"), ANDROID_STORE_URL);
+      }
+      await assertClearance();
+      await page.screenshot({ path: join(process.env.WEATHER_SCREENSHOT_DIR ?? "/tmp", `weather-install-${platform}-home.png`) });
+      await page.setViewportSize({ width: 844, height: 390 });
+      await assertClearance();
+      await page.setViewportSize({ width: 320, height: 640 });
+      await page.evaluate(() => { document.documentElement.style.fontSize = "20px"; });
+      await assertClearance();
+      await page.getByRole("link", { name: "Forecast", exact: true }).click();
+      await page.waitForURL(`${fixture.origin}/forecast`);
+      assert.equal(await toast.isVisible(), false);
+      await page.getByRole("link", { name: "Now", exact: true }).click();
+      await page.waitForURL(fixture.origin + "/");
+      await toast.waitFor({ state: "visible" });
+      // preserve expanded instructions through route and weather rerenders
+      if (platform === "ios") {
+        assert.equal(await toast.locator("details").getAttribute("open"), "");
+      }
+      await toast.getByRole("button", { name: "Dismiss installation prompt" }).click();
+      assert.equal(await toast.isVisible(), false);
+      assert.equal(await page.evaluate((key) => localStorage.getItem(key), APP_INSTALL_DISMISSED_KEY), "true");
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      await page.waitForURL(`${fixture.origin}/settings`);
+      const banner = page.locator(".app-install-banner");
+      await banner.waitFor({ state: "visible" });
+      assert.equal(await page.locator(".settings-page > :first-child").getAttribute("class"), "app-install-banner");
+      assert.equal(await banner.getByRole("button", { name: "Dismiss installation prompt" }).count(), 0);
+      await page.screenshot({ path: join(process.env.WEATHER_SCREENSHOT_DIR ?? "/tmp", `weather-install-${platform}-settings.png`) });
+      await page.reload({ waitUntil: "networkidle" });
+      await banner.waitFor({ state: "visible" });
+      await page.getByRole("link", { name: "Now", exact: true }).click();
+      await page.waitForURL(fixture.origin + "/");
+      assert.equal(await page.locator(".app-install-toast").isVisible(), false);
+      assert.deepEqual(errors, []);
+    } finally {
+      await browser.close();
+      fixture.server.close();
+      await once(fixture.server, "close");
+    }
+  });
+}
+
+// suppress installation UI in the existing native app and installed web apps
+test("mobile installation hides installed shells and tolerates blocked storage", { timeout: 60_000 }, async () => {
+  const fixture = await startFixtureServer();
+  const browser = await launchBrowser();
+  try {
+    // cover the android shell, both standalone indicators and storage failures
+    for (const mode of ["native", "standalone", "ios-standalone", "blocked-storage", "browser"]) {
+      const page = await createFixturePage(browser, {
+        serviceWorkers: "block",
+        viewport: { width: 390, height: 844 },
+        userAgent: mode === "native" ? "Mozilla/5.0 (Linux; Android 16; Pixel; wv) AppleWebKit/537.36 Mobile Safari/537.36"
+          : mode === "ios-standalone" ? "iPhone Safari" : "Android Chrome",
+      });
+      await page.addInitScript((mode) => {
+        // simulate installed display mode without altering other responsive queries
+        if (mode === "standalone") {
+          const match = window.matchMedia.bind(window);
+          window.matchMedia = (query) => {
+            const media = match(query);
+            // override only the platform's installed-app indicator
+            if (query === "(display-mode: standalone)") {
+              Object.defineProperty(media, "matches", { value: true });
+            }
+            return media;
+          };
+        }
+        // represent apple's installed-app indicator
+        if (mode === "ios-standalone") {
+          Object.defineProperty(navigator, "standalone", { value: true });
+        }
+        // exercise the session-only dismissal fallback
+        if (mode === "blocked-storage") {
+          Storage.prototype.getItem = () => { throw new Error("storage blocked"); };
+          Storage.prototype.setItem = () => { throw new Error("storage blocked"); };
+        }
+      }, mode);
+      await page.goto(fixture.origin, { waitUntil: "networkidle" });
+      // installed apps should never advertise their own installation
+      if (["native", "standalone", "ios-standalone"].includes(mode)) {
+        assert.equal(await page.locator(".app-install-toast").count(), 0);
+        await page.getByRole("link", { name: "Settings", exact: true }).click();
+        await page.waitForURL(`${fixture.origin}/settings`);
+        assert.equal(await page.locator(".app-install-banner").count(), 0);
+      } else {
+        await page.locator(".app-install-toast").waitFor({ state: "visible" });
+        // keep dismissal usable without persistent storage
+        if (mode === "blocked-storage") {
+          await page.getByRole("button", { name: "Dismiss installation prompt" }).click();
+          assert.equal(await page.locator(".app-install-toast").isVisible(), false);
+          await page.getByRole("link", { name: "Settings", exact: true }).click();
+          await page.locator(".app-install-banner").waitFor({ state: "visible" });
+        } else {
+          await page.evaluate(() => window.dispatchEvent(new Event("appinstalled")));
+          assert.equal(await page.locator(".app-install-toast").count(), 0);
+        }
+      }
+      await page.close();
+    }
+  } finally {
+    await browser.close();
     fixture.server.close();
     await once(fixture.server, "close");
   }

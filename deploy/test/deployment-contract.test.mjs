@@ -656,6 +656,7 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
   await writeFile(join(fixtureRoot, "apps/web/public/fonts/LICENSE-material-symbols.txt"), "Apache-2.0\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/client.js"), "export { ready } from './index.js';\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/hosted-updates.js"), "export const ready = true;\n");
+  await writeFile(join(fixtureRoot, "apps/web/dist/app-install.js"), "export const install = true;\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/index.js"), "export { ready } from './units.js';\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/units.js"), "export const ready = true;\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/solar-cloud.js"), "export const sunlight = true;\n");
@@ -1154,6 +1155,7 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
     const iconFontLicense = await fetch(`http://127.0.0.1:${webPort}/fonts/LICENSE-material-symbols.txt`);
     const client = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/client.js`);
     const hostedUpdates = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/hosted-updates.js`);
+    const appInstall = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/app-install.js`);
     const library = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/index.js`);
     const units = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/units.js`);
     const solarCloud = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/solar-cloud.js`);
@@ -1323,6 +1325,10 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
     assert.equal(hostedUpdates.headers.get("cache-control"), "public, max-age=31536000, immutable");
     assert.equal(digestMap["/assets/2026.08.25-7/hosted-updates.js"],
       `sha256-${createHash("sha256").update(await hostedUpdates.text()).digest("base64")}`);
+    assert.equal(appInstall.status, 200);
+    assert.equal(appInstall.headers.get("cache-control"), "public, max-age=31536000, immutable");
+    assert.equal(digestMap["/assets/2026.08.25-7/app-install.js"],
+      `sha256-${createHash("sha256").update(await appInstall.text()).digest("base64")}`);
     assert.equal(font.headers.get("content-type"), "font/woff2");
     assert.match(font.headers.get("cache-control"), /immutable/u);
     assert.equal(fontLicense.headers.get("content-type"), "text/plain; charset=utf-8");

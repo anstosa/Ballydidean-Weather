@@ -4,6 +4,7 @@ import {
   type WeatherView,
 } from "./index.js";
 import { registerHostedUpdates } from "./hosted-updates.js";
+import { createAppInstallPrompt } from "./app-install.js";
 
 const root = document.querySelector<HTMLElement>("#weather-app");
 
@@ -161,6 +162,9 @@ const isAdmin = document.documentElement.dataset.weatherAdmin === "true" || view
 if (root !== null) {
   const controller = mountWeatherDashboard(root, { isAdmin, view });
   bindBrowserNavigation(root, controller);
+  const installation = createAppInstallPrompt(root);
+  // synchronize installation surfaces after dashboard navigation and refreshes
+  controller.subscribe(() => installation.update(controller.view));
   try {
     initializeProductionAnalytics(isAdmin);
   } catch {
