@@ -16,6 +16,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.RemoteViews
 import android.widget.TextView
+import farm.ballydidean.weather.R
 import farm.ballydidean.weather.widget.WeatherWidgetProvider
 
 class FixtureHostActivity : Activity() {
@@ -177,42 +178,62 @@ class FixtureHostActivity : Activity() {
             variant: FixtureVariant,
             @Suppress("UNUSED_PARAMETER") landscape: Boolean,
         ): Boolean {
-            val text = buildList { collectText(view, this) }.joinToString(" ")
-            val descriptions = buildList { collectDescriptions(view, this) }.joinToString("; ")
-            return when (variant) {
-                FixtureVariant.MAXIMUM -> text.contains("39°") && descriptions.contains("sunny")
-                FixtureVariant.OVERNIGHT_FIFTH -> text.contains("51°") && text.contains("Overnight") && text.contains("43°")
-                FixtureVariant.NEAR_CUTOFF -> text.contains("49°") && text.contains("Overnight") && text.contains("43°")
-                FixtureVariant.ALL_BEDTIME -> text.contains("Overnight") && text.contains("43°")
-                FixtureVariant.STALE -> text.contains("39°") && descriptions.contains("stale")
-                FixtureVariant.RAW_MIXED -> text.contains("39°") && descriptions.contains("mixed forecast")
-                FixtureVariant.RAW -> text.contains("39°") && descriptions.contains("raw forecast")
-                FixtureVariant.UNAVAILABLE -> text.contains("refresh needed") && descriptions.contains("unavailable forecast")
-                FixtureVariant.CELSIUS -> text.contains("4°") && descriptions.contains("degrees Celsius")
+            val presentation = DebugWidgetFixtures.fixture(variant).presentation
+            // collect the visible weather segments
+            val slotRoots = buildList { collectVisibleViews(view, R.id.slot_root, this) }
+            // identify every requested weather label
+            val expectedLabels = presentation.groups.map { it.hourLabel to it.temperatureLabel }
+            // observe every rendered weather label
+            val renderedLabels = slotRoots.map { slot ->
+                slot.findViewById<TextView>(R.id.slot_hour)?.text?.toString() to
+                    slot.findViewById<TextView>(R.id.slot_temperature)?.text?.toString()
             }
-        }
-
-        // collect every inflated remoteviews text value
-        private fun collectText(view: View, destination: MutableList<String>) {
-            // retain text nodes including hidden semantic placeholders
-            if (view is TextView) {
-                destination += view.text.toString()
+            // identify every requested segment description
+            val expectedDescriptions = presentation.groups.map { it.accessibilityLabel() }
+            // observe every rendered segment description
+            val renderedDescriptions = slotRoots.map { it.contentDescription?.toString() }
+            // require the complete ordered weather signature
+            if (renderedLabels != expectedLabels || renderedDescriptions != expectedDescriptions) {
+                return false
             }
-            // visit the complete remoteviews hierarchy
-            if (view is ViewGroup) {
-                for (index in 0 until view.childCount) {
-                    collectText(view.getChildAt(index), destination)
+            // collect the visible remainder segments
+            val messageRoots = buildList { collectVisibleViews(view, R.id.bedtime_root, this) }
+            // reject any message segment from weather-only fixtures
+            if (presentation.message == null) {
+                return messageRoots.isEmpty()
+            }
+            // require one complete remainder message
+            if (messageRoots.size != 1) {
+                return false
+            }
+            val messageRoot = messageRoots.single()
+            val renderedMessage = messageRoot.findViewById<TextView>(R.id.bedtime_message)?.text?.toString()
+            val renderedHour = messageRoot.findViewById<TextView>(R.id.bedtime_hour)?.text?.toString()
+            // distinguish bedtime from unavailable messages
+            val expectedHour = if (presentation.showBedtime) "Overnight" else ""
+            // match the renderer's accessible remainder summary
+            val expectedDescription = presentation.overnight?.accessibilityLabel()
+                ?: if (presentation.showBedtime) {
+                    "Overnight, 8 PM through 7 AM, forecast unavailable"
+                } else {
+                    presentation.message
                 }
-            }
+            return renderedMessage == presentation.message &&
+                renderedHour == expectedHour &&
+                messageRoot.contentDescription?.toString() == expectedDescription
         }
 
-        // collect every accessible remoteviews description
-        private fun collectDescriptions(view: View, destination: MutableList<String>) {
-            view.contentDescription?.toString()?.takeIf { it.isNotBlank() }?.let(destination::add)
-            // visit the complete accessible hierarchy
+        // collect visible semantic roots in hierarchy order
+        private fun collectVisibleViews(view: View, targetId: Int, destination: MutableList<View>) {
+            // retain only visible matching roots
+            if (view.id == targetId && view.visibility == View.VISIBLE) {
+                destination += view
+            }
+            // visit every inflated remoteviews child
             if (view is ViewGroup) {
+                // traverse children in presentation order
                 for (index in 0 until view.childCount) {
-                    collectDescriptions(view.getChildAt(index), destination)
+                    collectVisibleViews(view.getChildAt(index), targetId, destination)
                 }
             }
         }

@@ -185,6 +185,8 @@ class WidgetHostInstrumentationTest {
         val activity = instrumentation.startActivitySync(intent) as FixtureHostActivity
         try {
             val initial = waitForHostView(activity, FixtureVariant.RAW_MIXED, landscape = false)
+            // reject the pre-resize fixture as maximum-ready
+            assertFalse(FixtureHostActivity.matchesFixture(initial, FixtureVariant.MAXIMUM, landscape = true))
             val mixedGroups = DebugWidgetFixtures.fixture(FixtureVariant.RAW_MIXED).presentation.groups
             assertEquals(listOf("39°", "49°", "65°", "75°", "85°"), mixedGroups.map { it.temperatureLabel })
             assertEquals(
@@ -471,17 +473,27 @@ class WidgetHostInstrumentationTest {
         // wait through bounded host callbacks
         repeat(50) {
             instrumentation.waitForIdleSync()
-            val candidate = activity.renderedHostView
-            // retain the last hierarchy for actionable failures
-            if (candidate != null) {
-                val allViews = mutableListOf<View>()
-                collectViews(candidate, allViews)
-                lastText = allViews.filterIsInstance<TextView>().joinToString(" | ") { it.text }
+            var readyView: View? = null
+            // observe one atomic host state
+            instrumentation.runOnMainSync {
+                val candidate = activity.renderedHostView
+                // retain the last hierarchy for actionable failures
+                if (candidate != null) {
+                    val allViews = mutableListOf<View>()
+                    collectViews(candidate, allViews)
+                    lastText = allViews.filterIsInstance<TextView>().joinToString(" | ") { it.text }
+                }
+                // require exact content inside its completed target allocation
+                if (candidate != null &&
+                    candidate.childCount > 0 &&
+                    matchesVariant(candidate, variant, landscape) &&
+                    matchesTargetLayout(candidate, landscape)
+                ) {
+                    readyView = candidate
+                }
             }
-            // return after the provider view arrives
-            if (candidate != null && candidate.childCount > 0 && matchesVariant(candidate, variant, landscape)) {
-                return candidate
-            }
+            // return only the observed ready host
+            readyView?.let { return it }
             SystemClock.sleep(100)
         }
         fail("AppWidgetHost did not render expected provider RemoteViews: $lastText")
@@ -491,6 +503,32 @@ class WidgetHostInstrumentationTest {
     // reject the provider's initial maximum update for alternate fixtures
     private fun matchesVariant(view: View, variant: FixtureVariant, landscape: Boolean): Boolean {
         return FixtureHostActivity.matchesFixture(view, variant, landscape)
+    }
+
+    // require one attached and fully laid-out widget allocation
+    private fun matchesTargetLayout(view: View, landscape: Boolean): Boolean {
+        val root = view.findViewById<View>(android.R.id.background) ?: return false
+        val density = view.resources.displayMetrics.density
+        // select the requested content width
+        val expectedWidthDp = if (landscape) {
+            FixtureHostActivity.LANDSCAPE_WIDTH_DP
+        } else {
+            FixtureHostActivity.PORTRAIT_WIDTH_DP
+        }
+        // select the requested content height
+        val expectedHeightDp = if (landscape) {
+            FixtureHostActivity.LANDSCAPE_HEIGHT_DP
+        } else {
+            FixtureHostActivity.PORTRAIT_HEIGHT_DP
+        }
+        return view.isAttachedToWindow &&
+            view.isLaidOut &&
+            !view.isLayoutRequested &&
+            root.isAttachedToWindow &&
+            root.isLaidOut &&
+            !root.isLayoutRequested &&
+            root.width == (expectedWidthDp * density).toInt() &&
+            root.height == (expectedHeightDp * density).toInt()
     }
 
     // await one observed late-provider correction without timer assumptions
