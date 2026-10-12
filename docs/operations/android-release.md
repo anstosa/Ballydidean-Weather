@@ -79,11 +79,22 @@ generates a fresh numeric version code as usual. Never move the original
 the new build tag. This tag path also works before the workflow reaches `main`.
 
 Numeric version codes now use the publisher's `GITHUB_RUN_NUMBER` counter,
-not a timestamp. Workflow run **5** published the final timestamp-based code
-**262850156**. The replacement formula is `262850156 + (run_number - 5)`, so
-run **6** uses **262850157**, run **7** uses **262850158**, and so on. Failed or
-canceled runs may leave small gaps. Version names remain explicitly chosen and
-can repeat; the already published `0.1.2` release is unchanged.
+not a timestamp. After workflow run **6**, Ansel explicitly approved restarting
+the release lineage above Play's previous code **1**, confirming that the only
+device running a high-code build will uninstall and reinstall. The formula is
+`1 + (run_number - 6)`, so run **7** uses **2**, run **8** uses **3**, and so on.
+Failed or canceled runs may leave small gaps. Version names remain explicitly
+chosen and can repeat; the reset retains version name **0.1.2**.
+
+This is a deliberate one-time downgrade from the high-code internal builds,
+including run **6**'s code **262850157**. It is **not** an in-place update for
+those installations: uninstall and reinstall from the current testing track.
+Uninstalling can clear app preferences and widget configuration. The package,
+signing identity, historical uploads and immutable source tags remain unchanged.
+Do not rerun pre-reset source tags or reactivate their high-code releases. A
+still-active higher code in another eligible track can take precedence over
+the new low-code build. Play acceptance must be verified during publishing;
+do not delete app records, erase release history or change tracks to force it.
 
 Rerunning a workflow retains its version code. Once that code has been uploaded
 to Play, start a **new** workflow dispatch or immutable build tag instead of
@@ -92,12 +103,13 @@ failed. Do not rerun old releases after newer codes have been published. Release
 jobs are serialized, but GitHub does not guarantee queue order; an out-of-order
 older code can be rejected by Play rather than replacing a newer release.
 
-The generator rejects missing or malformed counters, runs at or below **5**,
+The generator rejects missing or malformed counters, runs at or below **6**,
 and codes above Play's **2100000000** limit. It does not query Play or allocate
 codes for uploads made outside this workflow. Before renaming/recreating the
 publisher workflow, migrating repositories, or uploading manually, revalidate
-the counter baseline against the highest code already used in Play. Never lower
-a published code or reuse an already uploaded code. See
+the counter baseline and active tracks, and confirm that the next code is unused.
+Do not perform another downgrade without explicit approval or reuse an already
+uploaded code. See
 [Android versioning](https://developer.android.com/studio/publish/versioning#versioningsettings)
 and [GitHub workflow counters](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context).
 
