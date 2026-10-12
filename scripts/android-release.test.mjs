@@ -26,7 +26,7 @@ async function fixture(t, overrides = {}) {
     GITHUB_ENV: join(root, "environment"),
     GITHUB_OUTPUT: join(root, "outputs"),
     GITHUB_REF_TYPE: "branch",
-    GITHUB_RUN_NUMBER: "7",
+    GITHUB_RUN_NUMBER: "8",
     REQUESTED_VERSION_NAME: "0.1.0",
     ANDROID_UPLOAD_KEYSTORE_BASE64: Buffer.from("fixture-key-not-a-keystore").toString("base64"),
     ANDROID_UPLOAD_KEYSTORE_PASSWORD: "fixture-store-password",
@@ -53,7 +53,7 @@ test("Android release preparation retains the requested version and private cred
   const result = prepare(env);
   assert.equal(result.status, 0, result.stderr);
   const key = join(root, "weather-android-signing", "upload.jks");
-  assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"), "code=2\nname=1.2.3-beta.1\n");
+  assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"), "code=262850158\nname=1.2.3-beta.1\n");
   const account = join(root, "weather-android-signing", "play-service-account.json");
   assert.equal(await readFile(env.GITHUB_ENV, "utf8"), `ANDROID_UPLOAD_KEYSTORE_FILE=${key}\nPLAY_SERVICE_ACCOUNT_FILE=${account}\n`);
   assert.equal(await readFile(key, "utf8"), "fixture-key-not-a-keystore");
@@ -94,7 +94,7 @@ test("Android build tags retain the explicitly chosen version name", async (t) =
     });
     const result = prepare(env);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"), `code=2\nname=${version}\n`);
+    assert.equal(await readFile(env.GITHUB_OUTPUT, "utf8"), `code=262850158\nname=${version}\n`);
   }
   const { env } = await fixture(t, {
     GITHUB_REF_TYPE: "tag",
@@ -174,11 +174,11 @@ test("Android release preparation refuses existing key material", async (t) => {
   assert.equal(await readFile(join(directory, "upload.jks"), "utf8"), "untouched");
 });
 
-// start the approved low-code lineage at two and retain gradual increases
-test("Android version codes increment from the approved reset baseline", async (t) => {
+// resume above the accepted high code without reusing the rejected low-code lineage
+test("Android version codes resume above the published build after the rejected reset", async (t) => {
   const { env } = await fixture(t);
-  // preserve the reset baseline, adjacent increments and the play upper boundary
-  for (const [run, code] of [["7", 2], ["8", 3], ["9", 4], ["2100000005", 2100000000]]) {
+  // preserve the restored baseline, adjacent increments and the play upper boundary
+  for (const [run, code] of [["8", 262850158], ["9", 262850159], ["10", 262850160], ["1837149850", 2100000000]]) {
     const result = spawnSync("bash", [codeScript], {
       env: { ...env, GITHUB_RUN_NUMBER: run },
       encoding: "utf8",
@@ -198,7 +198,7 @@ test("Android version codes do not change when a workflow is retried", async (t)
       encoding: "utf8",
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, "2\n");
+    assert.equal(result.stdout, "262850158\n");
   }
 });
 
@@ -206,7 +206,7 @@ test("Android version codes do not change when a workflow is retried", async (t)
 test("Android version codes fail closed on invalid or exhausted counters", async (t) => {
   const { env } = await fixture(t);
   // bound decimal parsing before shell arithmetic and refuse old workflow runs
-  for (const run of ["", "0", "1", "5", "6", "07", "-7", "7.0", "date-error", "2100000006", "9999999999", "999999999999999999999", "7\nname=bad", "7+1", "$(id)"]) {
+  for (const run of ["", "0", "1", "6", "7", "08", "-8", "8.0", "date-error", "1837149851", "9999999999", "999999999999999999999", "8\nname=bad", "8+1", "$(id)"]) {
     const result = spawnSync("bash", [codeScript], {
       env: { ...env, GITHUB_RUN_NUMBER: run },
       encoding: "utf8",
