@@ -67,6 +67,11 @@ test("solar cloud endpoint shares paging and preserves the recorded envelope and
   assert.equal(asset.headers.get("content-type"), "text/javascript; charset=utf-8");
   assert.match(asset.headers.get("cache-control"), /immutable/u);
   assert.equal(await asset.text(), await readFile(resolve(repoRoot, "apps/web/dist/solar-cloud-evidence.js"), "utf8"));
+  // every compiled inference import must be a reachable versioned browser asset
+  const policy = await fetch(`${origin}/assets/development/forecast-correction-policy.js`);
+  assert.equal(policy.status, 200);
+  assert.match(policy.headers.get("content-type"), /javascript/u);
+  assert.equal(await policy.text(), await readFile(resolve(repoRoot, "apps/web/dist/forecast-correction-policy.js"), "utf8"));
   const path = "/api/v1/sites/ballydidean/solar-cloud-evidence";
   assert.equal((await fetch(`${origin}${path}?from=unbounded`)).status, 400);
   const mutation = await fetch(`${origin}${path}`, { method: "POST" });

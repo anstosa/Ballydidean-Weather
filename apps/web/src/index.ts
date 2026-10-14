@@ -9,17 +9,29 @@ import {
   type UnitPreferences,
   type UnitPreferenceStorage,
 } from "./units.js";
-import { createSolarCloudBias, projectSolarCloudCover, type SolarCloudBias, type SolarCloudSample } from "./solar-cloud.js";
+import { createSolarCloudBias, projectSolarCloudCover, projectForecastCloudCover, type SolarCloudBias, type SolarCloudSample } from "./solar-cloud.js";
 import { parseSolarCloudEvidenceResponse, solarCloudBiasFromEvidence, type SolarCloudEvidence } from "./solar-cloud-evidence.js";
 export { buildSolarCloudEvidence, parseSolarCloudEvidenceResponse, solarCloudBiasFromEvidence } from "./solar-cloud-evidence.js";
 export type { SolarCloudEvidence } from "./solar-cloud-evidence.js";
 import {
   createLocalForecastBias,
   projectLocalForecastBias,
+  projectForecastLocalBias,
   type LocalForecastBias,
   type LocalForecastBiasMetric,
   type LocalForecastSample,
 } from "./local-forecast-bias.js";
+
+import {
+  DEFAULT_FORECAST_CORRECTION_POLICIES,
+  forecastCorrectionPolicy,
+  type ForecastCorrectionAnchorTier,
+  type ForecastCorrectionMetric,
+  type ForecastCorrectionPolicies,
+  type ForecastCorrectionPolicy,
+} from "./forecast-correction-policy.js";
+export { DEFAULT_FORECAST_CORRECTION_POLICIES } from "./forecast-correction-policy.js";
+export type { ForecastCorrectionPolicies } from "./forecast-correction-policy.js";
 
 export {
   DEFAULT_UNIT_PREFERENCES,
@@ -345,21 +357,56 @@ const solarCloudValues = new WeakMap<WeatherRecord, number>();
 
 // keep short-term local experiments separate from qualified server decisions
 const localForecastBiases = new WeakMap<WeatherRecord, Partial<Record<LocalForecastBiasMetric, LocalForecastBias>>>();
+// retain trusted construction-time policy and source tiers outside serialized records
+const localForecastPolicies = new WeakMap<LocalForecastBias, Readonly<{ policy: ForecastCorrectionPolicy; tier: ForecastCorrectionAnchorTier }>>();
+const cloudForecastAnchors = new WeakMap<WeatherRecord, SolarCloudBias>();
+const localForecastAnchors = new WeakMap<WeatherRecord, Partial<Record<ForecastCorrectionMetric,
+  Readonly<{ tier: ForecastCorrectionAnchorTier; observedAt: string }>>>>();
+
+// expose only causal anchor metadata for the shared offline evaluator
+export function forecastCorrectionAnchor(record: WeatherRecord, metric: ForecastCorrectionMetric):
+  Readonly<{ tier: ForecastCorrectionAnchorTier; observedAt: string }> | null {
+  // clouds have only the exact on-site ws90 source regime
+  if (metric === "cloudCoverPercent") {
+    const cloud = cloudForecastAnchors.get(record);
+    return cloud === undefined ? null : { tier: "ws90", observedAt: cloud.observedAt };
+  }
+  const anchor = localForecastAnchors.get(record)?.[metric];
+  // audit anchors survive expired forecast windows so unchanged hours keep their evaluation vote
+  if (anchor !== undefined) {
+    return anchor;
+  }
+  const bias = localForecastBiases.get(record)?.[metric];
+  const metadata = bias === undefined ? undefined : localForecastPolicies.get(bias);
+  return bias === undefined || metadata === undefined ? null : { tier: metadata.tier, observedAt: bias.observedAt };
+}
+
+// return the trusted issue tier without interpreting composite provenance strings
+export function forecastCorrectionAnchorTier(record: WeatherRecord, metric: ForecastCorrectionMetric): ForecastCorrectionAnchorTier | null {
+  return forecastCorrectionAnchor(record, metric)?.tier ?? null;
+}
+
 const LOCAL_FORECAST_BIAS_METRICS: readonly LocalForecastBiasMetric[] = [
   "relativeHumidityPercent", "pm25MicrogramsPerCubicMeter", "uvIndex", "pressureChange3hHpa",
 ];
 
 // pair current local observations with regional estimates without rewriting raw products
 export function withLocalForecastAdjustments<T extends Pick<DashboardState, "current" | "selectedSite"> &
-  Partial<Pick<DashboardState, "forecast" | "forecastAdjustmentMode">>>(state: T, now = new Date()): T {
+  Partial<Pick<DashboardState, "forecast" | "forecastAdjustmentMode">>>(state: T, now = new Date(),
+    policies: ForecastCorrectionPolicies = DEFAULT_FORECAST_CORRECTION_POLICIES): T {
   // retire former local projections while retaining independently evaluated sunlight
   const rawRecord = (record: WeatherRecord): WeatherRecord => {
     // unchanged normalized records need no replacement
-    if (!localForecastBiases.has(record)) {
+    if (!localForecastBiases.has(record) && !localForecastAnchors.has(record)) {
       return record;
     }
     const raw = { ...record };
     const cloud = solarCloudValues.get(record);
+    const cloudAnchor = cloudForecastAnchors.get(record);
+    // keep the independently refreshed cloud anchor available for paired evaluation
+    if (cloudAnchor !== undefined) {
+      cloudForecastAnchors.set(raw, cloudAnchor);
+    }
     // preserve only the already refreshed cloud estimate
     if (cloud !== undefined) {
       solarCloudValues.set(raw, cloud);
@@ -484,6 +531,11 @@ export function withLocalForecastAdjustments<T extends Pick<DashboardState, "cur
     const bias = createLocalForecastBias({ ...site, metric, now: now.toISOString(), observed, regional: sample(baseline, metric) });
     // rejected samples leave only their own metric raw
     if (bias !== null) {
+      // freeze only forecast uv and pressure at their actual selected issue tier
+      if (metric === "uvIndex" || metric === "pressureChange3hHpa") {
+        const tier = farm === undefined ? "local_mean" : "farm";
+        localForecastPolicies.set(bias, { tier, policy: forecastCorrectionPolicy(policies, metric, tier) });
+      }
       biases[metric] = bias;
     }
   }
@@ -513,13 +565,29 @@ export function withLocalForecastAdjustments<T extends Pick<DashboardState, "cur
           covered[metric] = bias;
         }
       }
-      // a completely expired hour remains its original normalized record
-      if (Object.keys(covered).length === 0) {
+      const anchors: Partial<Record<ForecastCorrectionMetric, Readonly<{ tier: ForecastCorrectionAnchorTier; observedAt: string }>>> = {};
+      // retain the issue regime on unchanged next-day hours without projecting expired biases
+      for (const metric of ["uvIndex", "pressureChange3hHpa"] as const) {
+        const bias = biases[metric];
+        const metadata = bias === undefined ? undefined : localForecastPolicies.get(bias);
+        // only accepted issue anchors and the stated next-day forecast enter this audit metadata
+        if (bias !== undefined && metadata !== undefined && target <= nowMs + 24 * 3_600_000) {
+          anchors[metric] = { tier: metadata.tier, observedAt: bias.observedAt };
+        }
+      }
+      // a completely unanchored and unadjusted hour needs no ephemeral clone
+      if (Object.keys(covered).length === 0 && Object.keys(anchors).length === 0) {
         return record;
       }
       const projected = { ...record };
       localForecastBiases.set(projected, covered);
+      localForecastAnchors.set(projected, anchors);
       const cloud = solarCloudValues.get(record);
+      const cloudAnchor = cloudForecastAnchors.get(record);
+      // keep trusted cloud provenance when another local metric clones this hour
+      if (cloudAnchor !== undefined) {
+        cloudForecastAnchors.set(projected, cloudAnchor);
+      }
       // independent cloud and local-bias experiments may coexist on the same render clone
       if (cloud !== undefined) {
         solarCloudValues.set(projected, cloud);
@@ -531,9 +599,10 @@ export function withLocalForecastAdjustments<T extends Pick<DashboardState, "cur
 
 // retain daytime forecast evidence without inferring nighttime current clouds
 export function withSolarCloudAdjustment<T extends Pick<DashboardState, "current" | "selectedSite"> &
-  Partial<Pick<DashboardState, "forecast" | "forecastAdjustmentMode" | "solarCloudEvidence">>>(state: T, now = new Date()): T {
+  Partial<Pick<DashboardState, "forecast" | "forecastAdjustmentMode" | "solarCloudEvidence">>>(state: T, now = new Date(),
+    policies: ForecastCorrectionPolicies = DEFAULT_FORECAST_CORRECTION_POLICIES): T {
   // discard former render-only projections before re-evaluating freshness
-  const rawRecord = (record: WeatherRecord): WeatherRecord => solarCloudValues.has(record) ? { ...record } : record;
+  const rawRecord = (record: WeatherRecord): WeatherRecord => (solarCloudValues.has(record) || cloudForecastAnchors.has(record)) ? { ...record } : record;
   const current = state.current.map(rawRecord);
   const forecast = state.forecast?.map(rawRecord);
   const raw = { ...state, current, ...forecast === undefined ? {} : { forecast } };
@@ -569,13 +638,38 @@ export function withSolarCloudAdjustment<T extends Pick<DashboardState, "current
     Date.parse(currentBias.observedAt) > Date.parse(retainedBias.observedAt) ||
     (currentBias.observedAt === retainedBias.observedAt && Date.parse(currentBias.evaluatedAt) >= Date.parse(retainedBias.evaluatedAt))
     ? currentBias : retainedBias;
+  const forecastRun = forecast?.filter(
+    // use one newest causal best-match retrieval and never an alternate source vintage
+    (record) => record.provenance.providerKey === "open-meteo" && record.provenance.sourceKind === "forecast" &&
+      record.provenance.stationSlug === "open-meteo-virtual" && record.metadata.upstream.model === "best_match" &&
+      Date.parse(record.receivedAt) <= now.getTime() && Date.parse(record.productRunAt ?? record.receivedAt) <= now.getTime(),
+  ).toSorted(
+    // retrieval identity controls eligibility rather than target time or prediction value
+    (left, right) => Date.parse(right.productRunAt ?? right.receivedAt) - Date.parse(left.productRunAt ?? left.receivedAt),
+  )[0];
   // retain corrected values only on trusted ephemeral render clones
-  const project = (record: WeatherRecord, targetAt: string, bias: SolarCloudBias | null): WeatherRecord => {
+  const project = (record: WeatherRecord, targetAt: string, bias: SolarCloudBias | null, policy?: ForecastCorrectionPolicy): WeatherRecord => {
     // missing expired or low-sun current evidence preserves its regional value
     if (bias === null) {
       return record;
     }
-    const value = projectSolarCloudCover(record.metrics.cloudCoverPercent, targetAt, bias);
+    const value = policy === undefined ? projectSolarCloudCover(record.metrics.cloudCoverPercent, targetAt, bias)
+      : projectForecastCloudCover(record.metrics.cloudCoverPercent, targetAt, bias, policy);
+    // a zero policy retains only trusted causal evaluation metadata never an adjusted value
+    if (policy !== undefined) {
+      const target = Date.parse(targetAt);
+      // only future next-day hours retain issue metadata never a renewed adjustment expiry
+      if (target < Date.parse(bias.evaluatedAt) || target > now.getTime() + 24 * 3_600_000) {
+        return record;
+      }
+      const projected = { ...record };
+      cloudForecastAnchors.set(projected, bias);
+      // only an actual numerical difference receives a sunlight value marker
+      if (value !== null && Number.isFinite(value) && value !== record.metrics.cloudCoverPercent) {
+        solarCloudValues.set(projected, value);
+      }
+      return projected;
+    }
     // omit unchanged unavailable and out-of-horizon values
     if (value === null || !Number.isFinite(value) || value === record.metrics.cloudCoverPercent) {
       return record;
@@ -591,10 +685,22 @@ export function withSolarCloudAdjustment<T extends Pick<DashboardState, "current
       (record) => record === regional ? project(record, now.toISOString(), currentBias) : record,
     ),
     ...forecast === undefined ? {} : { forecast: forecast.map(
-      // retained evidence affects only future regional hours never elapsed graph history
-      (record) => record.provenance.providerKey === "open-meteo" && record.provenance.sourceKind === "forecast" &&
-        record.provenance.stationSlug === "open-meteo-virtual" && Date.parse(record.validAt) >= now.getTime()
-        ? project(record, record.validAt, forecastBias) : record,
+      // require causal supported regional products before applying any retained forecast signal
+      (record) => {
+        const runAt = Date.parse(record.productRunAt ?? record.receivedAt);
+        const receivedAt = Date.parse(record.receivedAt);
+        const targetAt = Date.parse(record.validAt);
+        // past malformed future-publication and stale products remain exact raw
+        if (record.provenance.providerKey !== "open-meteo" || record.provenance.sourceKind !== "forecast" ||
+          record.provenance.stationSlug !== "open-meteo-virtual" || record.metadata.upstream.model !== "best_match" ||
+          forecastRun === undefined || record.provenance.sourceId !== forecastRun.provenance.sourceId ||
+          (record.productRunAt ?? record.receivedAt) !== (forecastRun.productRunAt ?? forecastRun.receivedAt) ||
+          !Number.isFinite(targetAt) || targetAt < now.getTime() || !Number.isFinite(runAt) || !Number.isFinite(receivedAt) ||
+          runAt > now.getTime() || receivedAt > now.getTime() || now.getTime() - runAt > REGIONAL_FORECAST_MAX_AGE_MS) {
+          return record;
+        }
+        return project(record, record.validAt, forecastBias, forecastCorrectionPolicy(policies, "cloudCoverPercent", "ws90"));
+      },
     ) },
   };
 }
@@ -5964,7 +6070,41 @@ export function forecastPressureChanges(
 // correct only the displayed same-source tendency without mixing absolute pressure datums
 function forecastPressureChangeValue(record: WeatherRecord, raw: number | null, useAdjustments: boolean): number | null {
   const bias = useAdjustments ? localForecastBiases.get(record)?.pressureChange3hHpa ?? null : null;
-  return projectLocalForecastBias(raw, record.validAt, bias);
+  const metadata = bias === null ? undefined : localForecastPolicies.get(bias);
+  return metadata === undefined ? raw : projectForecastLocalBias(raw, record.validAt, bias, metadata.policy);
+}
+
+// share chart and evaluator pressure composition without crossing source or run datums
+export function forecastPressureSeries(
+  records: readonly WeatherRecord[],
+  hours: readonly WeatherRecord[],
+  pressureContext: readonly WeatherRecord[],
+  useAdjustments = false,
+): readonly (number | null)[] {
+  const context = pressureContext.toSorted(
+    // six contiguous prior-vintage rows have deterministic endpoint order
+    (left, right) => Date.parse(left.validAt) - Date.parse(right.validAt),
+  );
+  const first = context[0];
+  const validContext = context.length === 6 && first !== undefined && typeof first.productRunAt === "string" && context.every(
+    // reject incomplete mixed-source mixed-run or malformed context independently
+    (record, index) => record.provenance.sourceKind === "forecast" && record.provenance.sourceId === first.provenance.sourceId &&
+      record.productRunAt !== null && record.productRunAt === first.productRunAt && record.metrics.pressureHpa !== null &&
+      Number.isFinite(record.metrics.pressureHpa) && Date.parse(record.validAt) === Date.parse(first.validAt) + index * 3_600_000,
+  );
+  const contextChanges = validContext ? forecastPressureChanges(context) : [];
+  const contextByHour = new Map(context.map(
+    // index completed differences rather than mixing absolute endpoint pressures
+    (record, index) => [`${record.provenance.sourceId}/${Date.parse(record.validAt)}`, contextChanges[index] ?? null],
+  ));
+  return forecastPressureChanges(records, hours).map(
+    // preserve the existing first-three-position fallback and visible end-record policy
+    (change, index) => {
+      const record = hours[index]!;
+      const raw = change ?? (index < 3 ? contextByHour.get(`${record.provenance.sourceId}/${Date.parse(record.validAt)}`) ?? null : null);
+      return forecastPressureChangeValue(record, raw, useAdjustments);
+    },
+  );
 }
 
 // select the earliest strongest complete three-hour window across the whole day
@@ -7113,21 +7253,11 @@ function buildForecastCharts(
   const selectedRain = rainRates(useAdjustments);
   const rawRain = rainRates(false);
 
-  const contextChanges = forecastPressureChanges(pressureContext);
-  const contextByHour = new Map(pressureContext.map(
-    // index completed prior-vintage differences rather than mixing their raw pressures
-    (record, index) => [`${record.provenance.sourceId}/${Date.parse(record.validAt)}`, contextChanges[index] ?? null],
-  ));
-  const rawPressureChanges = forecastPressureChanges(records, hours);
-  // preserve recorded past and the isolated context fallback in both display modes
-  const pressure = (adjusted: boolean): readonly (number | null)[] => rawPressureChanges.map(
-    // correct completed windows only after retaining the isolated prior-vintage fallback
-    (change, index) => {
-      const record = hours[index]!;
-      const raw = change ?? (index < 3 ? contextByHour.get(`${record.provenance.sourceId}/${Date.parse(record.validAt)}`) ?? null : null);
-      // completed observed windows take precedence without crossing pressure datums
-      return Date.parse(record.validAt) < now ? observed.get(Date.parse(record.validAt))?.pressureChange3hHpa ?? raw : forecastPressureChangeValue(record, raw, adjusted);
-    },
+  // recorded history remains a presentation overlay after shared forecast inference
+  const pressure = (adjusted: boolean): readonly (number | null)[] => forecastPressureSeries(records, hours, pressureContext, adjusted).map(
+    // historical recorded tendencies take precedence in both display modes
+    (change, index) => Date.parse(hours[index]!.validAt) < now
+      ? observed.get(Date.parse(hours[index]!.validAt))?.pressureChange3hHpa ?? change : change,
   );
   const pressureChanges = pressure(useAdjustments);
   const rawPressure = pressure(false);
@@ -14121,6 +14251,11 @@ export function forecastMetricValue(
   // locally paired experiments never override a usable qualified server output
   if (useAdjustments) {
     const bias = localForecastBiases.get(record)?.[metric as LocalForecastBiasMetric];
+    // forecast-only uv policies never alter humidity particulate or qualified families
+    if (metric === "uvIndex") {
+      const metadata = bias === undefined ? undefined : localForecastPolicies.get(bias);
+      return metadata === undefined ? record.metrics[metric] : projectForecastLocalBias(record.metrics[metric], record.validAt, bias ?? null, metadata.policy);
+    }
     return projectLocalForecastBias(record.metrics[metric], record.validAt, bias ?? null);
   }
 

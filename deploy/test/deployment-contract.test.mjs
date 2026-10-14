@@ -662,6 +662,8 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
   await writeFile(join(fixtureRoot, "apps/web/dist/units.js"), "export const ready = true;\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/solar-cloud.js"), "export const sunlight = true;\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/solar-cloud-evidence.js"), "export const evidence = true;\n");
+  // expose the new policy module in the isolated web-edge fixture
+  await writeFile(join(fixtureRoot, "apps/web/dist/forecast-correction-policy.js"), "export const policy = 'regional';\n");
   await writeFile(join(fixtureRoot, "apps/web/dist/local-forecast-bias.js"), "export const localBias = true;\n");
   const xweatherClientId = join(fixtureRoot, "xweather-client-id");
   const xweatherClientSecret = join(fixtureRoot, "xweather-client-secret");
@@ -1162,6 +1164,8 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
     const library = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/index.js`);
     const units = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/units.js`);
     const solarCloud = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/solar-cloud.js`);
+    // every transitive browser import belongs to the immutable shell inventory
+    const forecastPolicy = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/forecast-correction-policy.js`);
     const localBias = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/local-forecast-bias.js`);
     const stylesheet = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-7/styles.css`);
     const staleAsset = await fetch(`http://127.0.0.1:${webPort}/assets/2026.08.25-6/index.js`);
@@ -1350,6 +1354,8 @@ test("web edge serves allowlisted assets and bounded read-only upstream proxies"
     assert.match(solarCloud.headers.get("cache-control"), /immutable/u);
     assert.equal(await solarCloud.text(), "export const sunlight = true;\n");
     assert.equal(localBias.status, 200);
+    assert.equal(forecastPolicy.status, 200);
+    assert.equal(await forecastPolicy.text(), "export const policy = 'regional';\n");
     assert.equal(localBias.headers.get("content-type"), "text/javascript; charset=utf-8");
     assert.match(localBias.headers.get("cache-control"), /immutable/u);
     assert.equal(await localBias.text(), "export const localBias = true;\n");

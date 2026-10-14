@@ -46,7 +46,9 @@ const shellPaths = [
   `/assets/${release}/units.js`,
   `/assets/${release}/solar-cloud.js`,
   `/assets/${release}/solar-cloud-evidence.js`,
-  `/assets/${release}/local-forecast-bias.js`
+  `/assets/${release}/local-forecast-bias.js`,
+  // retain the complete inference import graph for offline and staged updates
+  `/assets/${release}/forecast-correction-policy.js`
 ];
 const shellPathSet = new Set(shellPaths);
 updateState.total = shellPaths.length;

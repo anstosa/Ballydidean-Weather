@@ -208,9 +208,13 @@ and source selection are unaffected by this presentation rule.
 ## Experimental WS90 sunlight cloud correction
 
 With Adjusted on, the dashboard can raise or lower the current regional cloud
-estimate and the next 24 hours of Open-Meteo cloud forecasts using the on-site
-WS90 `solarRadiationWm2` reading. The Clouds card, its daily extrema and clearest
-window and the forecast cloud chart use the selected forward values. Current
+estimate using the on-site WS90 `solarRadiationWm2` reading. Future cloud, UV
+and three-hour pressure corrections now have a separate forecast-only policy.
+Their compiled defaults are regional until a frozen independent validation panel
+supports a nonzero policy; current cloud estimates are unchanged. The Clouds card
+uses the sunlight estimate for Now and regional values for unvalidated future
+extrema, clearest windows and forecast chart hours. See
+[local forecast correction evaluation](local-forecast-corrections.md). Current
 cover and live Now artwork require a fresh qualifying daytime reading; they
 remain regional at night even when a daytime forecast correction is retained. Changed cloud icons are gold; the card identifies the sunlight estimate
 without experimental wording. The proxy remains experimental and unqualified;
@@ -239,8 +243,9 @@ At the observation and evaluation times, solar elevation must be at least
 be greater than 5 and no greater than 2500 W/m²; ratios above 1.5 times clear-sky
 irradiance are rejected. Missing, stale, delayed, suspicious, nighttime, and
 low-sun inputs preserve raw current cloud values. A previously qualifying daytime
-pair can still correct future hours until its original expiry. These conservative experimental
-gates are defaults, not empirically calibrated thresholds.
+pair remains available for future evaluation until its original expiry, but cannot
+activate a compiled-zero forecast policy. These conservative experimental gates
+are defaults, not empirically calibrated thresholds.
 
 Solar position follows [NOAA's solar calculations](https://gml.noaa.gov/grad/solcalc/calcdetails.html).
 Clear-sky horizontal irradiance uses the Haurwitz expression
@@ -256,13 +261,17 @@ that reference. The 15% clear-sky tolerance, ±80 percentage-point bias cap, and
 
 The bias is proxy minus paired regional cloud cover, capped to ±80 points.
 Current cover applies that bias at evaluation time, not the older modeled
-observation time. A future hour receives
-`bias × max(0, 1 - (hour - observationTime) / 24 hours)`, clamped to 0–100%.
+observation time, with its existing 24-hour fade. A separately validated future
+policy may use a fixed 3, 6, 12 or 24-hour horizon H and strength s:
+`bias × s × max(0, 1 - (hour - observationTime) / H)`, clamped to 0–100%.
+Zero-policy future values remain exact regional; the policy uses one taper,
+never a second taper layered onto the current projector.
 Past hours and hours at or beyond `observationTime + 24 hours` remain exact raw.
 Re-rendering an unchanged reading never slides its horizon forward. Each new
 accepted reading replaces the bias, including a genuine zero correction. When
-current inputs stop qualifying, Now retires to regional values while only future
-hours retain the newest qualifying daytime correction until its original expiry.
+current inputs stop qualifying, Now retires to regional values. Future evaluation
+can retain the newest qualifying daytime pair until its original expiry; serving
+still requires a validated compiled nonzero policy and causal fresh forecast run.
 Reloads and new nighttime visitors recover the same compact source pair from
 `GET /api/v1/sites/ballydidean/solar-cloud-evidence`, not browser storage. The
 versioned response contains original scalar values, observation/reception times

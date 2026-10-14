@@ -1502,6 +1502,8 @@ async function startFixtureServer() {
       [`/assets/${fixtureAssetVersion}/units.js`, [join(distRoot, "units.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/solar-cloud.js`, [join(distRoot, "solar-cloud.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/solar-cloud-evidence.js`, [join(distRoot, "solar-cloud-evidence.js"), "text/javascript; charset=utf-8"]],
+      // keep the fixture import graph identical to the production asset graph
+      [`/assets/${fixtureAssetVersion}/forecast-correction-policy.js`, [join(distRoot, "forecast-correction-policy.js"), "text/javascript; charset=utf-8"]],
       [`/assets/${fixtureAssetVersion}/local-forecast-bias.js`, [join(distRoot, "local-forecast-bias.js"), "text/javascript; charset=utf-8"]],
     ]);
     const requestedAsset = assets.get(url.pathname);
@@ -1587,7 +1589,7 @@ async function startFixtureServer() {
 }
 
 // verify daylight cloud correction and automatic fail-raw behavior in the rendered dashboard
-test("WS90 sunlight clouds fade within 24 hours and retire on stale readings", { timeout: 120_000 }, async () => {
+test("WS90 current sunlight survives while unvalidated future clouds stay regional", { timeout: 120_000 }, async () => {
   const fixture = await startFixtureServer();
   let browser;
   const at = "2026-08-21T20:00:00.000Z";
@@ -1641,8 +1643,9 @@ test("WS90 sunlight clouds fade within 24 hours and retire on stale readings", {
       const series = JSON.parse(await chart.getAttribute("data-forecast-series"));
       assert.equal(series[0].values[12], 90);
       assert.equal(series[0].values[13], 90);
-      assert.equal(Math.round(series[0].values[14]), 13);
-      assert.equal(Math.round(series[0].values[19]), 30);
+      assert.equal(series[0].values[14], 90);
+      assert.equal(series[0].values[19], 90);
+      assert.equal(await chart.locator(".forecast-adjusted-icon").count(), 0);
       assert.equal(await chart.locator(".forecast-chart-heading h3 > span:last-child").innerText(), "Clouds");
       assert.doesNotMatch(await page.locator("body").innerText(), /experimental/iu);
       await grid.focus();
@@ -1690,269 +1693,67 @@ test("WS90 sunlight clouds fade within 24 hours and retire on stale readings", {
   }
 });
 
-// retain one daylight source pair across the following night without changing now
-test("daylight cloud evidence carries only future corrections across the following night", { timeout: 120_000 }, async () => {
+// retained daylight evidence cannot activate an unvalidated future policy
+test("retained daylight remains available without overriding regional future clouds", { timeout: 120_000 }, async () => {
   const fixture = await startFixtureServer();
   let browser;
-  const evidenceAt = "2026-08-21T20:00:00.000Z";
   const nightAt = "2026-08-22T05:00:00.000Z";
-  const evidencePath = "GET /api/v1/sites/ballydidean/solar-cloud-evidence";
-  // create one exact compact evidence record
-  const evidenceRecord = (kind, value, validAt, suffix) => kind === "ws90"
-    ? {
-        providerKey: "ecowitt-local",
-        receivedAt: validAt,
-        recordId: `solar-ws90-${suffix}`,
-        sourceId: "4917",
-        sourceKey: "ecowitt-88f15505d89f-local-live-v1",
-        sourceKind: "physical_sensor",
-        stationSlug: "ballydidean-ecowitt",
-        validAt,
-        value,
-      }
-    : {
-        providerKey: "open-meteo",
-        receivedAt: validAt,
-        recordId: `solar-regional-${suffix}`,
-        sourceId: "10",
-        sourceKey: "open-meteo-current-v1",
-        sourceKind: "model_current",
-        stationSlug: "open-meteo-virtual",
-        validAt,
-        value,
-      };
-  // create one server evidence envelope body
-  const solarEvidence = (validAt, regionalCloud, suffix) => ({
-    evaluatedAt: validAt,
-    regional: evidenceRecord("regional", regionalCloud, validAt, suffix),
-    ws90: evidenceRecord("ws90", 800, validAt, suffix),
-  });
-  // create fresh live night readings that cannot form a daylight bias
-  const nightRecords = (validAt) => {
-    const regional = {
-      ...current,
-      freshness: { ageSeconds: 0, label: "Current", status: "fresh" },
-      id: `night-regional-${validAt}`,
-      metrics: { ...current.metrics, cloudCoverPercent: 80 },
-      receivedAt: validAt,
-      validAt,
-    };
-    const ws90 = {
-      ...physicalCurrent,
-      freshness: { ageSeconds: 0, label: "Current", status: "fresh" },
-      id: `night-ws90-${validAt}`,
-      metrics: { ...physicalCurrent.metrics, cloudCoverPercent: null, solarRadiationWm2: 0 },
-      provenance: {
-        ...physicalCurrent.provenance,
-        providerKey: "ecowitt-local",
-        sourceId: "4917",
-        sourceKey: "ecowitt-88f15505d89f-local-live-v1",
-        sourceKind: "physical_sensor",
-        stationSlug: "ballydidean-ecowitt",
-      },
-      receivedAt: validAt,
-      validAt,
-    };
-    return [ws90, regional];
-  };
-  // read one rendered cloud series
-  const cloudValues = async (page) => JSON.parse(
-    await page.locator("[data-forecast-chart='clouds']").getAttribute("data-forecast-series"),
-  )[0].values;
-  // count only evidence endpoint reads
-  const evidenceReads = () => fixture.state.requests.filter(
-    // exclude every ordinary weather product
-    (request) => request === evidencePath,
-  ).length;
-  // await one optional evidence response during route startup
-  const openRoute = async (page, path, at) => {
-    await page.clock.setFixedTime(new Date(at));
-    const response = page.waitForResponse(
-      // match only the compact evidence endpoint
-      (candidate) => new URL(candidate.url()).pathname === "/api/v1/sites/ballydidean/solar-cloud-evidence",
-    );
-    await page.goto(`${fixture.origin}${path}`, { waitUntil: "networkidle" });
-    assert.equal((await response).status(), 200);
-  };
-
+  const evidenceAt = "2026-08-21T20:00:00.000Z";
   fixture.state.adjustmentMode = "inactive";
   fixture.state.adjustmentSettings = { version: 1, temperature: false, wind: false, rain: false };
-  fixture.state.currentRecords = nightRecords(nightAt);
+  fixture.state.currentRecords = [{ ...current, validAt: nightAt, receivedAt: nightAt,
+    freshness: { ageSeconds: 0, label: "Current", status: "fresh" }, metrics: { ...current.metrics, cloudCoverPercent: 80 } }];
   fixture.state.forecastRecords = forecast.map(
-    // isolate cloud-cover behavior with one constant raw regional baseline
+    // use an unchanged raw baseline across every future range
     (record) => ({ ...record, metrics: { ...record.metrics, cloudCoverPercent: 90 } }),
   );
-  fixture.state.solarCloudEvidence = solarEvidence(evidenceAt, 90, "first-day");
+  fixture.state.solarCloudEvidence = {
+    evaluatedAt: evidenceAt,
+    ws90: { providerKey: "ecowitt-local", sourceKind: "physical_sensor", sourceKey: "ecowitt-88f15505d89f-local-live-v1",
+      stationSlug: "ballydidean-ecowitt", sourceId: "4917", recordId: "day-ws90", validAt: evidenceAt, receivedAt: evidenceAt, value: 800 },
+    regional: { providerKey: "open-meteo", sourceKind: "model_current", sourceKey: "open-meteo-current-v1",
+      stationSlug: "open-meteo-virtual", sourceId: "900", recordId: "day-model", validAt: evidenceAt, receivedAt: evidenceAt, value: 90 },
+  };
   fixture.state.solarCloudEvidenceGeneratedAt = nightAt;
-
   try {
     browser = await launchBrowser();
-    const desktop = await createFixturePage(browser, {
-      timezoneId: site.timezone,
-      viewport: { height: 1_000, width: 1_440 },
-    });
-    const errors = [];
-    // retain asynchronous parsing and redraw failures
-    desktop.on("pageerror", (error) => errors.push(error.message));
-    const readsBeforeHome = evidenceReads();
-    await openRoute(desktop, "", nightAt);
-    await desktop.waitForFunction(
-      // require retained evidence to update the future extrema
-      () => document.querySelector("[data-condition='clouds'] .forecast-adjusted-icon") !== null,
-    );
-    assert.equal(evidenceReads(), readsBeforeHome + 1);
-    const cloudCard = desktop.locator("[data-condition='clouds']");
-    const homeToggle = desktop.getByRole("switch", { name: "Adjusted", exact: true });
-    const adjustedHomeForecast = await cloudCard.locator(".condition-forecast-readings").innerText();
-    assert.equal(await cloudCard.locator(".condition-primary").innerText(), "80%");
-    assert.doesNotMatch(await cloudCard.innerText(), /Sunlight estimate|experimental/iu);
-    assert.match(await desktop.locator(".section-nav-weather-icon").getAttribute("src") ?? "", /05-cloudy\.svg$/u);
-    await homeToggle.click();
-    const rawHomeForecast = await cloudCard.locator(".condition-forecast-readings").innerText();
-    assert.equal(await cloudCard.locator(".condition-primary").innerText(), "80%");
-    assert.notEqual(adjustedHomeForecast, rawHomeForecast);
-    assert.match(rawHomeForecast, /Max\s*90%[\s\S]*Min\s*90%/u);
-    assert.equal(await cloudCard.locator(".forecast-adjusted-icon").count(), 0);
-    assert.match(await desktop.locator(".section-nav-weather-icon").getAttribute("src") ?? "", /05-cloudy\.svg$/u);
-    await homeToggle.click();
-    const readsBeforeForecast = evidenceReads();
-    await desktop.getByRole("link", { name: "Forecast", exact: true }).click();
-    await desktop.locator('[data-forecast-charts][data-forecast-days="1"]').waitFor();
-    await desktop.waitForFunction(
-      // wait for the retained overnight projection redraw
-      () => Math.round(JSON.parse(document.querySelector("[data-forecast-chart='clouds']")?.getAttribute("data-forecast-series") ?? "[]")[0]?.values?.[22] ?? 90) === 40,
-    );
-    assert.equal(evidenceReads(), readsBeforeForecast);
-    const forecastToggle = desktop.getByRole("switch", { name: "Adjusted", exact: true });
-    const todayAdjusted = await cloudValues(desktop);
-    assert.equal(todayAdjusted[21], 90);
-    assert.equal(Math.round(todayAdjusted[22]), 40);
-    assert.equal(Math.round(todayAdjusted[23]), 43);
-    assert.equal(await desktop.locator("[data-forecast-chart='clouds'] .forecast-adjusted-icon").count(), 1);
-    const readsBeforeControls = evidenceReads();
-    await forecastToggle.click();
-    await desktop.waitForFunction(
-      // require raw cloud values without another evidence read
-      () => JSON.parse(document.querySelector("[data-forecast-chart='clouds']")?.getAttribute("data-forecast-series") ?? "[]")[0]?.values?.every((value) => value === 90),
-    );
-    assert.equal((await cloudValues(desktop)).every((value) => value === 90), true);
-    await forecastToggle.click();
-    await desktop.getByRole("button", { name: "5 days", exact: true }).click();
-    await desktop.locator('[data-forecast-charts][data-forecast-days="5"]').waitFor();
-    await desktop.waitForFunction(
-      // require the fixed endpoint of the retained projection
-      () => Math.round(JSON.parse(document.querySelector("[data-forecast-chart='clouds']")?.getAttribute("data-forecast-series") ?? "[]")[0]?.values?.[36] ?? 90) === 87,
-    );
-    const fiveDayAdjusted = await cloudValues(desktop);
-    assert.equal(Math.round(fiveDayAdjusted[36]), 87);
-    assert.equal(fiveDayAdjusted[37], 90);
-    assert.equal(evidenceReads(), readsBeforeControls);
-    assert.doesNotMatch(await desktop.locator("body").innerText(), /experimental/iu);
-    assert.equal(
-      await desktop.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
-      0,
-    );
-    assert.deepEqual(errors, []);
-    await desktop.close();
-
-    const mobile = await createFixturePage(browser, {
-      timezoneId: site.timezone,
-      viewport: { height: 844, width: 390 },
-    });
-    const readsBeforeNewViewer = evidenceReads();
-    await openRoute(mobile, "/forecast", nightAt);
-    await mobile.waitForFunction(
-      // require a new viewer to recover the retained server evidence
-      () => Math.round(JSON.parse(document.querySelector("[data-forecast-chart='clouds']")?.getAttribute("data-forecast-series") ?? "[]")[0]?.values?.[22] ?? 90) === 40,
-    );
-    assert.equal(evidenceReads(), readsBeforeNewViewer + 1);
-    assert.equal(Math.round((await cloudValues(mobile))[22]), 40);
-    assert.deepEqual(
-      await mobile.locator(".forecast-masthead").evaluate(
-        // preserve the full-width sticky header in the recovery path
-        (masthead) => {
-          const bounds = masthead.getBoundingClientRect();
-          return {
-            left: Math.round(bounds.left),
-            overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-            right: Math.round(bounds.right),
-            width: document.documentElement.clientWidth,
-          };
-        },
-      ),
-      { left: 0, overflow: 0, right: 390, width: 390 },
-    );
-    await mobile.close();
-
-    const rawViewer = await createFixturePage(browser, {
-      timezoneId: site.timezone,
-      viewport: { height: 844, width: 390 },
-    });
-    await rawViewer.addInitScript(
-      // begin with the explicit regional-only preference
-      (key) => localStorage.setItem(key, "raw"),
-      FORECAST_ADJUSTMENT_MODE_STORAGE_KEY,
-    );
-    const readsBeforeRawViewer = evidenceReads();
-    await openRoute(rawViewer, "/forecast", nightAt);
-    await rawViewer.locator("[data-forecast-chart='clouds']").waitFor();
-    assert.equal(evidenceReads(), readsBeforeRawViewer + 1);
-    assert.equal((await cloudValues(rawViewer)).every((value) => value === 90), true);
-    assert.equal(await rawViewer.locator("[data-forecast-chart='clouds'] .forecast-adjusted-icon").count(), 0);
-    await rawViewer.close();
-
-    fixture.state.solarCloudEvidence = {
-      ...solarEvidence(evidenceAt, 90, "invalid"),
-      evaluatedAt: "2026-08-21T20:00:01.000Z",
-    };
-    const invalid = await createFixturePage(browser, {
-      timezoneId: site.timezone,
-      viewport: { height: 780, width: 320 },
-    });
-    await openRoute(invalid, "/forecast", nightAt);
-    await invalid.locator("[data-forecast-chart='clouds']").waitFor();
-    assert.equal((await cloudValues(invalid)).every((value) => value === 90), true);
-    assert.equal(await invalid.locator("[data-forecast-chart='clouds'] .forecast-adjusted-icon").count(), 0);
-    assert.doesNotMatch(await invalid.locator("body").innerText(), /experimental/iu);
-    assert.equal(
-      await invalid.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
-      0,
-    );
-    await invalid.close();
-
-    fixture.state.solarCloudEvidence = solarEvidence(evidenceAt, 90, "expired");
-    fixture.state.solarCloudEvidenceGeneratedAt = "2026-08-22T20:00:01.000Z";
-    fixture.state.currentRecords = nightRecords("2026-08-22T20:00:01.000Z");
-    const expired = await createFixturePage(browser, {
-      timezoneId: site.timezone,
-      viewport: { height: 900, width: 960 },
-    });
-    await openRoute(expired, "/forecast", "2026-08-22T20:00:01.000Z");
-    await expired.locator("[data-forecast-chart='clouds']").waitFor();
-    assert.equal((await cloudValues(expired)).every((value) => value === 90), true);
-    assert.equal(await expired.locator("[data-forecast-chart='clouds'] .forecast-adjusted-icon").count(), 0);
-    await expired.close();
-
-    const nextEvidenceAt = "2026-08-22T20:00:00.000Z";
-    const nextNightAt = "2026-08-23T05:00:00.000Z";
-    fixture.state.solarCloudEvidence = solarEvidence(nextEvidenceAt, 60, "second-day");
-    fixture.state.solarCloudEvidenceGeneratedAt = nextNightAt;
-    fixture.state.currentRecords = nightRecords(nextNightAt);
-    const updated = await createFixturePage(browser, {
-      timezoneId: site.timezone,
-      viewport: { height: 844, width: 390 },
-    });
-    await openRoute(updated, "/forecast", nextNightAt);
-    await updated.waitForFunction(
-      // require the next daylight pair instead of the expired first pair
-      () => Math.round(JSON.parse(document.querySelector("[data-forecast-chart='clouds']")?.getAttribute("data-forecast-series") ?? "[]")[0]?.values?.[22] ?? 90) === 53,
-    );
-    assert.equal(Math.round((await cloudValues(updated))[22]), 53);
-    assert.equal(await updated.locator("[data-forecast-chart='clouds'] .forecast-adjusted-icon").count(), 1);
-    assert.doesNotMatch(await updated.locator("body").innerText(), /experimental/iu);
-    await updated.close();
+    // preserve desktop phone and narrow-phone rendering under zero policies
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }, { width: 320, height: 780 }]) {
+      const page = await createFixturePage(browser, { timezoneId: site.timezone, viewport });
+      const errors = [];
+      // retain all asynchronous browser failures
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.clock.setFixedTime(new Date(nightAt));
+      await page.goto(fixture.origin, { waitUntil: "networkidle" });
+      const card = page.locator("[data-condition='clouds']");
+      assert.equal(await card.locator(".condition-primary").innerText(), "80%");
+      assert.doesNotMatch(await card.innerText(), /Sunlight estimate|experimental/iu);
+      assert.equal(await card.locator(".forecast-adjusted-icon").count(), 0);
+      await page.getByRole("link", { name: "Forecast", exact: true }).click();
+      const chart = page.locator("[data-forecast-chart='clouds']");
+      await chart.waitFor();
+      // every mode and range retains the same raw future cloud values
+      for (const days of [1, 5]) {
+        // switch to the broader calendar product when requested
+        if (days === 5) {
+          await page.getByRole("button", { name: "5 days", exact: true }).click();
+          await page.locator('[data-forecast-charts][data-forecast-days="5"]').waitFor();
+        }
+        const adjusted = JSON.parse(await chart.getAttribute("data-forecast-series"));
+        assert.ok(adjusted[0].values.every((value) => value === 90));
+        assert.equal(await chart.locator(".forecast-adjusted-icon").count(), 0);
+        const toggle = page.getByRole("switch", { name: "Adjusted", exact: true });
+        await toggle.click();
+        assert.deepEqual(JSON.parse(await chart.getAttribute("data-forecast-series")), adjusted);
+        await toggle.click();
+      }
+      assert.ok(fixture.state.requests.some((request) => request === "GET /api/v1/sites/ballydidean/solar-cloud-evidence"));
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
+      assert.deepEqual(errors, []);
+      await page.close();
+    }
   } finally {
-    // close disposable browser and fixture resources
+    // release disposable resources after every outcome
     await browser?.close();
     fixture.server.close();
     await once(fixture.server, "close");
@@ -1960,7 +1761,7 @@ test("daylight cloud evidence carries only future corrections across the followi
 });
 
 // prove browser-visible local biases stay bounded and raw data remains intact
-test("local observations bias four forecast families for only the next 24 hours", { timeout: 120_000 }, async () => {
+test("local observations preserve current values while unvalidated uv and pressure forecasts stay regional", { timeout: 120_000 }, async () => {
   const fixture = await startFixtureServer();
   let browser;
   const now = new Date("2026-06-21T20:00:00.000Z");
@@ -2091,8 +1892,8 @@ test("local observations bias four forecast families for only the next 24 hours"
       Object.fromEntries(localFamilies.map(
         // apply the same real-change expectation to every local family
         (family) => [family, {
-          color: adjusted ? "rgb(197, 138, 16)" : "rgb(33, 26, 31)",
-          marked: adjusted,
+          color: adjusted && (view === "home" || family === "humidity" || family === "air-quality") ? "rgb(197, 138, 16)" : "rgb(33, 26, 31)",
+          marked: adjusted && (view === "home" || family === "humidity" || family === "air-quality"),
         }],
       )),
       label,
@@ -2304,14 +2105,19 @@ test("local observations bias four forecast families for only the next 24 hours"
         {
           "air-quality": [20, 10],
           humidity: [50, 70],
-          pressure: [0.2999999999999545, 1.7999999999999545],
-          "uv-index": [6, 3],
+          pressure: [0.2999999999999545, 0.2999999999999545],
+          "uv-index": [6, 6],
         },
       );
       // retain past hours and expire exactly at the 24-hour boundary
       for (const family of localFamilies) {
         assert.equal(adjusted[family][2], raw[family][2], `${family} changed a past hour`);
-        assert.notEqual(adjusted[family][26], raw[family][26], `${family} missed the final covered hour`);
+        // only independently unchanged heuristic families retain their existing coverage
+        if (family === "humidity" || family === "air-quality") {
+          assert.notEqual(adjusted[family][26], raw[family][26], `${family} missed the final covered hour`);
+        } else {
+          assert.deepEqual(adjusted[family], raw[family], `${family} changed before independent validation`);
+        }
         assert.equal(adjusted[family][27], raw[family][27], `${family} crossed its 24-hour expiry`);
       }
       assert.deepEqual(adjustedTemperature[0], rawTemperature[0]);

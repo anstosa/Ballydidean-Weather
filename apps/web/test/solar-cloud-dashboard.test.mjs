@@ -9,11 +9,20 @@ import {
   NOW_ICON_STORAGE_KEY,
   renderWeatherDashboard,
   WeatherDashboardController,
-  withSolarCloudAdjustment,
+  withSolarCloudAdjustment as projectSolarCloudAdjustment,
 } from "../dist/index.js";
 
 const latitude = 47.950429954185445;
 const longitude = -122.42797012608193;
+const candidatePolicies = {
+  uvIndex: {}, pressureChange3hHpa: {}, cloudCoverPercent: { ws90: { strength: 1, horizonHours: 24 } },
+};
+
+// explicit offline candidates do not change the compiled-zero serving policy
+function withSolarCloudAdjustment(state, at) {
+  return projectSolarCloudAdjustment(state, at, candidatePolicies);
+}
+
 const now = new Date("2026-06-21T20:00:00.000Z");
 const site = {
   latitude,
@@ -80,7 +89,7 @@ function weatherRecord({
       attribution: { label: providerKey, url: "https://example.test/weather" },
       label: sourceKind,
       providerKey,
-      sourceId: `${providerKey}-${sourceKind}-${id}`,
+      sourceId: sourceKind === "forecast" ? `${providerKey}-${sourceKind}` : `${providerKey}-${sourceKind}-${id}`,
       sourceKey: `${providerKey}-${sourceKind}`,
       sourceKind,
       stationSlug,
@@ -303,15 +312,15 @@ test("solar projection drives cloud summaries and remains separate from governed
   assert.match(adjustedCard, /class="condition-primary"><strong>0<small>%<\/small>/u);
   assert.match(adjustedCard, /Sunlight estimate/u);
   assert.match(adjustedCard, /forecast-adjusted-icon/u);
-  assert.match(adjustedCard, /Clearest[\s\S]*?1–4<small>PM/u);
-  assert.match(adjustedCard, /Max[\s\S]*?0<small>%[\s\S]*?Min[\s\S]*?0<small>%/u);
+  assert.match(adjustedCard, /Clearest[\s\S]*?3–4<small>PM/u);
+  assert.match(adjustedCard, /Max[\s\S]*?80<small>%[\s\S]*?Min[\s\S]*?60<small>%/u);
   assert.match(rawCard, /class="condition-primary"><strong>80<small>%<\/small>/u);
   assert.doesNotMatch(rawCard, /experimental|forecast-adjusted-icon/u);
   assert.match(rawCard, /Clearest[\s\S]*?3–4<small>PM/u);
   assert.match(rawCard, /Max[\s\S]*?80<small>%[\s\S]*?Min[\s\S]*?60<small>%/u);
-  assert.deepEqual(adjustedChart.series, [{ label: "Cover", values: [0, 0, 0] }]);
+  assert.deepEqual(adjustedChart.series, [{ label: "Cover", values: [80, 70, 60] }]);
   assert.deepEqual(rawChart.series, [{ label: "Cover", values: [80, 70, 60] }]);
-  assert.match(adjustedChart.chart, /forecast-adjusted-icon[\s\S]*?Clouds/u);
+  assert.doesNotMatch(adjustedChart.chart, /forecast-adjusted-icon/u);
   assert.doesNotMatch(rawChart.chart, /experimental|forecast-adjusted-icon/u);
   assert.match(adjustedForecast, /data-forecast-adjustment-available="true"/u);
 });
@@ -439,6 +448,10 @@ test("retained daylight adjusts only future forecasts at night and fades at orig
     forecast: [forecast("2026-06-22T04:00:00.000Z", 90), forecast("2026-06-22T05:00:00.000Z", 90),
       forecast("2026-06-22T08:00:00.000Z", 90), forecast("2026-06-22T19:00:00.000Z", 90), forecast("2026-06-22T20:00:00.000Z", 90)],
   });
+  state.forecast = state.forecast.map(
+    // retained daylight evidence does not excuse stale forecast publication
+    (record) => ({ ...record, receivedAt: night.toISOString(), productRunAt: night.toISOString() }),
+  );
   const projected = withSolarCloudAdjustment(state, night);
   assert.equal(cloud(projected.current[1]), 80);
   assert.deepEqual(projected.forecast.map((value) => cloud(value)), [90, 40, 50, 90 - 80 / 24, 90]);

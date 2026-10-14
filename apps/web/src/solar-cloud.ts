@@ -1,3 +1,5 @@
+import { forecastCorrectionWeight, type ForecastCorrectionPolicy } from "./forecast-correction-policy.js";
+
 export type SolarCloudFreshnessStatus = "fresh" | "delayed" | "stale";
 
 export interface SolarCloudSample {
@@ -134,6 +136,23 @@ export function clearSkyRadiation(
   };
 }
 
+// share the fixed pointwise ws90 proxy with independent label construction
+export function radiationCloudProxy(latitude: number, longitude: number, at: string, radiation: number | null): number | null {
+  const sky = clearSkyRadiation(latitude, longitude, at);
+  // retain every original physical daylight and enhancement gate
+  if (sky === null || radiation === null || !Number.isFinite(radiation) || radiation <= 5 || radiation > 2500 ||
+    sky.solarElevationDegrees < MIN_SOLAR_ELEVATION_DEGREES || sky.irradianceWm2 < MIN_CLEAR_SKY_RADIATION_WM2 ||
+    radiation / sky.irradianceWm2 > MAX_RADIATION_RATIO) {
+    return null;
+  }
+  const obscuration = clamp(
+    (1 - Math.min(1, radiation / (CLEAR_SKY_TOLERANCE * sky.irradianceWm2))) / CLOUD_ATTENUATION_RANGE,
+    0,
+    1,
+  );
+  return 100 * Math.sqrt(obscuration);
+}
+
 // create one short-lived experimental cloud-cover bias from paired current readings
 export function createSolarCloudBias(input: SolarCloudBiasInput): SolarCloudBias | null {
   const now = parseExplicitTimestamp(input.now);
@@ -191,20 +210,11 @@ export function createSolarCloudBias(input: SolarCloudBiasInput): SolarCloudBias
     return null;
   }
 
-  const radiationRatio = ws90.value / observedSky.irradianceWm2;
-  // reject suspicious enhancement beyond plausible clear-sky variance
-  if (radiationRatio > MAX_RADIATION_RATIO) {
+  const estimatedCloudCoverPercent = radiationCloudProxy(input.latitude, input.longitude, ws90.validAt, ws90.value);
+  // the exact point proxy rejects suspicious radiation enhancement
+  if (estimatedCloudCoverPercent === null) {
     return null;
   }
-
-  // retain a fifteen-percent experimental clear-sky tolerance without calibration claims
-  const obscuration = clamp(
-    (1 - Math.min(1, ws90.value / (CLEAR_SKY_TOLERANCE * observedSky.irradianceWm2))) /
-      CLOUD_ATTENUATION_RANGE,
-    0,
-    1,
-  );
-  const estimatedCloudCoverPercent = 100 * Math.sqrt(obscuration);
   const biasPercentPoints = clamp(
     estimatedCloudCoverPercent - regional.value,
     -MAX_BIAS_PERCENT_POINTS,
@@ -236,9 +246,38 @@ export function projectSolarCloudCover(
   targetAt: string,
   bias: SolarCloudBias | null,
 ): number | null {
+  const times = solarProjectionTimes(rawCover, targetAt, bias);
+  // rejected metadata preserves the original current projector behavior
+  if (times === null || rawCover === null || bias === null) {
+    return rawCover;
+  }
+  const { target, observed } = times;
+  const weight = Math.max(0, 1 - (target - observed) / DAY_MS);
+  return clamp(rawCover + bias.biasPercentPoints * weight, 0, 100);
+}
+
+// shorten only forecast persistence while retaining current cloud semantics
+export function projectForecastCloudCover(
+  rawCover: number | null,
+  targetAt: string,
+  bias: SolarCloudBias | null,
+  policy: ForecastCorrectionPolicy,
+): number | null {
+  const times = solarProjectionTimes(rawCover, targetAt, bias);
+  // no unvalidated or unavailable forecast value can be manufactured
+  if (times === null || rawCover === null || bias === null) {
+    return rawCover;
+  }
+  const weight = forecastCorrectionWeight(times.target, times.observed, policy);
+  return weight === 0 ? rawCover : clamp(rawCover + bias.biasPercentPoints * weight, 0, 100);
+}
+
+// retain the legacy cloud projector guards without changing current outputs
+function solarProjectionTimes(rawCover: number | null, targetAt: string, bias: SolarCloudBias | null):
+  { readonly target: number; readonly observed: number } | null {
   // preserve unavailable or invalid normalized inputs
   if (rawCover === null || !Number.isFinite(rawCover) || rawCover < 0 || rawCover > 100 || bias === null) {
-    return rawCover;
+    return null;
   }
 
   const target = parseExplicitTimestamp(targetAt);
@@ -254,11 +293,10 @@ export function projectSolarCloudCover(
     !Number.isFinite(bias.biasPercentPoints) ||
     Math.abs(bias.biasPercentPoints) > MAX_BIAS_PERCENT_POINTS
   ) {
-    return rawCover;
+    return null;
   }
 
-  const weight = Math.max(0, 1 - (target - observed) / DAY_MS);
-  return clamp(rawCover + bias.biasPercentPoints * weight, 0, 100);
+  return { target, observed };
 }
 
 // parse one valid ISO timestamp carrying an explicit offset

@@ -3,13 +3,30 @@ import test from "node:test";
 import {
   DEFAULT_UNIT_PREFERENCES,
   forecastMetricValue,
+  forecastCorrectionAnchor,
   forecastPressureChanges,
   renderWeatherDashboard,
   strongestPressureChange,
   WeatherDashboardController,
-  withLocalForecastAdjustments,
-  withSolarCloudAdjustment,
+  withLocalForecastAdjustments as projectLocalForecastAdjustments,
+  withSolarCloudAdjustment as projectSolarCloudAdjustment,
 } from "../dist/index.js";
+
+const candidatePolicies = {
+  uvIndex: { farm: { strength: 1, horizonHours: 24 }, local_mean: { strength: 1, horizonHours: 24 } },
+  pressureChange3hHpa: { farm: { strength: 1, horizonHours: 24 }, local_mean: { strength: 1, horizonHours: 24 } },
+  cloudCoverPercent: { ws90: { strength: 1, horizonHours: 24 } },
+};
+
+// exercise dormant candidate inference without activating compiled serving constants
+function withLocalForecastAdjustments(state, now) {
+  return projectLocalForecastAdjustments(state, now, candidatePolicies);
+}
+
+// exercise the same private cloud projector under an explicit development policy
+function withSolarCloudAdjustment(state, now) {
+  return projectSolarCloudAdjustment(state, now, candidatePolicies);
+}
 
 const now = new Date("2026-06-21T20:00:00.000Z");
 const site = {
@@ -200,7 +217,7 @@ test("rendered local summaries and air temperature chart match adjusted values",
   assert.equal(temperature[1].values[3], 10);
   assert.equal(chart(rawHtml, "temperature").series[1].values[3], 14);
   // verify each forecast chart's actual projected values rather than its gold class alone
-  for (const [key, expected] of [["humidity", 70], ["air-quality", 10], ["uv-index", 3], ["pressure", 1.8]]) {
+  for (const [key, expected] of [["humidity", 70], ["air-quality", 10], ["uv-index", 6], ["pressure", 0.3]]) {
     close(chart(adjustedHtml, key).series[0].values[3], expected);
     assert.doesNotMatch(chart(adjustedHtml, key).markup, /experimental/u);
     assert.doesNotMatch(chart(rawHtml, key).markup, /experimental/u);
@@ -209,7 +226,7 @@ test("rendered local summaries and air temperature chart match adjusted values",
   assert.ok(correctedMax);
   const home = renderWeatherDashboard(input, "home");
   assert.match(home, /data-condition="humidity"[\s\S]*?Max[\s\S]*?70/u);
-  assert.match(home, /data-condition="pressure"[\s\S]*?Max[\s\S]*?\+1\.8/u);
+  assert.match(home, /data-condition="pressure"[\s\S]*?Max[\s\S]*?\+0\.3/u);
   const serialized = JSON.parse(JSON.stringify(combined));
   assert.equal(forecastMetricValue(serialized.forecast[3], "relativeHumidityPercent"), 50);
   const qualified = { ...input.forecast[3], adjustment: { state: "active", appliedMetrics: ["relativeHumidityPercent"], adjustedMetrics: { relativeHumidityPercent: 85 } } };
@@ -296,4 +313,35 @@ test("homepage gold tracks changed current source readings independently of fore
   }
   assert.equal(gold(selected, "temperature", "home"), false);
   assert.equal(gold(selected, "rain", "home"), false);
+});
+
+// unvalidated production cells retain regional forecasts and honest icon states
+test("compiled zero policies preserve uv pressure and clouds while humidity and particles still adjust", (context) => {
+  context.mock.timers.enable({ apis: ["Date"], now });
+  const input = state();
+  const projected = projectLocalForecastAdjustments(projectSolarCloudAdjustment(input, now), now);
+  assert.equal(forecastMetricValue(projected.forecast[4], "uvIndex"), input.forecast[4].metrics.uvIndex);
+  assert.equal(forecastMetricValue(projected.forecast[4], "cloudCoverPercent"), input.forecast[4].metrics.cloudCoverPercent);
+  assert.deepEqual(forecastPressureChanges(projected.forecast, projected.forecast, true), forecastPressureChanges(input.forecast));
+  assert.equal(forecastMetricValue(projected.forecast[3], "relativeHumidityPercent"), 70);
+  assert.equal(forecastMetricValue(projected.forecast[3], "pm25MicrogramsPerCubicMeter"), 10);
+  const html = renderWeatherDashboard(input, "forecast");
+  // future regional values never acquire mode-only gold
+  for (const key of ["clouds", "uv-index", "pressure"]) {
+    assert.equal(gold(html, key), false);
+  }
+});
+
+// expiry changes inference not the paired next-day evaluation denominator
+test("trusted issue anchors survive unchanged expiry hours without trusting serialized policy", () => {
+  const input = state();
+  input.current[0] = { ...input.current[0], validAt: new Date(now.getTime() - 5 * 60_000).toISOString(),
+    receivedAt: new Date(now.getTime() - 5 * 60_000).toISOString() };
+  const forged = { ...input, forecastCorrectionPolicies: candidatePolicies };
+  const projected = projectLocalForecastAdjustments(projectSolarCloudAdjustment(forged, now), now);
+  const last = projected.forecast[27];
+  assert.equal(forecastCorrectionAnchor(last, "uvIndex").tier, "farm");
+  assert.equal(forecastCorrectionAnchor(last, "pressureChange3hHpa").tier, "farm");
+  assert.equal(forecastMetricValue(last, "uvIndex"), input.forecast[27].metrics.uvIndex);
+  assert.deepEqual(forecastPressureChanges(projected.forecast, [last], true), forecastPressureChanges(input.forecast, [input.forecast[27]]));
 });

@@ -1,3 +1,4 @@
+import { forecastCorrectionWeight, type ForecastCorrectionPolicy } from "./forecast-correction-policy.js";
 import { clearSkyRadiation } from "./solar-cloud.js";
 import type { SolarCloudSample } from "./solar-cloud.js";
 
@@ -178,15 +179,59 @@ export function projectLocalForecastBias(
   targetAt: string,
   bias: LocalForecastBias | null,
 ): number | null {
+  const context = localProjectionContext(raw, targetAt, bias);
+  // rejected metadata preserves the original regional value
+  if (context === null || raw === null || bias === null) {
+    return raw;
+  }
+  const { spec, target, observed } = context;
+  const weight = Math.max(0, 1 - (target - observed) / DAY_MS);
+  const projected = spec.adjustmentType === "multiplicative"
+    ? raw * (1 + (bias.adjustmentValue - 1) * weight)
+    : raw + bias.adjustmentValue * weight;
+  // clamp the corrected scalar to its physical presentation range
+  return clamp(projected, spec.minimum, spec.maximum);
+}
+
+// project only future uv and pressure through one frozen horizon policy
+export function projectForecastLocalBias(
+  raw: number | null,
+  targetAt: string,
+  bias: LocalForecastBias | null,
+  policy: ForecastCorrectionPolicy,
+): number | null {
+  const context = localProjectionContext(raw, targetAt, bias);
+  // unrelated families retain their legacy entry point and arithmetic
+  if (context === null || raw === null || bias === null ||
+    (bias.metric !== "uvIndex" && bias.metric !== "pressureChange3hHpa")) {
+    return raw;
+  }
+  const weight = forecastCorrectionWeight(context.target, context.observed, policy);
+  // a zero or retired policy does not clamp or alter the raw value
+  if (weight === 0) {
+    return raw;
+  }
+  const projected = bias.adjustmentType === "multiplicative"
+    ? raw * (1 + (bias.adjustmentValue - 1) * weight)
+    : raw + bias.adjustmentValue * weight;
+  return clamp(projected, context.spec.minimum, context.spec.maximum);
+}
+
+// validate the existing projection contract once for both pure entry points
+function localProjectionContext(
+  raw: number | null,
+  targetAt: string,
+  bias: LocalForecastBias | null,
+): { readonly spec: MetricSpec; readonly target: number; readonly observed: number } | null {
   // preserve unavailable input before inspecting optional metadata
   if (raw === null || bias === null) {
-    return raw;
+    return null;
   }
 
   const spec = metricSpec(bias.metric);
   // preserve non-finite or physically invalid regional forecast values
   if (spec === null || !isMetricValue(raw, spec)) {
-    return raw;
+    return null;
   }
 
   const target = parseExplicitTimestamp(targetAt);
@@ -208,7 +253,7 @@ export function projectLocalForecastBias(
     !isMetricValue(bias.observedValue, spec) || !isMetricValue(bias.regionalValue, spec) ||
     (bias.metric === "uvIndex" && bias.regionalValue < 1)
   ) {
-    return raw;
+    return null;
   }
 
   const expectedAdjustment = deriveAdjustment(
@@ -219,15 +264,10 @@ export function projectLocalForecastBias(
   );
   // reject altered or out-of-bounds adjustment metadata
   if (expectedAdjustment === null || bias.adjustmentValue !== expectedAdjustment) {
-    return raw;
+    return null;
   }
 
-  const weight = Math.max(0, 1 - (target - observed) / DAY_MS);
-  const projected = spec.adjustmentType === "multiplicative"
-    ? raw * (1 + (bias.adjustmentValue - 1) * weight)
-    : raw + bias.adjustmentValue * weight;
-  // clamp the corrected scalar to its physical presentation range
-  return clamp(projected, spec.minimum, spec.maximum);
+  return { spec, target, observed };
 }
 
 // require useful sunlight for observation-derived UV ratios

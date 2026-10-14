@@ -183,6 +183,8 @@ const versionedAssets = new Map([
   ["index.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "index.js"), type: "text/javascript; charset=utf-8" }],
   ["solar-cloud.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "solar-cloud.js"), type: "text/javascript; charset=utf-8" }],
   ["solar-cloud-evidence.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "solar-cloud-evidence.js"), type: "text/javascript; charset=utf-8" }],
+  // publish the complete compiled forecast-only policy dependency
+  ["forecast-correction-policy.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "forecast-correction-policy.js"), type: "text/javascript; charset=utf-8" }],
   ["local-forecast-bias.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "local-forecast-bias.js"), type: "text/javascript; charset=utf-8" }],
   ["units.js", { cache: "public, max-age=31536000, immutable", path: join(compiledRoot, "units.js"), type: "text/javascript; charset=utf-8" }],
 ]);
