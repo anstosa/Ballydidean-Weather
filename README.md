@@ -1,26 +1,23 @@
-# Ballydídean Weather: An Evidence-Governed Hyperlocal Intelligence Platform
+# Ballydídean Weather
+
+**Evidence-governed hyperlocal weather intelligence**
 
 <img width="1200" height="630" alt="weather-social-watercolor-minimal-1200x630" src="https://github.com/user-attachments/assets/a968c5f7-28ec-4cca-babc-141144ef774f" />
 
-### A technical case study in applied machine learning, full-stack architecture, and production systems engineering
+**Technical white paper · Ansel Santosa**
 
-**[Live platform](https://weather.ballydidean.farm)** ·
-**[Forecast experience](https://weather.ballydidean.farm/forecast)** ·
-**[Architecture](#2-system-architecture)** ·
-**[ML methodology and results](#4-applied-machine-learning)** ·
-**[Development](#9-reproducing-the-engineering-workflow)**
+[Live product](https://weather.ballydidean.farm) · [Architecture](#2-system-architecture) · [Verification](#8-verification-strategy-and-architectural-trade-offs) · [Development](#9-reproducing-the-engineering-workflow)
 
 ## At a glance
 
-**Product:** A hyperlocal weather intelligence platform for a working farm, combining on-site sensors, public stations, regional forecasts, air quality, and tides in web and Android experiences.
+| | |
+| --- | --- |
+| **Product** | A hyperlocal weather platform combining farm sensors, public stations, regional forecasts, air quality, and tides across web and Android. |
+| **Engineering challenge** | Evaluate forecast corrections without temporal leakage or silently weakening a trusted baseline. |
+| **Technical scope** | TypeScript/Node.js, PostgreSQL, Python model research, deterministic TypeScript inference, Kotlin Android, and ARM64 containers. |
+| **Design principle** | Preserve data provenance, separate research from serving, and require explicit evidence before model activation. |
 
-**Engineering problem:** Preserve when and where evidence was observed so ML forecast corrections can be evaluated without leakage and deployed without silently replacing a trusted baseline.
-
-**Technical scope:** TypeScript/Node.js, PostgreSQL, Python research, deterministic TypeScript inference, Kotlin Android, and ARM64 container delivery.
-
-**Read more:** [Architecture](#2-system-architecture) · [Machine learning](#4-applied-machine-learning) · [Model governance](#5-model-governance-as-executable-software) · [Production reliability](#7-production-delivery-security-and-recovery).
-
-The technical case study below distinguishes implemented safeguards and evaluated results from experimental work and future production authority.
+The sections below document design decisions, implementation evidence, and known limitations.
 
 ## Abstract
 
@@ -433,4 +430,10 @@ test URLs; local services are disposable development infrastructure.
 | How is the platform released and recovered? | [Blueberry operations](docs/operations/raspberry-pi.md) and [backup/restore](docs/operations/backup-restore.md) |
 | How is production analytics isolated and verified? | [Analytics configuration and privacy boundary](docs/operations/production-analytics.md) |
 
-**Live system:** [weather.ballydidean.farm](https://weather.ballydidean.farm)
+## Resources
+
+- [Live weather platform](https://weather.ballydidean.farm)
+- [Forecast governance and operations](docs/operations/forecast-adjustment.md)
+- [As-issued performance evidence](docs/operations/adjustment-performance.md)
+- [Mobile operations guide](docs/operations/mobile.md)
+- [Backup and restore](docs/operations/backup-restore.md)
