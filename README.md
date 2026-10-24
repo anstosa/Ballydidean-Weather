@@ -10,6 +10,18 @@
 **[ML methodology and results](#4-applied-machine-learning)** ·
 **[Development](#9-reproducing-the-engineering-workflow)**
 
+## At a glance
+
+**Product:** A hyperlocal weather intelligence platform for a working farm, combining on-site sensors, public stations, regional forecasts, air quality, and tides in web and Android experiences.
+
+**Engineering problem:** Preserve when and where evidence was observed so ML forecast corrections can be evaluated without leakage and deployed without silently replacing a trusted baseline.
+
+**Technical scope:** TypeScript/Node.js, PostgreSQL, Python research, deterministic TypeScript inference, Kotlin Android, and ARM64 container delivery.
+
+**Read more:** [Architecture](#2-system-architecture) · [Machine learning](#4-applied-machine-learning) · [Model governance](#5-model-governance-as-executable-software) · [Production reliability](#7-production-delivery-security-and-recovery).
+
+The technical case study below distinguishes implemented safeguards and evaluated results from experimental work and future production authority.
+
 ## Abstract
 
 Weather is a production weather intelligence platform built for Ballydidean
