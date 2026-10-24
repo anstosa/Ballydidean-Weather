@@ -1,4 +1,6 @@
-# Weather: An Evidence-Governed Hyperlocal Intelligence Platform
+# Ballydídean Weather: An Evidence-Governed Hyperlocal Intelligence Platform
+
+<img width="1200" height="630" alt="weather-social-watercolor-minimal-1200x630" src="https://github.com/user-attachments/assets/a968c5f7-28ec-4cca-babc-141144ef774f" />
 
 ### A technical case study in applied machine learning, full-stack architecture, and production systems engineering
 
