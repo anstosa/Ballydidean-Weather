@@ -1,0 +1,432 @@
+{
+  "schema": "weather-page-indexes/v2",
+  "operation": {
+    "advisoryLockKey": "8032416683782917",
+    "applicationName": "weather-page-index-v1",
+    "buildTimeoutSeconds": 2700,
+    "lockTimeoutMilliseconds": 5000,
+    "maintenanceWorkMem": "64MB",
+    "maxParallelMaintenanceWorkers": 0,
+    "progressPollMilliseconds": 100,
+    "resourcePollMilliseconds": 2000,
+    "stateRoot": "/opt/weather/current/deploy/state"
+  },
+  "admission": {
+    "fixedByteReservation": 2034155520,
+    "minimumByteFloor": 10737418240,
+    "dockerByteFloor": 4294967296,
+    "minimumInodeFloor": 32768,
+    "inodeFloorFraction": 0.1,
+    "fixedBuildByteReservation": 268435456,
+    "fixedBuildInodeReservation": 256,
+    "minimumAvailableMemoryBytes": 1879048192,
+    "maximumSwapBytesPerMinute": 1048576,
+    "minimumCpuCount": 4,
+    "maximumLoadPerCpu": 0.5,
+    "maximumFixtureWriteP95Ratio": 1.1,
+    "minimumHeartbeatAllowanceSeconds": 120,
+    "rehearsalMaximumAgeSeconds": 86400,
+    "ingestionMaximumAgeSeconds": 3600,
+    "liveSampleMaximumAgeSeconds": 60,
+    "maximumScaleGrowthRatio": 1.01,
+    "abortByteMargin": 268435456,
+    "abortInodeMargin": 256
+  },
+  "restoreContext": {
+    "schema": "weather-page-index-restore-context/v1",
+    "repository": "anstosa/weather",
+    "tag": "2026.10.09-1",
+    "commit": "56b327d9c750946f6f6963b6fe1fa5c9bba791ca",
+    "tree": "ecd9599ebf4907c67b912c742eb8fc3d8e6ee8df",
+    "fileCount": 813,
+    "decodedBytes": 17238740,
+    "maximumFileCount": 2048,
+    "maximumDecodedBytes": 67108864,
+    "criticalPaths": [
+      "deploy/scripts/restore.sh",
+      "deploy/scripts/common.sh",
+      "deploy/compose.yaml",
+      "deploy/postgres/runtime-acl-v2.sql"
+    ],
+    "migrations": [
+      "packages/database/migrations/0001_initial_weather.sql",
+      "packages/database/migrations/0002_worker_migration_readiness.sql",
+      "packages/database/migrations/0003_ecowitt_measurements.sql",
+      "packages/database/migrations/0004_tempest_metadata.sql",
+      "packages/database/migrations/0005_source_supersession.sql",
+      "packages/database/migrations/0006_station_coordinates.sql",
+      "packages/database/migrations/0007_tide_sources.sql",
+      "packages/database/migrations/0008_ecowitt_property_sensors.sql",
+      "packages/database/migrations/0009_forecast_anchor_records.sql",
+      "packages/database/migrations/0010_forecast_training_export.sql",
+      "packages/database/migrations/0011_forecast_runtime_provenance.sql",
+      "packages/database/migrations/0012_hide_archive_only_forecasts_from_live_reads.sql",
+      "packages/database/migrations/0013_ecmwf_temperature_canary.sql",
+      "packages/database/migrations/0014_rain_collection.sql",
+      "packages/database/migrations/0015_rain_station_access.sql",
+      "packages/database/migrations/0016_rain_adjustment.sql",
+      "packages/database/migrations/0017_adjustment_evaluation_export.sql",
+      "packages/database/migrations/0018_adjustment_maintenance_v2.sql"
+    ],
+    "candidatePrefixMaximumLength": 32,
+    "forbiddenProjectNames": [
+      "weather"
+    ],
+    "forbiddenDatabaseNames": [
+      "weather"
+    ],
+    "forbiddenDataMountSources": [
+      "/var/lib/weather/postgres"
+    ]
+  },
+  "replacement": {
+    "schema": "weather-page-index-replacement/v1",
+    "target": {
+      "id": "weather-records-source-product-run",
+      "schema": "public",
+      "table": "weather_records",
+      "name": "weather_records_source_product_run_idx",
+      "method": "btree",
+      "unique": false,
+      "primary": false,
+      "exclusion": false,
+      "immediate": true,
+      "clustered": false,
+      "checkXmin": false,
+      "nullsNotDistinct": false,
+      "replicaIdentity": false,
+      "keys": [
+        {
+          "name": "source_id",
+          "type": "bigint",
+          "opclassSchema": "pg_catalog",
+          "opclass": "int8_ops",
+          "collation": null,
+          "direction": "ASC",
+          "nulls": "LAST"
+        },
+        {
+          "name": "product_run_at",
+          "type": "timestamp with time zone",
+          "opclassSchema": "pg_catalog",
+          "opclass": "timestamptz_ops",
+          "collation": null,
+          "direction": "ASC",
+          "nulls": "LAST"
+        }
+      ],
+      "include": [],
+      "expressions": null,
+      "predicate": "product_run_at IS NOT NULL",
+      "tablespace": null,
+      "effectiveTablespace": "pg_default",
+      "reloptions": [],
+      "constraint": null,
+      "canonicalDefinition": "CREATE INDEX weather_records_source_product_run_idx ON public.weather_records USING btree (source_id, product_run_at) WHERE (product_run_at IS NOT NULL)",
+      "createSql": "CREATE INDEX CONCURRENTLY weather_records_source_product_run_idx ON public.weather_records USING btree (source_id, product_run_at) WHERE product_run_at IS NOT NULL",
+      "dropSql": "DROP INDEX CONCURRENTLY public.weather_records_source_product_run_idx",
+      "dependencyColumns": [
+        "source_id",
+        "product_run_at",
+        "product_run_at"
+      ]
+    },
+    "predecessor": {
+      "id": "weather-records-source-valid",
+      "schema": "public",
+      "table": "weather_records",
+      "name": "weather_records_source_valid_idx",
+      "method": "btree",
+      "unique": false,
+      "primary": false,
+      "exclusion": false,
+      "immediate": true,
+      "clustered": false,
+      "checkXmin": false,
+      "nullsNotDistinct": false,
+      "replicaIdentity": false,
+      "keys": [
+        {
+          "name": "source_id",
+          "type": "bigint",
+          "opclassSchema": "pg_catalog",
+          "opclass": "int8_ops",
+          "collation": null,
+          "direction": "ASC",
+          "nulls": "LAST"
+        },
+        {
+          "name": "valid_at",
+          "type": "timestamp with time zone",
+          "opclassSchema": "pg_catalog",
+          "opclass": "timestamptz_ops",
+          "collation": null,
+          "direction": "DESC",
+          "nulls": "FIRST"
+        },
+        {
+          "name": "id",
+          "type": "bigint",
+          "opclassSchema": "pg_catalog",
+          "opclass": "int8_ops",
+          "collation": null,
+          "direction": "DESC",
+          "nulls": "FIRST"
+        }
+      ],
+      "include": [],
+      "expressions": null,
+      "predicate": null,
+      "tablespace": null,
+      "effectiveTablespace": "pg_default",
+      "reloptions": [],
+      "constraint": null,
+      "canonicalDefinition": "CREATE INDEX weather_records_source_valid_idx ON public.weather_records USING btree (source_id, valid_at DESC, id DESC)",
+      "createSql": "CREATE INDEX CONCURRENTLY weather_records_source_valid_idx ON public.weather_records USING btree (source_id, valid_at DESC, id DESC)",
+      "dropSql": "DROP INDEX CONCURRENTLY public.weather_records_source_valid_idx",
+      "dependencyColumns": [
+        "source_id",
+        "valid_at",
+        "id"
+      ]
+    },
+    "covering": {
+      "id": "weather-records-current",
+      "schema": "public",
+      "table": "weather_records",
+      "name": "weather_records_current_idx",
+      "method": "btree",
+      "unique": false,
+      "primary": false,
+      "exclusion": false,
+      "immediate": true,
+      "clustered": false,
+      "checkXmin": false,
+      "nullsNotDistinct": false,
+      "replicaIdentity": false,
+      "keys": [
+        {
+          "name": "source_id",
+          "type": "bigint",
+          "opclassSchema": "pg_catalog",
+          "opclass": "int8_ops",
+          "collation": null,
+          "direction": "ASC",
+          "nulls": "LAST"
+        },
+        {
+          "name": "valid_at",
+          "type": "timestamp with time zone",
+          "opclassSchema": "pg_catalog",
+          "opclass": "timestamptz_ops",
+          "collation": null,
+          "direction": "DESC",
+          "nulls": "FIRST"
+        },
+        {
+          "name": "id",
+          "type": "bigint",
+          "opclassSchema": "pg_catalog",
+          "opclass": "int8_ops",
+          "collation": null,
+          "direction": "DESC",
+          "nulls": "FIRST"
+        }
+      ],
+      "include": [
+        {
+          "name": "last_received_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "source_kind",
+          "type": "character varying(32)"
+        }
+      ],
+      "expressions": null,
+      "predicate": null,
+      "tablespace": null,
+      "effectiveTablespace": "pg_default",
+      "reloptions": [],
+      "constraint": null,
+      "canonicalDefinition": "CREATE INDEX weather_records_current_idx ON public.weather_records USING btree (source_id, valid_at DESC, id DESC) INCLUDE (last_received_at, source_kind)",
+      "dependencyColumns": [
+        "source_id",
+        "valid_at",
+        "id",
+        "last_received_at",
+        "source_kind"
+      ]
+    },
+    "protected": [
+      {
+        "id": "weather-records-primary",
+        "schema": "public",
+        "table": "weather_records",
+        "name": "weather_records_pkey",
+        "method": "btree",
+        "unique": true,
+        "primary": true,
+        "exclusion": false,
+        "immediate": true,
+        "clustered": false,
+        "checkXmin": false,
+        "nullsNotDistinct": false,
+        "replicaIdentity": false,
+        "keys": [
+          {
+            "name": "id",
+            "type": "bigint",
+            "opclassSchema": "pg_catalog",
+            "opclass": "int8_ops",
+            "collation": null,
+            "direction": "ASC",
+            "nulls": "LAST"
+          }
+        ],
+        "include": [],
+        "expressions": null,
+        "predicate": null,
+        "tablespace": null,
+        "effectiveTablespace": "pg_default",
+        "reloptions": [],
+        "constraint": {
+          "name": "weather_records_pkey",
+          "type": "p",
+          "validated": true
+        },
+        "canonicalDefinition": "CREATE UNIQUE INDEX weather_records_pkey ON public.weather_records USING btree (id)",
+        "dependencyColumns": []
+      },
+      {
+        "id": "weather-records-identity",
+        "schema": "public",
+        "table": "weather_records",
+        "name": "weather_records_identity_key",
+        "method": "btree",
+        "unique": true,
+        "primary": false,
+        "exclusion": false,
+        "immediate": true,
+        "clustered": false,
+        "checkXmin": false,
+        "nullsNotDistinct": true,
+        "replicaIdentity": false,
+        "keys": [
+          {
+            "name": "source_id",
+            "type": "bigint",
+            "opclassSchema": "pg_catalog",
+            "opclass": "int8_ops",
+            "collation": null,
+            "direction": "ASC",
+            "nulls": "LAST"
+          },
+          {
+            "name": "source_kind",
+            "type": "character varying(32)",
+            "opclassSchema": "pg_catalog",
+            "opclass": "text_ops",
+            "collation": {
+              "schema": "pg_catalog",
+              "name": "default"
+            },
+            "direction": "ASC",
+            "nulls": "LAST"
+          },
+          {
+            "name": "valid_at",
+            "type": "timestamp with time zone",
+            "opclassSchema": "pg_catalog",
+            "opclass": "timestamptz_ops",
+            "collation": null,
+            "direction": "ASC",
+            "nulls": "LAST"
+          },
+          {
+            "name": "product_run_at",
+            "type": "timestamp with time zone",
+            "opclassSchema": "pg_catalog",
+            "opclass": "timestamptz_ops",
+            "collation": null,
+            "direction": "ASC",
+            "nulls": "LAST"
+          }
+        ],
+        "include": [],
+        "expressions": null,
+        "predicate": null,
+        "tablespace": null,
+        "effectiveTablespace": "pg_default",
+        "reloptions": [],
+        "constraint": {
+          "name": "weather_records_identity_key",
+          "type": "u",
+          "validated": true
+        },
+        "canonicalDefinition": "CREATE UNIQUE INDEX weather_records_identity_key ON public.weather_records USING btree (source_id, source_kind, valid_at, product_run_at) NULLS NOT DISTINCT",
+        "dependencyColumns": []
+      },
+      {
+        "id": "weather-records-kind-valid",
+        "schema": "public",
+        "table": "weather_records",
+        "name": "weather_records_kind_valid_idx",
+        "method": "btree",
+        "unique": false,
+        "primary": false,
+        "exclusion": false,
+        "immediate": true,
+        "clustered": false,
+        "checkXmin": false,
+        "nullsNotDistinct": false,
+        "replicaIdentity": false,
+        "keys": [
+          {
+            "name": "source_kind",
+            "type": "character varying(32)",
+            "opclassSchema": "pg_catalog",
+            "opclass": "text_ops",
+            "collation": {
+              "schema": "pg_catalog",
+              "name": "default"
+            },
+            "direction": "ASC",
+            "nulls": "LAST"
+          },
+          {
+            "name": "valid_at",
+            "type": "timestamp with time zone",
+            "opclassSchema": "pg_catalog",
+            "opclass": "timestamptz_ops",
+            "collation": null,
+            "direction": "DESC",
+            "nulls": "FIRST"
+          },
+          {
+            "name": "id",
+            "type": "bigint",
+            "opclassSchema": "pg_catalog",
+            "opclass": "int8_ops",
+            "collation": null,
+            "direction": "DESC",
+            "nulls": "FIRST"
+          }
+        ],
+        "include": [],
+        "expressions": null,
+        "predicate": null,
+        "tablespace": null,
+        "effectiveTablespace": "pg_default",
+        "reloptions": [],
+        "constraint": null,
+        "canonicalDefinition": "CREATE INDEX weather_records_kind_valid_idx ON public.weather_records USING btree (source_kind, valid_at DESC, id DESC)",
+        "dependencyColumns": [
+          "source_kind",
+          "valid_at",
+          "id"
+        ]
+      }
+    ]
+  }
+}

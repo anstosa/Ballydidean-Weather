@@ -5,6 +5,7 @@ import {
   classifyCommitRange,
   classifyPaths,
   parseNameStatus,
+  verifyPageIndexRestoreJob,
   verifyRequiredJobs,
 } from "./ci-changes.mjs";
 
@@ -219,11 +220,36 @@ test("Check aggregate rejects missing failed and malformed native evidence", () 
   }
 });
 
+// retain actual restore coverage without narrowing any existing suite
+test("Check aggregate requires the selected isolated page-index restore gate", () => {
+  // exercise every explicit database and deployment selection
+  for (const integration of ["true", "false"]) {
+    // preserve both independent reasons to run restore
+    for (const deployIntegration of ["true", "false"]) {
+      const selected = integration === "true" || deployIntegration === "true";
+      const selection = { integration, deployIntegration };
+      assert.equal(verifyPageIndexRestoreJob(selection, selected ? "success" : "skipped"), true);
+      assert.throws(() => verifyPageIndexRestoreJob(selection, selected ? "skipped" : "success"));
+
+      // never accept a failed or missing restore result
+      for (const result of ["failure", "cancelled", "", undefined]) {
+        assert.throws(() => verifyPageIndexRestoreJob(selection, result));
+      }
+    }
+  }
+
+  // missing classifier evidence cannot excuse a skipped job
+  for (const selection of [{}, { integration: "false" }, { integration: "", deployIntegration: "false" }]) {
+    assert.throws(() => verifyPageIndexRestoreJob(selection, "skipped"), /selection/u);
+  }
+});
+
 // workflow wiring keeps native lanes parallel and the aggregate fail closed
 test("Check workflow binds selected native jobs to the exact commit", async () => {
   const workflow = await readFile(new URL("../.github/workflows/check.yml", import.meta.url), "utf8");
   const selection = workflowJob(workflow, "change-selection");
   const quality = workflowJob(workflow, "quality-gates");
+  const restore = workflowJob(workflow, "page-index-restore");
   const android = workflowJob(workflow, "native-android");
   const aggregate = workflowJob(workflow, "check-complete");
   assert.match(selection, /native_android:/u);
@@ -242,8 +268,18 @@ test("Check workflow binds selected native jobs to the exact commit", async () =
   assert.match(android, /"tests": "29"/u);
   assert.match(android, /managedDevice\/debug\/widgetPhone\/TEST-widgetPhone\.xml/u);
   assert.match(quality, /python3 mobile\/scripts\/native_https_fixture_test\.py/u);
+  assert.match(quality, /tar -cf[\s\S]*packages\/database\/dist packages\/domain\/dist/u);
+  assert.match(restore, /needs: \[change-selection, quality-gates\]/u);
+  assert.match(restore, /outputs\.integration == 'true'[\s\S]*outputs\.deploy_integration == 'true'/u);
+  assert.match(restore, /actions\/download-artifact@v4/u);
+  assert.match(restore, /sha256sum --check/u);
+  assert.match(restore, /rehearse-weather-page-restore\.mjs --output/u);
+  assert.match(restore, /sudo cat "\$\{EVIDENCE\}\/scenario\/result\.json" > "\$\{EVIDENCE\}\/result\.json"/u);
+  assert.doesNotMatch(restore, /scenario\/\*\*|chmod.*scenario/u);
+  assert.doesNotMatch(restore, /npm run build|diagnosticShortSwapSample|swapSampleMilliseconds/u);
   assert.match(aggregate, /if: always\(\)[\s\S]*CI_CHANGES_MODE: aggregate/u);
-  assert.equal((workflow.match(/ref: \$\{\{ github\.sha \}\}/gu) ?? []).length, 4);
+  assert.match(aggregate, /CI_PAGE_INDEX_RESTORE_RESULT: \$\{\{ needs\.page-index-restore\.result \}\}/u);
+  assert.equal((workflow.match(/ref: \$\{\{ github\.sha \}\}/gu) ?? []).length, 5);
   assert.doesNotMatch(workflow, /continue-on-error:/u);
   assert.doesNotMatch(workflow, /native[-_]ios|CI_NATIVE_IOS/u);
 });
