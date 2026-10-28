@@ -196,7 +196,8 @@ test("I-IDX-01 and I-IDX-02 managed page index catalog and lock contract", { tim
         restoreSnapshotOptions,
       );
       validateReplacementInventory(replacementSnapshot.indexInventory, manifest, "postgres", "source");
-      const testFilesystemPath = "/home/ubuntu";
+      // sample the checkout filesystem on any runner
+      const testFilesystemPath = process.cwd();
       const testFilesystemInfo = await stat(testFilesystemPath);
       const testFilesystem = await statfs(testFilesystemPath, { bigint: true });
       const filesystems = [{

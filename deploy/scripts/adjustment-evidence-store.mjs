@@ -1383,6 +1383,7 @@ const RECEIPT_MAXIMUM_BYTES = 16 * 1_024;
 const MAXIMUM_COMPRESSION_RATIO = 64;
 const MAXIMUM_ROWS = 240;
 const MAXIMUM_V2_ROWS = 241;
+const COMPRESSION_CACHE_MAXIMUM_ENTRIES = 8;
 const MAXIMUM_IDENTITIES = 8_192;
 const MAXIMUM_CHANNEL_ASSERTIONS = 256;
 const SCHEDULER_HISTORY_LIMIT = 4 * 365;
@@ -8564,6 +8565,7 @@ export class AdjustmentMaintenanceAnchorStore {
 export class AdjustmentEvidenceStore {
   #allocatedBytes = 0;
   #blockedIdentities = new Set();
+  #compressionCache = new Map();
   #initialized = false;
   #objectCount = 0;
   #options;
@@ -8590,7 +8592,10 @@ export class AdjustmentEvidenceStore {
   constructor(options = {}) {
     this.#options = {
       beforeObjectWrite: options.beforeObjectWrite ?? (() => undefined),
+      compressObject: options.compressObject ?? ((bytes) =>
+        gzipSync(bytes, { level: 9, mtime: 0 })),
       now: options.now ?? (() => new Date()),
+      objectSha256: options.objectSha256 ?? sha256,
       root: resolve(options.root ?? ADJUSTMENT_EVIDENCE_DEFAULT_ROOT),
       statfs: options.statfs ?? ((path) => statfs(path, { bigint: true })),
       writeExclusive: options.writeExclusive ?? writeExclusive,
@@ -8618,6 +8623,38 @@ export class AdjustmentEvidenceStore {
 
   // derive immutable capture bytes before writing the response
   prepare(filteredBody, window) {
+    return this.#prepareCapture(() => createAdjustmentEvidenceCaptureFromForecast(
+      JSON.parse(Buffer.from(filteredBody).toString("utf8")),
+      window,
+      (canonicalObject) => this.#compressCanonicalObject(canonicalObject),
+    ));
+  }
+
+  // derive immutable capture bytes from one already parsed forecast
+  prepareForecast(forecast, window) {
+    return this.#prepareCapture(() => createAdjustmentEvidenceCaptureFromForecast(
+      forecast,
+      window,
+      (canonicalObject) => this.#compressCanonicalObject(canonicalObject),
+    ));
+  }
+
+  // derive one v2 capture with a trusted server-selected channel
+  prepareV2(filteredBody, window, channel) {
+    return this.#prepareCapture(() => this.#createV2Capture(
+      JSON.parse(Buffer.from(filteredBody).toString("utf8")),
+      window,
+      channel,
+    ));
+  }
+
+  // derive one v2 capture from one already parsed forecast
+  prepareForecastV2(forecast, window, channel) {
+    return this.#prepareCapture(() => this.#createV2Capture(forecast, window, channel));
+  }
+
+  // contain one synchronous capture refusal
+  #prepareCapture(createCapture) {
     // refuse capture while filesystem integrity is unknown
     if (!this.#initialized) {
       this.#status.asyncGaps += 1;
@@ -8625,7 +8662,7 @@ export class AdjustmentEvidenceStore {
     }
 
     try {
-      return createAdjustmentEvidenceCapture(filteredBody, window);
+      return createCapture();
     } catch (error) {
       // classify only bounded projection failures
       if (error?.code === "adjustment_evidence_object_too_large") {
@@ -8638,34 +8675,59 @@ export class AdjustmentEvidenceStore {
     }
   }
 
-  // derive one v2 capture with a trusted server-selected channel
-  prepareV2(filteredBody, window, channel) {
-    // refuse capture while filesystem integrity is unknown
-    if (!this.#initialized) {
-      this.#status.asyncGaps += 1;
-      return null;
+  // derive one channel-bound capture without reparsing its forecast
+  #createV2Capture(forecast, window, channel) {
+    requireIssuanceChannel(channel);
+    const capture = forecast?.data?.length === MAXIMUM_V2_ROWS
+      ? createAdjustmentEvidenceCaptureV2FromForecast(
+          forecast,
+          window,
+          (canonicalObject) => this.#compressCanonicalObject(canonicalObject),
+        )
+      : createAdjustmentEvidenceCaptureFromForecast(
+          forecast,
+          window,
+          (canonicalObject) => this.#compressCanonicalObject(canonicalObject),
+        );
+    return Object.freeze({
+      ...capture,
+      issuanceChannel: channel,
+    });
+  }
+
+  // reuse only identical canonical bytes under one object hash
+  #compressCanonicalObject(canonicalObject) {
+    const objectSha256 = this.#options.objectSha256(canonicalObject);
+    requireSha256(objectSha256, "adjustment evidence object");
+    const cached = this.#compressionCache.get(objectSha256);
+
+    // refuse one same-hash canonical-byte collision without promotion
+    if (cached !== undefined && !cached.canonicalObject.equals(canonicalObject)) {
+      throw new Error("adjustment evidence compression cache collision");
     }
 
-    try {
-      requireIssuanceChannel(channel);
-      const rowCount = JSON.parse(Buffer.from(filteredBody).toString("utf8"))?.data?.length;
-      const capture = rowCount === MAXIMUM_V2_ROWS
-        ? createAdjustmentEvidenceCaptureV2(filteredBody, window)
-        : createAdjustmentEvidenceCapture(filteredBody, window);
-      return Object.freeze({
-        ...capture,
-        issuanceChannel: channel,
-      });
-    } catch (error) {
-      // classify only bounded projection failures
-      if (error?.code === "adjustment_evidence_object_too_large") {
-        this.#status.objectTooLarge += 1;
-      } else {
-        this.#status.asyncErrors += 1;
-      }
-      this.#status.asyncGaps += 1;
-      return null;
+    // return one detached hit and promote its owned entry
+    if (cached !== undefined) {
+      this.#compressionCache.delete(objectSha256);
+      this.#compressionCache.set(objectSha256, cached);
+      return {
+        compressedObject: Buffer.from(cached.compressedObject),
+        objectSha256,
+      };
     }
+    const compressedObject = this.#options.compressObject(canonicalObject);
+    validateCompressedEvidenceObject(canonicalObject, compressedObject);
+    this.#compressionCache.set(objectSha256, {
+      canonicalObject: Buffer.from(canonicalObject),
+      compressedObject: Buffer.from(compressedObject),
+    });
+
+    // evict the deterministic least-recent entry
+    if (this.#compressionCache.size > COMPRESSION_CACHE_MAXIMUM_ENTRIES) {
+      const oldest = this.#compressionCache.keys().next().value;
+      this.#compressionCache.delete(oldest);
+    }
+    return { compressedObject: Buffer.from(compressedObject), objectSha256 };
   }
 
   // attach persistence only to Node's successful finish event
@@ -11112,27 +11174,54 @@ export function normalizeAdjustmentEvidenceWindow(requestUrl) {
 
 // create one deterministic object and its stable identity
 export function createAdjustmentEvidenceCapture(filteredBody, window) {
-  return createAdjustmentEvidenceCaptureVersion(filteredBody, window, {
+  return createAdjustmentEvidenceCaptureFromForecast(
+    JSON.parse(Buffer.from(filteredBody).toString("utf8")),
+    window,
+  );
+}
+
+// create one deterministic object from an already parsed forecast
+export function createAdjustmentEvidenceCaptureFromForecast(
+  forecast,
+  window,
+  compressCanonicalObject = compressEvidenceObject,
+) {
+  return createAdjustmentEvidenceCaptureVersion(forecast, window, {
     contractVersion: ADJUSTMENT_EVIDENCE_OBJECT_CONTRACT_VERSION,
     maximumRows: MAXIMUM_ROWS,
-  });
+  }, compressCanonicalObject);
 }
 
 // create one v2 object that admits the fall-back DST row
 export function createAdjustmentEvidenceCaptureV2(filteredBody, window) {
-  return createAdjustmentEvidenceCaptureVersion(filteredBody, window, {
+  return createAdjustmentEvidenceCaptureV2FromForecast(
+    JSON.parse(Buffer.from(filteredBody).toString("utf8")),
+    window,
+  );
+}
+
+// create one v2 object from an already parsed forecast
+export function createAdjustmentEvidenceCaptureV2FromForecast(
+  forecast,
+  window,
+  compressCanonicalObject = compressEvidenceObject,
+) {
+  return createAdjustmentEvidenceCaptureVersion(forecast, window, {
     contractVersion: ADJUSTMENT_EVIDENCE_OBJECT_V2_CONTRACT_VERSION,
     maximumRows: MAXIMUM_V2_ROWS,
-  });
+  }, compressCanonicalObject);
 }
 
 // create one versioned deterministic object and stable receipt identity
-function createAdjustmentEvidenceCaptureVersion(filteredBody, window, version) {
+function createAdjustmentEvidenceCaptureVersion(
+  forecast,
+  window,
+  version,
+  compressCanonicalObject,
+) {
   if (!WINDOWS.includes(window)) {
     throw new TypeError("adjustment evidence window is invalid");
   }
-
-  const forecast = JSON.parse(Buffer.from(filteredBody).toString("utf8"));
 
   // require one successful filtered forecast envelope
   if (forecast === null || typeof forecast !== "object" || !Array.isArray(forecast.data) ||
@@ -11162,13 +11251,8 @@ function createAdjustmentEvidenceCaptureVersion(filteredBody, window, version) {
     throw objectTooLargeError();
   }
 
-  const compressedObject = gzipSync(canonicalObject, { level: 9, mtime: 0 });
-
-  // reject oversized or suspiciously compressed objects
-  if (compressedObject.byteLength > COMPRESSED_OBJECT_MAXIMUM_BYTES ||
-    canonicalObject.byteLength > compressedObject.byteLength * MAXIMUM_COMPRESSION_RATIO) {
-    throw objectTooLargeError();
-  }
+  const compressed = compressCanonicalObject(canonicalObject);
+  validateCompressedEvidenceObject(canonicalObject, compressed.compressedObject);
 
   const stableIdentity = {
     bundleIdentities,
@@ -11183,11 +11267,27 @@ function createAdjustmentEvidenceCaptureVersion(filteredBody, window, version) {
 
   return Object.freeze({
     availability,
-    compressedObject,
+    compressedObject: Buffer.from(compressed.compressedObject),
     edgeReceiptIdentitySha256: sha256(canonicalJson(stableIdentity)),
     object,
-    objectSha256: sha256(canonicalObject),
+    objectSha256: compressed.objectSha256,
   });
+}
+
+// compress one canonical object without retaining it
+function compressEvidenceObject(canonicalObject) {
+  const compressedObject = gzipSync(canonicalObject, { level: 9, mtime: 0 });
+  validateCompressedEvidenceObject(canonicalObject, compressedObject);
+  return { compressedObject, objectSha256: sha256(canonicalObject) };
+}
+
+// require one bounded deterministic compressed object
+function validateCompressedEvidenceObject(canonicalObject, compressedObject) {
+  if (!Buffer.isBuffer(compressedObject) ||
+    compressedObject.byteLength > COMPRESSED_OBJECT_MAXIMUM_BYTES ||
+    canonicalObject.byteLength > compressedObject.byteLength * MAXIMUM_COMPRESSION_RATIO) {
+    throw objectTooLargeError();
+  }
 }
 
 // freeze and validate every receipt selected at snapshot start

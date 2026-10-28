@@ -550,9 +550,8 @@ async function serveWidgetForecast(request, response, requestUrl) {
     }
 
     const sourceBody = await readBoundedBody(upstream, maximumApiBytes, "API");
-    const filteredBody = filterForecastResponse(sourceBody, settings);
-    const filtered = JSON.parse(filteredBody.toString("utf8"));
-    const snapshot = projector(filtered, new Date().toISOString());
+    const filtered = filterForecastResponse(sourceBody, settings);
+    const snapshot = projector(filtered.forecast, new Date().toISOString());
     const body = Buffer.from(`${JSON.stringify(snapshot)}\n`);
 
     // enforce the serialized edge response ceiling including its newline
@@ -1447,11 +1446,12 @@ async function proxyApi(request, response, requestUrl) {
     const sourceBody = request.method === "HEAD" && !projectsAdjustmentSettings
       ? Buffer.alloc(0)
       : await readBoundedBody(upstream, maximumResponseBytes, "API");
-    const body = upstream.ok && isForecast
+    const filteredForecast = upstream.ok && isForecast
       ? filterForecastResponse(sourceBody, settings)
-      : upstream.ok && isRainStatus
+      : null;
+    const body = filteredForecast?.body ?? (upstream.ok && isRainStatus
         ? filterRainCollectionStatus(sourceBody, settings)
-        : sourceBody;
+        : sourceBody);
     const contentLength =
       request.method === "HEAD" && !projectsAdjustmentSettings
         ? boundedContentLength(upstream.headers.get("content-length"), maximumResponseBytes)
@@ -1459,13 +1459,13 @@ async function proxyApi(request, response, requestUrl) {
     const v2CaptureActive = adjustmentEvidenceScheduler.status().activation === "active";
     const preparedEvidence = upstream.ok && isForecast && request.method === "GET"
       ? v2CaptureActive
-        ? adjustmentEvidenceStore.prepareV2(
-            body,
+        ? adjustmentEvidenceStore.prepareForecastV2(
+            filteredForecast.forecast,
             normalizeAdjustmentEvidenceWindow(requestUrl),
             scheduledCapture === null ? "public_get" : "scheduler_request",
           )
-        : adjustmentEvidenceStore.prepare(
-            body,
+        : adjustmentEvidenceStore.prepareForecast(
+            filteredForecast.forecast,
             normalizeAdjustmentEvidenceWindow(requestUrl),
           )
       : null;
@@ -1582,7 +1582,10 @@ function filterForecastResponse(body, settings) {
     }
   }
 
-  return Buffer.from(`${JSON.stringify(forecast)}\n`);
+  return {
+    body: Buffer.from(`${JSON.stringify(forecast)}\n`),
+    forecast,
+  };
 }
 
 // keep aggregate model status aligned with the public rain switch
