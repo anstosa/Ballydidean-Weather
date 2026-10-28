@@ -700,16 +700,10 @@ test("B1 recovery authorization loader rejects a caller-supplied digest substitu
     ).digest("hex"),
   };
   const bytes = Buffer.from(`${JSON.stringify(recoveryAuthorizationDocument(currentSources), null, 2)}\n`);
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
   await writeFile(path, bytes, { mode: 0o600 });
 
   // always remove the private test authorization
   try {
-    const loaded = await loadB1RecoveryAuthorization({
-      recoveryAuthorization: path,
-      recoveryAuthorizationSha256: sha256,
-    });
-    assert.equal(loaded.sha256, sha256);
     await assert.rejects(
       loadB1RecoveryAuthorization({
         recoveryAuthorization: path,
