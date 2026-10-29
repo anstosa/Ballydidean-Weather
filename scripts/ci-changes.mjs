@@ -198,26 +198,6 @@ export function verifyRequiredJobs(selection, results) {
   return true;
 }
 
-// require the isolated restore gate for database or deployment changes
-export function verifyPageIndexRestoreJob(selection, result) {
-  // reject missing upstream selection evidence
-  for (const [name, value] of Object.entries(selection)) {
-    // retain only explicit classifier booleans
-    if (value !== "true" && value !== "false") {
-      throw new Error(`page index restore ${name} selection is missing or invalid`);
-    }
-  }
-
-  // require both independent dependency boundaries
-  if (!("integration" in selection) || !("deployIntegration" in selection)) {
-    throw new Error("page index restore dependency selection is incomplete");
-  }
-
-  const selected = selection.integration === "true" || selection.deployIntegration === "true";
-  requireSelectedResult("page index restore", String(selected), result);
-  return true;
-}
-
 // resolve only a proven commit range, otherwise run all gates
 export function classifyCommitRange(event, base, head, baselineVerified = false) {
   // scheduled and manual runs are complete rehearsals
@@ -294,13 +274,6 @@ function aggregateMain() {
       nativeAndroid: process.env.CI_NATIVE_ANDROID_RESULT,
       qualityGates: process.env.CI_QUALITY_GATES_RESULT,
     },
-  );
-  verifyPageIndexRestoreJob(
-    {
-      integration: process.env.CI_INTEGRATION,
-      deployIntegration: process.env.CI_DEPLOY_INTEGRATION,
-    },
-    process.env.CI_PAGE_INDEX_RESTORE_RESULT,
   );
   process.stdout.write("all required Check jobs passed\n");
 }

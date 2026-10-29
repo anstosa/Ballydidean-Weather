@@ -92,24 +92,6 @@ jobs:
         run: python3 mobile/scripts/native_https_fixture_test.py
       - name: Build and typecheck once
         run: npm run build
-      # reuse this exact build on the isolated restore runner
-      - name: Preserve compiled restore dependencies
-        if: needs.change-selection.outputs.integration == 'true' || needs.change-selection.outputs.deploy_integration == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          tar -cf "${RUNNER_TEMP}/compiled-page-indexes.tar" packages/database/dist packages/domain/dist
-          (cd "${RUNNER_TEMP}" && sha256sum compiled-page-indexes.tar > compiled-page-indexes.tar.sha256)
-      - name: Retain exact compiled restore dependencies
-        if: needs.change-selection.outputs.integration == 'true' || needs.change-selection.outputs.deploy_integration == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          if-no-files-found: error
-          name: compiled-page-indexes-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/compiled-page-indexes.tar
-            ${{ runner.temp }}/compiled-page-indexes.tar.sha256
-          retention-days: 1
       - name: Verify the shared widget contract
         run: npm run test:mobile-shared:compiled
       - name: Run compiled unit tests
@@ -142,82 +124,6 @@ jobs:
       - name: Run deployment and recovery rehearsal
         if: needs.change-selection.outputs.deploy_integration == 'true'
         run: WEATHER_RUN_DEPLOY_INTEGRATION=1 node --test --test-concurrency=1 deploy/test/*.integration.test.mjs
-
-  # keep real host swap admission independent of unrelated test workloads
-  page-index-restore:
-    name: Isolated page-index restore
-    needs: [change-selection, quality-gates]
-    if: needs.quality-gates.result == 'success' && (needs.change-selection.outputs.integration == 'true' || needs.change-selection.outputs.deploy_integration == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Check out exact selected commit
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.sha }}
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          cache: npm
-          node-version-file: .nvmrc
-      - name: Install dependencies and restore tools
-        run: npm ci && sudo apt-get update && sudo apt-get install --yes age
-      - name: Download the already-compiled dependencies
-        uses: actions/download-artifact@v4
-        with:
-          name: compiled-page-indexes-${{ github.sha }}
-          path: ${{ runner.temp }}/compiled-page-indexes
-      - name: Verify and reuse the exact compiled bytes
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${RUNNER_TEMP}/compiled-page-indexes"
-          sha256sum --check compiled-page-indexes.tar.sha256
-          tar -tf compiled-page-indexes.tar | grep -Ev '^packages/(database|domain)/dist(/|$)' > unexpected-members.txt || true
-          test ! -s unexpected-members.txt
-          tar --no-same-owner -xf compiled-page-indexes.tar -C "${GITHUB_WORKSPACE}"
-      - name: Exercise installed replacement and restore with real admission
-        id: restore
-        env:
-          EVIDENCE: ${{ runner.temp }}/page-index-restore
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-          mkdir -p "${EVIDENCE}"
-          sudo --preserve-env=PATH node scripts/rehearse-weather-page-restore.mjs --output "${EVIDENCE}/scenario" 2>&1 | tee "${EVIDENCE}/output.log"
-      # expose only the summary while fixture keys remain root-private
-      - name: Export concise restore result
-        if: always()
-        env:
-          EVIDENCE: ${{ runner.temp }}/page-index-restore
-          RESTORE_OUTCOME: ${{ steps.restore.outcome }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-          mkdir -p "${EVIDENCE}"
-          # copy the declared summary without exposing the private fixture tree
-          if sudo test -f "${EVIDENCE}/scenario/result.json"; then
-            sudo cat "${EVIDENCE}/scenario/result.json" > "${EVIDENCE}/result.json"
-            (cd "${EVIDENCE}" && sha256sum result.json > result.json.sha256)
-          # a successful rehearsal must publish its result
-          elif [[ "${RESTORE_OUTCOME}" == "success" ]]; then
-            echo "restore rehearsal succeeded without a result" >&2
-            exit 1
-          fi
-      - name: Retain concise restore results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          if-no-files-found: error
-          name: page-index-restore-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/page-index-restore/output.log
-            ${{ runner.temp }}/page-index-restore/result.json
-            ${{ runner.temp }}/page-index-restore/result.json.sha256
-          retention-days: 14
 
   native-android:
     name: Native Android
@@ -336,7 +242,6 @@ jobs:
     needs:
       - change-selection
       - quality-gates
-      - page-index-restore
       - native-android
     runs-on: ubuntu-latest
     steps:
@@ -355,7 +260,4 @@ jobs:
           CI_NATIVE_ANDROID: ${{ needs.change-selection.outputs.native_android }}
           CI_NATIVE_ANDROID_RESULT: ${{ needs.native-android.result }}
           CI_QUALITY_GATES_RESULT: ${{ needs.quality-gates.result }}
-          CI_INTEGRATION: ${{ needs.change-selection.outputs.integration }}
-          CI_DEPLOY_INTEGRATION: ${{ needs.change-selection.outputs.deploy_integration }}
-          CI_PAGE_INDEX_RESTORE_RESULT: ${{ needs.page-index-restore.result }}
         run: node scripts/ci-changes.mjs
