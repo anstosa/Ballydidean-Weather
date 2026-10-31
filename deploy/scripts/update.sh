@@ -3616,7 +3616,7 @@ verify_previous_image_compatibility() (
     (
       _next_sequence=$start_sequence
       # publish one exact completion handshake only on an intentional stop
-      # shellcheck disable=SC2329
+      # shellcheck disable=SC2317,SC2329
       complete_capacity_monitor() {
         _completion_temporary="$capacity_monitor_completion.$BASHPID"
         printf '%s %s\n' "$BASHPID" "$_next_sequence" >"$_completion_temporary" || exit 1
@@ -6268,7 +6268,7 @@ historical_v14_18_21_rehearsal() (
   (
     _next_sequence=1
     # publish one exact completion handshake only on an intentional stop
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2317,SC2329
     complete_historical_monitor() {
       _completion_temporary="$monitor_completion.$BASHPID"
       printf '%s %s\n' "$BASHPID" "$_next_sequence" >"$_completion_temporary" || exit 1
