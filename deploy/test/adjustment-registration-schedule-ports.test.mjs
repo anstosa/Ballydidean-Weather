@@ -27,6 +27,13 @@ const history = adjustmentSha256(Buffer.from(names.map(
   // serialize the actual migration ledger preimage
   (name, index) => `${name}:${checksums[index]}`,
 ).join("\n")));
+const retainedLedgerEnd = names.indexOf("0021_adjustment_rolling_registration.sql");
+assert(retainedLedgerEnd >= 0);
+// retain the epoch witness ledger without changing the live database manifest
+const retainedHistory = adjustmentSha256(Buffer.from(names.slice(0, retainedLedgerEnd + 1).map(
+  // serialize only the retained 0021 migration ledger preimage
+  (name, index) => `${name}:${checksums[index]}`,
+).join("\n")));
 
 // create a complete typed epoch fixture without claiming production authority
 function witnessAt(epochAt) {
@@ -37,7 +44,7 @@ function witnessAt(epochAt) {
     contractVersion: "adjustment-revision-capture-epoch-witness/v1",
     controlPlaneSha256: "a".repeat(64),
     controlPlaneVersion: "14",
-    databaseMigrationHistorySha256: history,
+    databaseMigrationHistorySha256: retainedHistory,
     epochAt,
     servingSnapshotSha256: "b".repeat(64),
     sourceCommit: "c".repeat(40),

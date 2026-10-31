@@ -11,7 +11,7 @@ const predecessorDigest = "603eb8f488ba78be3d7ecf76b0d587346d1c36432255d390d86d2
 const installedDigest = "a".repeat(64);
 
 // test the production handoff function without starting a release
-test("v14 accepts only its exact installed contract or pinned v13 predecessor", async () => {
+test("v15 accepts only its exact installed contract or pinned v13 predecessor", async () => {
   const directory = await mkdtemp(join(tmpdir(), "weather-v13-handoff-"));
   const envFile = join(directory, "release.env");
   const harness = `
@@ -35,9 +35,9 @@ require_control_plane_compatibility "$2"
   };
 
   try {
-    const installed = await check(14, installedDigest, "2026.10.09-2");
+    const installed = await check(15, installedDigest, "2026.10.09-2");
     assert.equal(installed.status, 0, installed.stderr);
-    const full = await check(14, installedDigest, "2026.10.09-3");
+    const full = await check(15, installedDigest, "2026.10.09-3");
     assert.equal(full.status, 0, full.stderr);
     const predecessor = await check(13, predecessorDigest, "2026.10.09-1");
     assert.equal(predecessor.status, 0, predecessor.stderr);
@@ -48,7 +48,7 @@ require_control_plane_compatibility "$2"
       [11, predecessorDigest, "2026.10.07-3"],
       [13, predecessorDigest, "2026.10.07-3"],
       [12, installedDigest, "2026.10.07-3"],
-      [14, "b".repeat(64), "2026.10.09-2"],
+      [15, "b".repeat(64), "2026.10.09-2"],
       [12, "5685ead4440468ecdb58402fbe14e76ce63ed03a018b9b4724fa24ffef4eb3c8", "2026.10.07-2"],
     ]) {
       const result = await check(version, digest, release);
