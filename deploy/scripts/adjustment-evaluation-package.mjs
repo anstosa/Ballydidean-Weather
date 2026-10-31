@@ -184,6 +184,20 @@ const EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256 = createHash("sha256").update(
     (name, index) => `${name}:${EXPECTED_CATALOG_MIGRATION_CHECKSUMS[index]}`,
   ).join("\n"),
 ).digest("hex");
+const EXPECTED_INDEX_MIGRATION_NAMES = [
+  ...EXPECTED_CATALOG_MIGRATION_NAMES,
+  "0023_forecast_product_read_index.sql",
+];
+const EXPECTED_INDEX_MIGRATION_CHECKSUMS = [
+  ...EXPECTED_CATALOG_MIGRATION_CHECKSUMS,
+  "e637542cb2e742fe8f22f60313a11f00adbc1d140a811ee718524849fcece12a",
+];
+const EXPECTED_INDEX_MIGRATION_HISTORY_SHA256 = createHash("sha256").update(
+  EXPECTED_INDEX_MIGRATION_NAMES.map(
+    // bind the additive forecast read index without changing earlier ledgers
+    (name, index) => `${name}:${EXPECTED_INDEX_MIGRATION_CHECKSUMS[index]}`,
+  ).join("\n"),
+).digest("hex");
 const EXPECTED_MIGRATION_LEDGERS = [
   {
     checksums: EXPECTED_MIGRATION_CHECKSUMS,
@@ -214,6 +228,11 @@ const EXPECTED_MIGRATION_LEDGERS = [
     checksums: EXPECTED_CATALOG_MIGRATION_CHECKSUMS,
     historySha256: EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256,
     names: EXPECTED_CATALOG_MIGRATION_NAMES,
+  },
+  {
+    checksums: EXPECTED_INDEX_MIGRATION_CHECKSUMS,
+    historySha256: EXPECTED_INDEX_MIGRATION_HISTORY_SHA256,
+    names: EXPECTED_INDEX_MIGRATION_NAMES,
   },
 ];
 const RAIN_FIXED_GAUGE_TARGET_SOURCE_CATALOG_VERSION =
@@ -393,7 +412,7 @@ const NORMAL_CAPACITY_BACKUP_HEADROOM_BYTES = 1_024 * 1_024 * 1_024;
 const NORMAL_CAPACITY_SOURCE_LEDGER_SHA256 =
   "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424";
 const NORMAL_CAPACITY_TARGET_LEDGER_SHA256 =
-  "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e";
+  "c8b43b714eb555027ea7439a813831ab7326ad951b800362f35b2343330da81f";
 const ADJUSTMENT_RELEASE_DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const ADJUSTMENT_FAMILY_RELEASE_ROOT =
   "/opt/weather/current/deploy/state/adjustment-release-state";
@@ -945,7 +964,7 @@ function normalCapacityInstant(value, name) {
 
 // validate immutable release identity shared by every capacity boundary
 function validateNormalCapacityReleaseIdentity(input) {
-  // bind only the exact schema-21 to schema-22 successor
+  // bind only the exact schema-21 to schema-23 successor
   if (!NORMAL_CAPACITY_OPERATION_ID_PATTERN.test(input.operationId) ||
     typeof input.sourceRelease !== "string" ||
     !/^\d{4}\.\d{2}\.\d{2}-[1-9]\d*$/u.test(input.sourceRelease) ||
@@ -959,7 +978,7 @@ function validateNormalCapacityReleaseIdentity(input) {
     !NORMAL_CAPACITY_SYSTEM_IDENTIFIER_PATTERN.test(input.systemIdentifier) ||
     BigInt(input.systemIdentifier) > 18_446_744_073_709_551_615n ||
     normalCapacityInteger(input.sourceDatabaseOid, "sourceDatabaseOid", 1) > 0xffff_ffff ||
-    input.sourceSchemaVersion !== 21 || input.targetSchemaVersion !== 22 ||
+    input.sourceSchemaVersion !== 21 || input.targetSchemaVersion !== 23 ||
     !NORMAL_CAPACITY_CONTAINER_ID_PATTERN.test(input.postgresContainerId) ||
     !NORMAL_CAPACITY_COMPOSE_PROJECT_PATTERN.test(input.postgresComposeProject)) {
     throw new Error("normal release capacity identity is invalid");
@@ -6488,12 +6507,13 @@ export function validateAdjustmentV14DatabaseManifest(value) {
   return manifest;
 }
 
-// require one exact live rolling or catalog ledger
+// require one exact live rolling, catalog or index ledger
 export function validateAdjustmentV14RollingDatabaseManifest(value) {
   const manifest = validateCompleteMaintenanceDatabaseManifest(value);
-  // admit only the pre-catalog and additive catalog live schemas
+  // admit only the reviewed additive live schemas
   if (![EXPECTED_ROLLING_MIGRATION_HISTORY_SHA256,
-    EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256].includes(manifest.migration_history_sha256)) {
+    EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256,
+    EXPECTED_INDEX_MIGRATION_HISTORY_SHA256].includes(manifest.migration_history_sha256)) {
     throw new Error("rolling v14 requires an exact live ledger");
   }
   return manifest;
@@ -6509,12 +6529,12 @@ function validateAdjustmentV14RollingActivationDatabaseManifest(value) {
   return manifest;
 }
 
-// require the exact additive catalog ledger for a normal release
+// require the exact indexed catalog ledger for a normal release
 export function validateAdjustmentV15CatalogDatabaseManifest(value) {
   const manifest = validateCompleteMaintenanceDatabaseManifest(value);
   // reject the retained capture ledger and every later suffix
-  if (manifest.migration_history_sha256 !== EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256) {
-    throw new Error("normal v15 requires the exact complete 0022 ledger");
+  if (manifest.migration_history_sha256 !== EXPECTED_INDEX_MIGRATION_HISTORY_SHA256) {
+    throw new Error("normal v15 requires the exact complete 0023 ledger");
   }
   return manifest;
 }
@@ -7335,10 +7355,11 @@ export function projectAdjustmentRegistrationScheduleStatusV3(value, epochWitnes
     // occupied slots retain their exact terminal clock rather than a fabricated deadline
     if (slot.terminalAt !== null) validateV2Instant(slot.terminalAt, "registration terminal");
   }
-  // bind only the retained 0021 witness to an exact 0021 or 0022 live ledger
+  // bind the retained 0021 witness to one reviewed additive live ledger
   if (witness.databaseMigrationHistorySha256 !== EXPECTED_ROLLING_MIGRATION_HISTORY_SHA256 ||
     ![EXPECTED_ROLLING_MIGRATION_HISTORY_SHA256,
-      EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256].includes(
+      EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256,
+      EXPECTED_INDEX_MIGRATION_HISTORY_SHA256].includes(
       ledger.databaseManifest.migration_history_sha256,
     ) ||
     Date.parse(ledger.snapshotAt) < Date.parse(witness.epochAt) ||

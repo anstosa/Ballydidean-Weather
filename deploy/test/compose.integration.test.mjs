@@ -1313,7 +1313,8 @@ verify_fixed_v13_source_compatibility "$target_env" "$source_env" "$authorizatio
           "SELECT string_agg(name || ':' || checksum, ',' ORDER BY name) FROM schema_migrations",
         )
       ).stdout.trim();
-      assert.match(mainMigrationBefore, /(?:^|,)0022_forecast_product_catalog\.sql:[a-f0-9]{64}$/u);
+      assert.match(mainMigrationBefore, /(?:^|,)0022_forecast_product_catalog\.sql:[a-f0-9]{64}(?=,|$)/u);
+      assert.match(mainMigrationBefore, /(?:^|,)0023_forecast_product_read_index\.sql:[a-f0-9]{64}$/u);
       assert.doesNotMatch(mainMigrationBefore, /(?:^|,)9999_candidate_contract\.sql:/u);
 
       // initialize one persistent historical lifecycle database

@@ -580,6 +580,7 @@ test(
         "0020_adjustment_revision_frontier.sql",
         "0021_adjustment_rolling_registration.sql",
         "0022_forecast_product_catalog.sql",
+        "0023_forecast_product_read_index.sql",
       ]);
       assert.deepEqual(firstEvent.current, []);
       assert.equal(secondEvent.event, "migrations_complete");
@@ -607,6 +608,7 @@ test(
         "0020_adjustment_revision_frontier.sql",
         "0021_adjustment_rolling_registration.sql",
         "0022_forecast_product_catalog.sql",
+        "0023_forecast_product_read_index.sql",
       ]);
       assert.deepEqual(secondEvent.bootstrap, firstEvent.bootstrap);
       assert.deepEqual(secondEvent.ecowittBootstrap, firstEvent.ecowittBootstrap);
@@ -645,6 +647,7 @@ test(
         { name: "0020_adjustment_revision_frontier.sql" },
         { name: "0021_adjustment_rolling_registration.sql" },
         { name: "0022_forecast_product_catalog.sql" },
+        { name: "0023_forecast_product_read_index.sql" },
       ]);
       assert.deepEqual(firstSnapshot.owners, [
         { tableowner: "weather_owner", tablename: "providers" },
@@ -1217,6 +1220,7 @@ test(
         { name: "0020_adjustment_revision_frontier.sql" },
         { name: "0021_adjustment_rolling_registration.sql" },
         { name: "0022_forecast_product_catalog.sql" },
+        { name: "0023_forecast_product_read_index.sql" },
       ]);
       // retain all normalized metric update grants
       const metricUpdatePrivileges = await ingestPool.query(

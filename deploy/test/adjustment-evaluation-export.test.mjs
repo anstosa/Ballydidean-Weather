@@ -134,9 +134,9 @@ function normalStageCapacityInput(overrides = {}) {
     systemIdentifier: "7558888888888888888",
     targetEnvSha256: "7".repeat(64),
     targetLedgerSha256:
-      "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
+      "c8b43b714eb555027ea7439a813831ab7326ad951b800362f35b2343330da81f",
     targetRelease: "2026.10.29-1",
-    targetSchemaVersion: 22,
+    targetSchemaVersion: 23,
     weatherPostgresDir: "/var/lib/weather/postgres",
     weatherPostgresDirFilesystemDevice: 2_048,
     ...overrides,
@@ -179,9 +179,9 @@ function normalActivationCapacityInput(overrides = {}) {
     systemIdentifier: "7558888888888888888",
     targetEnvSha256: "7".repeat(64),
     targetLedgerSha256:
-      "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
+      "c8b43b714eb555027ea7439a813831ab7326ad951b800362f35b2343330da81f",
     targetRelease: "2026.10.29-1",
-    targetSchemaVersion: 22,
+    targetSchemaVersion: 23,
     weatherPostgresDir: "/var/lib/weather/postgres",
     weatherPostgresDirFilesystemDevice: 2_048,
     ...overrides,
@@ -283,7 +283,10 @@ function transactionManifest(
 
 // keep frozen capture and exact live ledger authority disjoint
 test("v14 ledger gates accept only exact reviewed live schemas", () => {
-  const catalog = transactionManifest().payload;
+  const indexed = transactionManifest().payload;
+  const catalog = transactionManifest(migrationLedger(
+    completeMigrationNames.slice(0, 22), completeMigrationChecksums.slice(0, 22),
+  )).payload;
   const rolling = transactionManifest(rollingMigrationLedger).payload;
   const compatibility = transactionManifest(migrationLedger(
     completeMigrationNames.slice(0, 18), completeMigrationChecksums.slice(0, 18),
@@ -294,16 +297,20 @@ test("v14 ledger gates accept only exact reviewed live schemas", () => {
   assert.equal(validateAdjustmentV13CompatibilityDatabaseManifest(compatibility), compatibility);
   assert.equal(validateAdjustmentV14RollingDatabaseManifest(rolling), rolling);
   assert.equal(validateAdjustmentV14RollingDatabaseManifest(catalog), catalog);
+  assert.equal(validateAdjustmentV14RollingDatabaseManifest(indexed), indexed);
   assert.equal(validateAdjustmentV14DatabaseManifest(frontier), frontier);
   assert.throws(() => validateAdjustmentV14DatabaseManifest(rolling));
   assert.throws(() => validateAdjustmentV14DatabaseManifest(catalog));
+  assert.throws(() => validateAdjustmentV14DatabaseManifest(indexed));
   assert.throws(() => validateAdjustmentV14RollingDatabaseManifest(frontier));
   assert.throws(() => validateAdjustmentV13CompatibilityDatabaseManifest(frontier));
-  const changed = structuredClone(catalog);
-  changed.migration_checksums[20] = hashA;
+  const changed = structuredClone(indexed);
+  changed.migration_checksums[22] = hashA;
   assert.throws(() => validateAdjustmentV14RollingDatabaseManifest(changed));
   assert.equal(catalog.migration_history_sha256,
     "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e");
+  assert.equal(indexed.migration_history_sha256,
+    "c8b43b714eb555027ea7439a813831ab7326ad951b800362f35b2343330da81f");
 });
 
 // bind exact stage capacity formulas and every admission boundary
@@ -882,8 +889,8 @@ test("package still accepts complete 0018 and rejects partial 0019", async () =>
   }
 });
 
-// accept the exact additive catalog ledger without widening the export query
-test("package accepts the complete 0022 ledger for the unchanged v1 query", async () => {
+// accept both reviewed additive ledgers without widening the export query
+test("package accepts the complete 0022 and 0023 ledgers for the unchanged v1 query", async () => {
   const root = await mkdtemp(join(tmpdir(), "weather-adjustment-export-"));
   const packageRoot = join(root, "package");
 
@@ -894,6 +901,7 @@ test("package accepts the complete 0022 ledger for the unchanged v1 query", asyn
       "0020_adjustment_revision_frontier.sql",
       "0021_adjustment_rolling_registration.sql",
       "0022_forecast_product_catalog.sql",
+      "0023_forecast_product_read_index.sql",
     ]);
     const snapshotPath = await createEdgeSnapshot(root);
     const rainRow = rainReceiptRow();
@@ -930,6 +938,25 @@ test("package accepts the complete 0022 ledger for the unchanged v1 query", asyn
     assert.deepEqual(
       verified.bodies[verified.rows[1].body_member_path],
       body,
+    );
+    const catalogLedger = migrationLedger(
+      completeMigrationNames.slice(0, 22),
+      completeMigrationChecksums.slice(0, 22),
+    );
+    const catalogPackageRoot = join(root, "catalog-package");
+    await buildAdjustmentEvaluationPackage({
+      edgeSnapshotPath: snapshotPath,
+      fromLocalDate: "2026-10-01",
+      input: databaseStream([temperatureRow()], catalogLedger),
+      packageRoot: catalogPackageRoot,
+      toLocalDate: "2026-10-01",
+    });
+    const catalogVerified = await loadVerifiedAdjustmentEvaluationPackage(
+      catalogPackageRoot,
+    );
+    assert.equal(
+      catalogVerified.manifest.databaseManifest.migration_names.at(-1),
+      "0022_forecast_product_catalog.sql",
     );
   } finally {
     await rm(root, { force: true, recursive: true });

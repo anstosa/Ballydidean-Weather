@@ -2074,9 +2074,9 @@ test("normal stage qualification rejects over-envelope and low-water samples", a
     sourceSchemaVersion: 21,
     systemIdentifier: "123456789",
     targetEnvSha256: "3".repeat(64),
-    targetLedgerSha256: "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
+    targetLedgerSha256: "c8b43b714eb555027ea7439a813831ab7326ad951b800362f35b2343330da81f",
     targetRelease: "2026.10.29-1",
-    targetSchemaVersion: 22,
+    targetSchemaVersion: 23,
     weatherPostgresDir: "/var/lib/weather/postgres",
     weatherPostgresDirFilesystemDevice: 1,
   };
@@ -2274,7 +2274,7 @@ test("legacy v13 and normal v15 paths use their distinct capacity contracts", ()
   assert.doesNotMatch(stageCase, /require_v13_resource_gate|require_literal_adjustment_release_capacity/u);
   assert.match(stageCase, /require_normal_stage_capacity[\s\S]*pre_pull/u);
   assert.match(stageCase, /require_normal_stage_capacity[\s\S]*post_pull/u);
-  assert.match(stageCase, /normal-21-22/u);
+  assert.match(stageCase, /normal-21-23/u);
   assert.doesNotMatch(startRelease, /require_v13_resource_gate|require_literal_adjustment_release_capacity/u);
   assert.equal(
     startRelease.indexOf("require_normal_activation_capacity") <
@@ -2300,7 +2300,7 @@ test("historical schema-18 to schema-21 activation requires the measured ARM64 r
   assert.match(rehearsal, /historical rehearsal clone absence check failed/u);
   assert.match(rehearsal, /historical rehearsal migration name already exists/u);
   assert.match(rehearsal,
-    /Config\.Labels\.com\.docker\.compose\.project[\s\S]*Config\.Labels\.com\.docker\.compose\.service[\s\S]*Config\.Image/u);
+    /index \.Config\.Labels "com\.docker\.compose\.project"[\s\S]*index \.Config\.Labels "com\.docker\.compose\.service"[\s\S]*Config\.Image/u);
   assert.match(rehearsal, /postgres\|1000000000\|536870912/u);
   assert.match(rehearsal, /--atomic-maintenance-v14/u);
   assert.match(rehearsal, /WEATHER_DATABASE_STATEMENT_TIMEOUT_MS=300000/u);

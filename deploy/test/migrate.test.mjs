@@ -3,15 +3,20 @@ import test from "node:test";
 
 import { migrateAndBootstrap, parseMigrationEntrypointArguments } from "../scripts/migrate.mjs";
 
-// the optional bridge cannot accept arbitrary flags or schema operands
-test("migration entrypoint accepts only the closed atomic maintenance flag", () => {
+// the optional bridges cannot accept arbitrary flags or schema operands
+test("migration entrypoint accepts only the two closed atomic flags", () => {
   assert.deepEqual(parseMigrationEntrypointArguments([]), {});
   assert.deepEqual(parseMigrationEntrypointArguments(["--atomic-maintenance-v14"]), {
     atomicMaintenanceV14: true,
   });
+  assert.deepEqual(parseMigrationEntrypointArguments(["--atomic-normal-21-23"]), {
+    atomicNormal21To23: true,
+  });
   // refuse duplicates and unknown arguments before database initialization
   for (const argumentsList of [["--atomic"], ["--atomic-maintenance-v14", "21"],
-    ["--atomic-maintenance-v14", "--atomic-maintenance-v14"]]) {
+    ["--atomic-maintenance-v14", "--atomic-maintenance-v14"],
+    ["--atomic-normal-21-23", "--atomic-normal-21-23"],
+    ["--atomic-maintenance-v14", "--atomic-normal-21-23"]]) {
     assert.throws(() => parseMigrationEntrypointArguments(argumentsList), /arguments are invalid/u);
   }
 });

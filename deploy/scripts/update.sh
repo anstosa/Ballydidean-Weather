@@ -1880,9 +1880,9 @@ const input = {
   sourceSchemaVersion: 21,
   systemIdentifier,
   targetEnvSha256,
-  targetLedgerSha256: "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
+  targetLedgerSha256: "c8b43b714eb555027ea7439a813831ab7326ad951b800362f35b2343330da81f",
   targetRelease,
-  targetSchemaVersion: 22,
+  targetSchemaVersion: 23,
   weatherPostgresDir,
 };
 const canonical = (value) => Array.isArray(value)
@@ -2237,8 +2237,8 @@ if (Object.keys(receipt).sort().join("\n") !== keys.sort().join("\n") ||
   receipt.sourceDatabaseOid !== Number(databaseOid) ||
   receipt.sourceRelease !== sourceRelease || receipt.targetRelease !== targetRelease ||
   receipt.sourceLedgerSha256 !== "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424" ||
-  receipt.targetLedgerSha256 !== "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e" ||
-  receipt.sourceSchemaVersion !== 21 || receipt.targetSchemaVersion !== 22 ||
+  receipt.targetLedgerSha256 !== "c8b43b714eb555027ea7439a813831ab7326ad951b800362f35b2343330da81f" ||
+  receipt.sourceSchemaVersion !== 21 || receipt.targetSchemaVersion !== 23 ||
   !integer(receipt.measuredMigrationPeakBytes) ||
   !integer(receipt.measuredMigrationPeakInodes) ||
   !integer(receipt.migrationDurationMilliseconds) ||
@@ -2360,9 +2360,9 @@ const input = {
   stageReceiptSha256,
   systemIdentifier,
   targetEnvSha256,
-  targetLedgerSha256: "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
+  targetLedgerSha256: "c8b43b714eb555027ea7439a813831ab7326ad951b800362f35b2343330da81f",
   targetRelease,
-  targetSchemaVersion: 22,
+  targetSchemaVersion: 23,
   weatherPostgresDir,
 };
 const canonical = (value) => Array.isArray(value)
@@ -3567,9 +3567,9 @@ verify_previous_image_compatibility() (
   active_database=$(env_value "$previous_env" WEATHER_DATABASE_NAME)
   previous_release=$(env_value "$previous_env" WEATHER_RELEASE)
   target_release=$(env_value "$target_env" WEATHER_RELEASE)
-  [[ "$compatibility_mode" == legacy || "$compatibility_mode" == normal-21-22 ]] ||
+  [[ "$compatibility_mode" == legacy || "$compatibility_mode" == normal-21-23 ]] ||
     die "unknown compatibility mode"
-  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+  if [[ "$compatibility_mode" == normal-21-23 ]]; then
     require_canonical_descendant "$peak_output_path" "$releases_dir" \
       "normal compatibility peak output"
     [[ -f "$peak_output_path" && ! -L "$peak_output_path" ]] ||
@@ -3677,7 +3677,7 @@ verify_previous_image_compatibility() (
     expected_reference=$(env_value "$environment" WEATHER_SERVER_IMAGE) || return 1
     expected_image_id=$(docker image inspect --format '{{.Id}}' "$expected_reference") || return 1
     details=$(docker container inspect --format \
-      '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+      '{{.Id}}|{{.Name}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Config.Image}}|{{.Image}}' \
       "$container_id") || return 1
     [[ "$details" == "$container_id|/$container_name|$project|$service|$expected_reference|$expected_image_id" ]]
   }
@@ -3925,7 +3925,7 @@ NODE
       fi
     fi
     # retain a stopped complete or partial normal series before unlinking evidence
-    if [[ "$compatibility_mode" == normal-21-22 ]]; then
+    if [[ "$compatibility_mode" == normal-21-23 ]]; then
       if [[ "$status" != 0 ]]; then
         retain_release_failure_evidence normal-stage "$status" \
           "$capacity_samples" "$peak_output_path" "$preexisting_data_contract" \
@@ -3945,7 +3945,7 @@ NODE
   trap 'exit 130' HUP INT TERM
 
   # monitor the database filesystem through copy, migration and owned cleanup
-  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+  if [[ "$compatibility_mode" == normal-21-23 ]]; then
     postgres_dir=$(env_value "$previous_env" WEATHER_POSTGRES_DIR)
     capacity_samples=$(mktemp "$releases_dir/.normal-capacity-samples.XXXXXX")
     capacity_monitor_completion="$capacity_samples.complete"
@@ -3999,7 +3999,7 @@ NODE
         --no-owner --role weather_owner --exit-on-error
 
   # preserve exact schema 21 for the normal successor rehearsal
-  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+  if [[ "$compatibility_mode" == normal-21-23 ]]; then
     previous_history_sha256=$(migration_history_sha256 "$previous_env" "$candidate")
     [[ "$previous_history_sha256" == adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93 ]] ||
       die "normal compatibility source is not the exact schema-21 ledger"
@@ -4011,7 +4011,7 @@ NODE
     # restore the historical eight-migration boundary only for legacy staging
     WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
     psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$candidate" \
-      --command "CREATE OR REPLACE FUNCTION weather_source_is_current(candidate_id bigint) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS \$function\$ SELECT NOT EXISTS (SELECT 1 FROM public.sources candidate JOIN public.sources successor ON successor.station_id = candidate.station_id AND successor.active AND successor.material_provider_config->>'supersedesSourceKey' = candidate.source_key WHERE candidate.id = candidate_id); \$function\$; DROP TRIGGER IF EXISTS weather_records_forecast_products_insert ON weather_records; DROP TRIGGER IF EXISTS weather_records_forecast_products_delete ON weather_records; DROP TRIGGER IF EXISTS weather_records_forecast_products_truncate ON weather_records; DROP FUNCTION IF EXISTS weather_sync_forecast_products_after_insert(); DROP FUNCTION IF EXISTS weather_sync_forecast_products_after_delete(); DROP FUNCTION IF EXISTS weather_sync_forecast_products_after_truncate(); DROP TABLE IF EXISTS forecast_products; DROP TABLE IF EXISTS adjustment_shadow_registration_windows_v3, adjustment_registration_horizons_v3, adjustment_registration_schedule_v3; DROP FUNCTION IF EXISTS adjustment_shadow_registration_slot_v3(text); DROP FUNCTION IF EXISTS weather_register_adjustment_shadow_v3(jsonb); DROP FUNCTION IF EXISTS weather_initialize_adjustment_registration_schedule_v3(jsonb); DROP FUNCTION IF EXISTS weather_guard_adjustment_registration_v3(); DROP FUNCTION IF EXISTS weather_reject_adjustment_registration_v3_mutation(); DROP TRIGGER IF EXISTS weather_records_clear_adjustment_revision_pointer_v1 ON weather_records; DROP TRIGGER IF EXISTS forecast_anchor_records_clear_adjustment_revision_pointer_v1 ON forecast_anchor_records; DROP TRIGGER IF EXISTS rain_adjustment_runs_immutable ON rain_adjustment_runs; DROP FUNCTION IF EXISTS weather_append_adjustment_shadow_v4(jsonb,text); DROP FUNCTION IF EXISTS adjustment_revision_frontier_v1(); DROP FUNCTION IF EXISTS adjustment_shadow_revision_admission_v1(text,text,text,integer); DROP FUNCTION IF EXISTS weather_clear_adjustment_revision_pointer_v1(); DROP FUNCTION IF EXISTS weather_issue_adjustment_revision_receipt_v1(text,text,text,text); DROP FUNCTION IF EXISTS weather_bind_weather_record_revisions_v1(jsonb); DROP FUNCTION IF EXISTS weather_bind_forecast_anchor_revisions_v1(jsonb); DROP FUNCTION IF EXISTS weather_guard_rain_adjustment_revision_v1(); DROP FUNCTION IF EXISTS weather_bind_rain_gate_revision_v1(jsonb); DROP FUNCTION IF EXISTS weather_bind_ecmwf_temperature_revision_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_revision_serving_snapshot_v1(timestamptz,bigint); DROP FUNCTION IF EXISTS adjustment_weather_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_forecast_anchor_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_rain_gate_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_ecmwf_temperature_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS weather_mark_adjustment_revision_gap_v1(text,jsonb,jsonb); ALTER TABLE weather_records DROP COLUMN IF EXISTS adjustment_revision_receipt; ALTER TABLE forecast_anchor_records DROP COLUMN IF EXISTS adjustment_revision_receipt; ALTER TABLE rain_adjustment_runs DROP COLUMN IF EXISTS adjustment_revision_receipt; ALTER TABLE ecmwf_temperature_canary_runs DROP COLUMN IF EXISTS adjustment_revision_receipt; DROP FUNCTION IF EXISTS weather_adjustment_revision_receipt_valid_v1(jsonb); DROP TABLE IF EXISTS adjustment_revision_frontier_v1; DROP SEQUENCE IF EXISTS adjustment_revision_ordinal_v1; DROP TABLE IF EXISTS adjustment_shadow_terminal_results_v2; DROP FUNCTION IF EXISTS weather_guard_adjustment_shadow_terminal_result_v2(); DROP FUNCTION IF EXISTS weather_record_adjustment_shadow_terminal_result_v2(jsonb); DROP FUNCTION IF EXISTS weather_retire_adjustment_shadow_registration_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_shadow_v3(jsonb,text); DROP TABLE IF EXISTS adjustment_shadow_predictions_v2, adjustment_confirmation_accesses_v2, adjustment_shadow_registrations_v2; DROP FUNCTION IF EXISTS weather_guard_adjustment_shadow_registration_v2(); DROP FUNCTION IF EXISTS weather_guard_adjustment_shadow_prediction_v2(); DROP FUNCTION IF EXISTS weather_guard_adjustment_confirmation_access_v2(); DROP FUNCTION IF EXISTS weather_reject_adjustment_maintenance_mutation(); DROP FUNCTION IF EXISTS weather_register_adjustment_shadow_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_temperature_shadow_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_wind_shadow_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_rain_shadow_v2(jsonb); DROP FUNCTION IF EXISTS adjustment_shadow_body_admission_v2(text,text,text,integer); DROP FUNCTION IF EXISTS weather_finalize_adjustment_shadow_metadata_v2(jsonb); DROP FUNCTION IF EXISTS weather_record_adjustment_confirmation_access_v2(jsonb); DROP FUNCTION IF EXISTS adjustment_confirmation_availability_v2(text); DROP FUNCTION IF EXISTS adjustment_confirmation_export_v2(text,text,smallint); DROP VIEW IF EXISTS adjustment_evaluation_export_manifest_v1; DROP VIEW IF EXISTS adjustment_evaluation_export_rows_v1; DROP VIEW IF EXISTS rain_collection_status_v1; DROP TABLE IF EXISTS rain_adjustment_runs; DROP FUNCTION IF EXISTS weather_guard_rain_adjustment_run(); DROP TABLE IF EXISTS rain_capture_receipts; DROP TABLE IF EXISTS rain_capture_claims; DROP FUNCTION IF EXISTS weather_guard_rain_capture_claim(); DROP FUNCTION IF EXISTS weather_guard_rain_capture_receipt(); DROP FUNCTION IF EXISTS weather_reject_rain_capture_mutation(); DROP VIEW IF EXISTS forecast_runtime_provenance_v1; DROP VIEW IF EXISTS forecast_training_export_manifest_v1; DROP VIEW IF EXISTS forecast_training_export_rows_v1; DROP TABLE IF EXISTS ecmwf_temperature_canary_hours; DROP TABLE IF EXISTS ecmwf_temperature_canary_runs; DROP FUNCTION IF EXISTS weather_guard_ecmwf_temperature_canary_run_update(); DROP FUNCTION IF EXISTS weather_require_ecmwf_temperature_canary_hour_identity(); DROP FUNCTION IF EXISTS weather_reject_ecmwf_temperature_canary_hour_mutation(); DROP TABLE IF EXISTS forecast_anchor_records; DROP FUNCTION IF EXISTS weather_require_historical_forecast_anchor_source(); DROP FUNCTION IF EXISTS weather_guard_forecast_anchor_record_update(); GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO PUBLIC; ALTER DEFAULT PRIVILEGES FOR ROLE weather_owner IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO PUBLIC; REVOKE SELECT (capabilities) ON sources FROM weather_api; DELETE FROM schema_migrations WHERE name IN ('0009_forecast_anchor_records.sql', '0010_forecast_training_export.sql', '0011_forecast_runtime_provenance.sql', '0012_hide_archive_only_forecasts_from_live_reads.sql', '0013_ecmwf_temperature_canary.sql', '0014_rain_collection.sql', '0015_rain_station_access.sql', '0016_rain_adjustment.sql', '0017_adjustment_evaluation_export.sql', '0018_adjustment_maintenance_v2.sql', '0019_adjustment_maintenance_recurring.sql', '0020_adjustment_revision_frontier.sql', '0021_adjustment_rolling_registration.sql', '0022_forecast_product_catalog.sql')"
+      --command "CREATE OR REPLACE FUNCTION weather_source_is_current(candidate_id bigint) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS \$function\$ SELECT NOT EXISTS (SELECT 1 FROM public.sources candidate JOIN public.sources successor ON successor.station_id = candidate.station_id AND successor.active AND successor.material_provider_config->>'supersedesSourceKey' = candidate.source_key WHERE candidate.id = candidate_id); \$function\$; DROP INDEX IF EXISTS public.weather_records_forecast_product_valid_idx; DROP TRIGGER IF EXISTS weather_records_forecast_products_insert ON weather_records; DROP TRIGGER IF EXISTS weather_records_forecast_products_delete ON weather_records; DROP TRIGGER IF EXISTS weather_records_forecast_products_truncate ON weather_records; DROP FUNCTION IF EXISTS weather_sync_forecast_products_after_insert(); DROP FUNCTION IF EXISTS weather_sync_forecast_products_after_delete(); DROP FUNCTION IF EXISTS weather_sync_forecast_products_after_truncate(); DROP TABLE IF EXISTS forecast_products; DROP TABLE IF EXISTS adjustment_shadow_registration_windows_v3, adjustment_registration_horizons_v3, adjustment_registration_schedule_v3; DROP FUNCTION IF EXISTS adjustment_shadow_registration_slot_v3(text); DROP FUNCTION IF EXISTS weather_register_adjustment_shadow_v3(jsonb); DROP FUNCTION IF EXISTS weather_initialize_adjustment_registration_schedule_v3(jsonb); DROP FUNCTION IF EXISTS weather_guard_adjustment_registration_v3(); DROP FUNCTION IF EXISTS weather_reject_adjustment_registration_v3_mutation(); DROP TRIGGER IF EXISTS weather_records_clear_adjustment_revision_pointer_v1 ON weather_records; DROP TRIGGER IF EXISTS forecast_anchor_records_clear_adjustment_revision_pointer_v1 ON forecast_anchor_records; DROP TRIGGER IF EXISTS rain_adjustment_runs_immutable ON rain_adjustment_runs; DROP FUNCTION IF EXISTS weather_append_adjustment_shadow_v4(jsonb,text); DROP FUNCTION IF EXISTS adjustment_revision_frontier_v1(); DROP FUNCTION IF EXISTS adjustment_shadow_revision_admission_v1(text,text,text,integer); DROP FUNCTION IF EXISTS weather_clear_adjustment_revision_pointer_v1(); DROP FUNCTION IF EXISTS weather_issue_adjustment_revision_receipt_v1(text,text,text,text); DROP FUNCTION IF EXISTS weather_bind_weather_record_revisions_v1(jsonb); DROP FUNCTION IF EXISTS weather_bind_forecast_anchor_revisions_v1(jsonb); DROP FUNCTION IF EXISTS weather_guard_rain_adjustment_revision_v1(); DROP FUNCTION IF EXISTS weather_bind_rain_gate_revision_v1(jsonb); DROP FUNCTION IF EXISTS weather_bind_ecmwf_temperature_revision_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_revision_serving_snapshot_v1(timestamptz,bigint); DROP FUNCTION IF EXISTS adjustment_weather_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_forecast_anchor_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_rain_gate_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_ecmwf_temperature_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS weather_mark_adjustment_revision_gap_v1(text,jsonb,jsonb); ALTER TABLE weather_records DROP COLUMN IF EXISTS adjustment_revision_receipt; ALTER TABLE forecast_anchor_records DROP COLUMN IF EXISTS adjustment_revision_receipt; ALTER TABLE rain_adjustment_runs DROP COLUMN IF EXISTS adjustment_revision_receipt; ALTER TABLE ecmwf_temperature_canary_runs DROP COLUMN IF EXISTS adjustment_revision_receipt; DROP FUNCTION IF EXISTS weather_adjustment_revision_receipt_valid_v1(jsonb); DROP TABLE IF EXISTS adjustment_revision_frontier_v1; DROP SEQUENCE IF EXISTS adjustment_revision_ordinal_v1; DROP TABLE IF EXISTS adjustment_shadow_terminal_results_v2; DROP FUNCTION IF EXISTS weather_guard_adjustment_shadow_terminal_result_v2(); DROP FUNCTION IF EXISTS weather_record_adjustment_shadow_terminal_result_v2(jsonb); DROP FUNCTION IF EXISTS weather_retire_adjustment_shadow_registration_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_shadow_v3(jsonb,text); DROP TABLE IF EXISTS adjustment_shadow_predictions_v2, adjustment_confirmation_accesses_v2, adjustment_shadow_registrations_v2; DROP FUNCTION IF EXISTS weather_guard_adjustment_shadow_registration_v2(); DROP FUNCTION IF EXISTS weather_guard_adjustment_shadow_prediction_v2(); DROP FUNCTION IF EXISTS weather_guard_adjustment_confirmation_access_v2(); DROP FUNCTION IF EXISTS weather_reject_adjustment_maintenance_mutation(); DROP FUNCTION IF EXISTS weather_register_adjustment_shadow_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_temperature_shadow_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_wind_shadow_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_rain_shadow_v2(jsonb); DROP FUNCTION IF EXISTS adjustment_shadow_body_admission_v2(text,text,text,integer); DROP FUNCTION IF EXISTS weather_finalize_adjustment_shadow_metadata_v2(jsonb); DROP FUNCTION IF EXISTS weather_record_adjustment_confirmation_access_v2(jsonb); DROP FUNCTION IF EXISTS adjustment_confirmation_availability_v2(text); DROP FUNCTION IF EXISTS adjustment_confirmation_export_v2(text,text,smallint); DROP VIEW IF EXISTS adjustment_evaluation_export_manifest_v1; DROP VIEW IF EXISTS adjustment_evaluation_export_rows_v1; DROP VIEW IF EXISTS rain_collection_status_v1; DROP TABLE IF EXISTS rain_adjustment_runs; DROP FUNCTION IF EXISTS weather_guard_rain_adjustment_run(); DROP TABLE IF EXISTS rain_capture_receipts; DROP TABLE IF EXISTS rain_capture_claims; DROP FUNCTION IF EXISTS weather_guard_rain_capture_claim(); DROP FUNCTION IF EXISTS weather_guard_rain_capture_receipt(); DROP FUNCTION IF EXISTS weather_reject_rain_capture_mutation(); DROP VIEW IF EXISTS forecast_runtime_provenance_v1; DROP VIEW IF EXISTS forecast_training_export_manifest_v1; DROP VIEW IF EXISTS forecast_training_export_rows_v1; DROP TABLE IF EXISTS ecmwf_temperature_canary_hours; DROP TABLE IF EXISTS ecmwf_temperature_canary_runs; DROP FUNCTION IF EXISTS weather_guard_ecmwf_temperature_canary_run_update(); DROP FUNCTION IF EXISTS weather_require_ecmwf_temperature_canary_hour_identity(); DROP FUNCTION IF EXISTS weather_reject_ecmwf_temperature_canary_hour_mutation(); DROP TABLE IF EXISTS forecast_anchor_records; DROP FUNCTION IF EXISTS weather_require_historical_forecast_anchor_source(); DROP FUNCTION IF EXISTS weather_guard_forecast_anchor_record_update(); GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO PUBLIC; ALTER DEFAULT PRIVILEGES FOR ROLE weather_owner IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO PUBLIC; REVOKE SELECT (capabilities) ON sources FROM weather_api; DELETE FROM schema_migrations WHERE name IN ('0009_forecast_anchor_records.sql', '0010_forecast_training_export.sql', '0011_forecast_runtime_provenance.sql', '0012_hide_archive_only_forecasts_from_live_reads.sql', '0013_ecmwf_temperature_canary.sql', '0014_rain_collection.sql', '0015_rain_station_access.sql', '0016_rain_adjustment.sql', '0017_adjustment_evaluation_export.sql', '0018_adjustment_maintenance_v2.sql', '0019_adjustment_maintenance_recurring.sql', '0020_adjustment_revision_frontier.sql', '0021_adjustment_rolling_registration.sql', '0022_forecast_product_catalog.sql', '0023_forecast_product_read_index.sql')"
   baseline_schema_state=$(WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
     psql --username postgres --dbname "$candidate" --tuples-only --no-align \
       --command "SELECT count(*)::text || ':' || COALESCE(to_regclass('forecast_anchor_records')::text, '') || ':' || COALESCE(to_regclass('forecast_training_export_rows_v1')::text, '') || ':' || COALESCE(to_regclass('ecmwf_temperature_canary_runs')::text, '') || ':' || COALESCE(to_regclass('ecmwf_temperature_canary_hours')::text, '') || ':' || COALESCE(to_regclass('rain_capture_claims')::text, '') || ':' || COALESCE(to_regclass('rain_capture_receipts')::text, '') || ':' || COALESCE(to_regclass('rain_collection_status_v1')::text, '') FROM schema_migrations")
@@ -4021,7 +4021,7 @@ NODE
   fi
 
   # start the activation-equivalent phase only after the full clone is allocated
-  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+  if [[ "$compatibility_mode" == normal-21-23 ]]; then
     stop_compatibility_capacity_monitor ||
       die "normal compatibility capacity monitor ended before migration"
     append_compatibility_capacity_sample ||
@@ -4032,19 +4032,26 @@ NODE
       die "normal compatibility migration phase monitor could not start"
   fi
   migration_started_milliseconds=$(date -u +%s%3N)
-  run_owned_compatibility_container "$target_env" "${candidate}_migration" migration --no-deps \
-    --env WEATHER_DATABASE_NAME="$candidate" migration
+  # keep both additive forecast migrations in one transaction
+  if [[ "$compatibility_mode" == normal-21-23 ]]; then
+    run_owned_compatibility_container "$target_env" "${candidate}_migration" migration --no-deps \
+      --env WEATHER_DATABASE_NAME="$candidate" migration \
+      node deploy/scripts/migrate.mjs --atomic-normal-21-23
+  else
+    run_owned_compatibility_container "$target_env" "${candidate}_migration" migration --no-deps \
+      --env WEATHER_DATABASE_NAME="$candidate" migration
+  fi
   migration_duration_milliseconds=$(($(date -u +%s%3N) - migration_started_milliseconds))
-  if [[ "$compatibility_mode" == normal-21-22 ]] &&
+  if [[ "$compatibility_mode" == normal-21-23 ]] &&
     ((migration_duration_milliseconds > 60000)); then
-    die "normal schema-22 compatibility migration exceeded 60000ms"
+    die "normal schema-23 compatibility migration exceeded 60000ms"
   fi
   history_sha256=$(migration_history_sha256 "$previous_env" "$candidate")
 
-  # require the exact additive schema-22 successor and unchanged preexisting data
-  if [[ "$compatibility_mode" == normal-21-22 ]]; then
-    [[ "$history_sha256" == 3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51 ]] ||
-      die "normal compatibility target is not the exact schema-22 ledger"
+  # require the exact additive schema-23 successor and unchanged preexisting data
+  if [[ "$compatibility_mode" == normal-21-23 ]]; then
+    [[ "$history_sha256" == 1db25d8a515e85b4c71c3a3dbe4a1f61ebdfdf14e095a24b307daa039dfb5201 ]] ||
+      die "normal compatibility target is not the exact schema-23 ledger"
     write_preexisting_data_snapshot "$previous_env" "$candidate" \
       "$preexisting_data_contract" "$preexisting_data_after"
     verify_preexisting_data_snapshots "$preexisting_data_contract" \
@@ -4139,7 +4146,7 @@ NODE
       die "previous runtime ACL verification failed"
   fi
   # end the activation-equivalent phase before compatibility workers add fixture data
-  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+  if [[ "$compatibility_mode" == normal-21-23 ]]; then
     stop_compatibility_capacity_monitor ||
       die "normal compatibility capacity monitor ended during migration"
     append_compatibility_capacity_sample ||
@@ -4215,12 +4222,12 @@ NODE
   fi
 
   # prove the old worker maintained the complete exact forecast catalog
-  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+  if [[ "$compatibility_mode" == normal-21-23 ]]; then
     catalog_consistent=$(WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
       psql --username postgres --dbname "$candidate" --tuples-only --no-align \
         --command "SELECT NOT EXISTS ((SELECT DISTINCT wr.source_id, wr.product_run_at FROM weather_records wr WHERE wr.source_kind = 'forecast' EXCEPT SELECT fp.source_id, fp.product_run_at FROM forecast_products fp) UNION ALL (SELECT fp.source_id, fp.product_run_at FROM forecast_products fp EXCEPT SELECT DISTINCT wr.source_id, wr.product_run_at FROM weather_records wr WHERE wr.source_kind = 'forecast'))")
     [[ "$catalog_consistent" == t ]] ||
-      die "previous worker left the schema-22 forecast catalog inconsistent"
+      die "previous worker left the schema-23 forecast catalog inconsistent"
   fi
 
   # expose only the bounded persisted failure diagnosis
@@ -4300,7 +4307,7 @@ NODE
   ((_attempt < 30)) || die "previous API compatibility failed"
 
   # compare the new API's user-visible reads against the old API in one frozen clone
-  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+  if [[ "$compatibility_mode" == normal-21-23 ]]; then
     target_api_container_id=$(WEATHER_ENV_FILE=$target_env compose run --detach \
       --name "$target_api_container" \
       --no-deps --env WEATHER_DATABASE_NAME="$candidate" \
@@ -4321,7 +4328,7 @@ NODE
     target_api_snapshot=$(docker exec "$target_api_container" node -e \
       "const o='http://127.0.0.1:3001';fetch(o+'/api/v1/sites').then(async r=>{if(!r.ok)throw Error();const sites=await r.json();const s=sites.data?.[0]?.slug;if(typeof s!=='string')throw Error();const p=o+'/api/v1/sites/'+encodeURIComponent(s);const rs=await Promise.all(['/current','/history?limit=1','/forecast'].map(x=>fetch(p+x)));if(rs.some(x=>!x.ok))throw Error();console.log(JSON.stringify([sites,...await Promise.all(rs.map(x=>x.json()))]))}).catch(()=>process.exit(1))")
     [[ "$previous_api_snapshot" == "$target_api_snapshot" ]] ||
-      die "schema-21 and schema-22 API reads differ"
+      die "schema-21 and schema-23 API reads differ"
   fi
 
   # publish only after every real compatibility check
@@ -4350,7 +4357,7 @@ capture_supported_writer_container() {
   expected_reference=$(env_value "$env_file" WEATHER_SERVER_IMAGE)
   expected_image_id=$(docker image inspect --format '{{.Id}}' "$expected_reference")
   details=$(docker container inspect --format \
-    '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}|{{.State.Running}}' \
+    '{{.Id}}|{{.Name}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Config.Image}}|{{.Image}}|{{.State.Running}}' \
     "$container_id")
   [[ "$details" == "$container_id|/$project-$service-1|$project|$service|$expected_reference|$expected_image_id|true" ]] ||
     die "supported writer container differs from active release: $service"
@@ -4367,13 +4374,13 @@ stop_supported_writer_container() {
   expected_reference=$(env_value "$env_file" WEATHER_SERVER_IMAGE)
   expected_image_id=$(docker image inspect --format '{{.Id}}' "$expected_reference")
   details=$(docker container inspect --format \
-    '{{.Id}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+    '{{.Id}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Config.Image}}|{{.Image}}' \
     "$container_id") || return 1
   [[ "$details" == "$container_id|$project|$service|$expected_reference|$expected_image_id" ]] ||
     return 1
   docker container stop --time 30 "$container_id" >/dev/null || return 1
   details=$(docker container inspect --format \
-    '{{.Id}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.State.Running}}' \
+    '{{.Id}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.State.Running}}' \
     "$container_id") || return 1
   [[ "$details" == "$container_id|$project|$service|false" ]]
 }
@@ -4488,7 +4495,7 @@ quiesce_normal_activation_migration() {
     return 0
   fi
   details=$(docker container inspect --format \
-    '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+    '{{.Id}}|{{.Name}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Config.Image}}|{{.Image}}' \
     "$container_id") || return 1
   [[ "$details" == "$container_id|/$container_name|$project|migration|$expected_reference|$expected_image_id" ]] ||
     return 1
@@ -4544,7 +4551,7 @@ restore_normal_activation_after_quiescence() {
     return 0
   fi
   # retain target authority after a committed migration or later bootstrap/ACL failure
-  if [[ "$actual_history" == 3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51 ]]; then
+  if [[ "$actual_history" == 1db25d8a515e85b4c71c3a3dbe4a1f61ebdfdf14e095a24b307daa039dfb5201 ]]; then
     authorization_path=$(migration_authorization "$target_release") || return 1
     validate_migration_authorization "$authorization_path" \
       "$source_release" "$target_release" || return 1
@@ -4583,8 +4590,8 @@ recover_committed_normal_release() {
   start_postgres "$runtime_env" || die "normal recovery PostgreSQL restart failed"
   actual_history=$(migration_history_sha256 \
     "$runtime_env" "$(env_value "$runtime_env" WEATHER_DATABASE_NAME)")
-  [[ "$actual_history" == 3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51 ]] ||
-    die "normal recovery requires the exact complete schema-22 ledger"
+  [[ "$actual_history" == 1db25d8a515e85b4c71c3a3dbe4a1f61ebdfdf14e095a24b307daa039dfb5201 ]] ||
+    die "normal recovery requires the exact complete schema-23 ledger"
   read_normal_stage_qualification "$source_env" "$target_env" "$stage_receipt" >/dev/null
   restore_images "$runtime_env" "$runtime_release" "$schema_release"
   write_active_symlink "$runtime_release"
@@ -6164,12 +6171,12 @@ historical_v14_18_21_rehearsal() (
     fi
     if [[ "$migration_started" == true ]]; then
       details=$(docker container inspect --format \
-        '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+        '{{.Id}}|{{.Name}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Config.Image}}|{{.Image}}' \
         "$migration_container_id" 2>/dev/null)
       if [[ "$details" == "$migration_container_id|/$migration_container|$compose_project|migration|$migration_image_reference|$migration_image_id" ]]; then
         docker container stop --time 10 "$migration_container_id" >/dev/null 2>&1
         details=$(docker container inspect --format \
-          '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+          '{{.Id}}|{{.Name}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Config.Image}}|{{.Image}}' \
           "$migration_container_id" 2>/dev/null)
         [[ "$details" == "$migration_container_id|/$migration_container|$compose_project|migration|$migration_image_reference|$migration_image_id" ]] &&
           docker container rm "$migration_container_id" >/dev/null 2>&1 || cleanup_failed=true
@@ -6234,7 +6241,7 @@ historical_v14_18_21_rehearsal() (
   [[ "$postgres_container_id" =~ ^[a-f0-9]{64}$ ]] ||
     die "historical rehearsal PostgreSQL identity is invalid"
   postgres_identity=$(docker container inspect --format \
-    '{{.Id}}|{{.Config.Labels.com.docker.compose.service}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.Image}}' \
+    '{{.Id}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.Image}}' \
     "$postgres_container_id")
   [[ "$postgres_identity" == "$postgres_container_id|postgres|1000000000|536870912|sha256:"* ]] ||
     die "historical rehearsal PostgreSQL quotas differ"
@@ -6374,7 +6381,7 @@ historical_v14_18_21_rehearsal() (
   fi
   migration_started=true
   details=$(docker container inspect --format \
-    '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+    '{{.Id}}|{{.Name}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Config.Image}}|{{.Image}}' \
     "$migration_container_id")
   [[ "$details" == "$migration_container_id|/$migration_container|$compose_project|migration|$migration_image_reference|$migration_image_id" ]] ||
     die "historical rehearsal migration container identity differs"
@@ -6401,7 +6408,7 @@ historical_v14_18_21_rehearsal() (
       "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), '$start_wal_lsn'::pg_lsn)::bigint")
 
   details=$(docker container inspect --format \
-    '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+    '{{.Id}}|{{.Name}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.Config.Image}}|{{.Image}}' \
     "$migration_container_id")
   [[ "$details" == "$migration_container_id|/$migration_container|$compose_project|migration|$migration_image_reference|$migration_image_id" ]] ||
     die "historical rehearsal migration cleanup identity differs"
@@ -6984,7 +6991,7 @@ start_release() (
   local backup_output backup_archive backup_bytes backup_ceiling
   local backup_checksum
   local migration_container_name migration_container_id migration_status actual_history
-  local target_history=3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51
+  local target_history=1db25d8a515e85b4c71c3a3dbe4a1f61ebdfdf14e095a24b307daa039dfb5201
   local active_mutation_started=false
   local completed=false
 
@@ -7102,7 +7109,8 @@ NODE
   write_private_state "$state_dir/schema-release" "$target"
   printf 'Applying candidate migrations...\n'
   migration_container_id=$(WEATHER_ENV_FILE=$activation_env compose run --detach \
-    --name "$migration_container_name" --no-deps migration)
+    --name "$migration_container_name" --no-deps migration \
+    node deploy/scripts/migrate.mjs --atomic-normal-21-23)
   [[ "$migration_container_id" =~ ^[a-f0-9]{64}$ ]] ||
     die "normal activation migration container identity is invalid"
   write_normal_activation_journal "$current" "$target" \
@@ -7398,12 +7406,12 @@ case "$action" in
     require_normal_stage_capacity "$source_env" "$temporary" post_pull \
       "$post_capacity_input" "$post_capacity_receipt"
 
-    # require the exact full-copy schema-21 to schema-22 compatibility proof
+    # require the exact full-copy schema-21 to schema-23 compatibility proof
     require_deployment_secrets
     temporary_authorization=$(mktemp \
       "$releases_dir/.${release}.XXXXXX.migration-authorization.partial")
     verify_previous_image_compatibility \
-      "$temporary" "$previous_env" "$temporary_authorization" normal-21-22 \
+      "$temporary" "$previous_env" "$temporary_authorization" normal-21-23 \
       "$migration_peak"
 
     # publish authorization before the release commit marker

@@ -724,12 +724,66 @@ verify_forecast_product_catalog_acl() {
       END FROM present CROSS JOIN objects"
 }
 
+# verify the optional forecast product read index without scanning its rows
+verify_forecast_product_read_index() {
+  local env_file=$1
+  local database_name=$2
+  validate_database_name "$database_name"
+  WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+    psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
+      --tuples-only --no-align --command "WITH objects AS (
+        SELECT to_regclass('public.weather_records')::oid AS records_oid,
+          to_regclass('public.weather_records_forecast_product_valid_idx')::oid
+            AS index_oid
+      )
+      SELECT CASE WHEN index_oid IS NULL THEN
+        NOT EXISTS (SELECT 1 FROM schema_migrations
+          WHERE name = '0023_forecast_product_read_index.sql')
+      ELSE EXISTS (SELECT 1 FROM schema_migrations
+          WHERE name = '0023_forecast_product_read_index.sql'
+            AND checksum = 'e637542cb2e742fe8f22f60313a11f00adbc1d140a811ee718524849fcece12a')
+        AND (SELECT relation.relkind = 'i'
+            AND relation.relowner = 'weather_owner'::regrole
+            AND access_method.amname = 'btree'
+          FROM pg_class relation
+          JOIN pg_am access_method ON access_method.oid = relation.relam
+          WHERE relation.oid = index_oid)
+        AND (SELECT metadata.indrelid = records_oid
+            AND NOT metadata.indisunique
+            AND NOT metadata.indisprimary
+            AND metadata.indisvalid
+            AND metadata.indisready
+            AND metadata.indislive
+            AND metadata.indnkeyatts = 4
+            AND metadata.indnatts = 4
+            AND (SELECT array_agg(key.attnum ORDER BY key.ordinality)
+              FROM unnest(metadata.indkey) WITH ORDINALITY key(attnum, ordinality)) = ARRAY[
+              (SELECT attnum FROM pg_attribute
+                WHERE attrelid = records_oid AND attname = 'source_id'),
+              (SELECT attnum FROM pg_attribute
+                WHERE attrelid = records_oid AND attname = 'product_run_at'),
+              (SELECT attnum FROM pg_attribute
+                WHERE attrelid = records_oid AND attname = 'valid_at'),
+              (SELECT attnum FROM pg_attribute
+                WHERE attrelid = records_oid AND attname = 'id')
+            ]::smallint[]
+            AND (SELECT array_agg(option.value ORDER BY option.ordinality)
+              FROM unnest(metadata.indoption) WITH ORDINALITY option(value, ordinality)) =
+              ARRAY[0, 3, 0, 0]::smallint[]
+            AND metadata.indexprs IS NULL
+            AND pg_get_expr(metadata.indpred, metadata.indrelid) =
+              '((source_kind)::text = ''forecast''::text)'
+          FROM pg_index metadata WHERE metadata.indexrelid = index_oid)
+      END FROM objects"
+}
+
 # verify effective runtime grants and denials
 verify_runtime_database_acl() {
   local env_file=$1
   local database_name=$2
   local verified maintenance_verified recurring_verified revision_frontier_verified
   local rolling_registration_verified forecast_product_catalog_verified
+  local forecast_product_read_index_verified
   validate_database_name "$database_name"
   verified=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
     psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
@@ -1195,9 +1249,12 @@ verify_runtime_database_acl() {
     "$env_file" "$database_name")
   forecast_product_catalog_verified=$(verify_forecast_product_catalog_acl \
     "$env_file" "$database_name")
+  forecast_product_read_index_verified=$(verify_forecast_product_read_index \
+    "$env_file" "$database_name")
   [[ "$verified" == t && "$maintenance_verified" == t && "$recurring_verified" == t \
       && "$revision_frontier_verified" == t && "$rolling_registration_verified" == t \
-      && "$forecast_product_catalog_verified" == t ]] \
+      && "$forecast_product_catalog_verified" == t \
+      && "$forecast_product_read_index_verified" == t ]] \
     || die "runtime database ACL verification failed"
 }
 

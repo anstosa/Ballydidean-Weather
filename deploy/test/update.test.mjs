@@ -479,6 +479,21 @@ rollback_release`,
   }
 });
 
+// bind both normal migration callers to the same atomic tail
+test("normal forecast rehearsal and activation use the exact atomic 21-to-23 tail", () => {
+  const update = readFileSync(join(repoRoot, "deploy/scripts/update.sh"), "utf8");
+  const compatibility = update.split("verify_previous_image_compatibility() (")[1]
+    .split("\n)\n\n# reconcile retained PostgreSQL administrator authority")[0];
+  const activation = update.split("start_release() (")[1].split("\n)\n\n# roll back images")[0];
+  assert.match(compatibility, /normal-21-23[\s\S]*node deploy\/scripts\/migrate\.mjs --atomic-normal-21-23/u);
+  assert.match(activation, /compose run --detach[\s\S]*node deploy\/scripts\/migrate\.mjs --atomic-normal-21-23/u);
+  assert.doesNotMatch(update, /normal-21-22/u);
+  assert.doesNotMatch(update, /\{\{\.Config\.Labels\.com\./u);
+  assert.match(update, /\{\{index \.Config\.Labels "com\.docker\.compose\.project"\}\}/u);
+  assert.match(update, /\{\{index \.Config\.Labels "com\.docker\.compose\.service"\}\}/u);
+});
+
+// preserve owned-migrator quiescence before ledger recovery
 test("failed activation quiesces its owned migrator before exact-ledger recovery", () => {
   const update = readFileSync(join(repoRoot, "deploy/scripts/update.sh"), "utf8");
   const activation = update.split("start_release() (")[1].split("\n)\n\n# roll back images")[0];
@@ -497,7 +512,7 @@ test("normal activation recovery classifies only exact source or target ledgers"
   const directory = await mkdtemp(join(tmpdir(), "weather-normal-ledger-recovery-"));
   const transcript = join(directory, "transcript");
   const sourceLedger = "adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93";
-  const targetLedger = "3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51";
+  const targetLedger = "1db25d8a515e85b4c71c3a3dbe4a1f61ebdfdf14e095a24b307daa039dfb5201";
   const run = (ledger) => runBash(
     `source "$1"
 state_dir=$2
@@ -530,10 +545,16 @@ restore_normal_activation_after_quiescence /source.env 2026.10.29-1 2026.10.29-1
         "authorize:2026.10.29-1:2026.10.29-2\n" +
         "marker:2026.10.29-2\nrestore:2026.10.29-1:2026.10.29-2\n");
     }
-    await writeFile(transcript, "");
-    const rejected = run("f".repeat(64));
-    assert.notEqual(rejected.status, 0);
-    assert.equal(await readFile(transcript, "utf8"), "");
+    // reject the intermediate catalog ledger and every unknown ledger
+    for (const ledger of [
+      "3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51",
+      "f".repeat(64),
+    ]) {
+      await writeFile(transcript, "");
+      const rejected = run(ledger);
+      assert.notEqual(rejected.status, 0);
+      assert.equal(await readFile(transcript, "utf8"), "");
+    }
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
@@ -732,7 +753,7 @@ main recover`,
   }
 });
 
-test("normal schema-22 recovery precedes the retained v14 bridge classifier", async () => {
+test("normal schema-23 recovery precedes the retained v14 bridge classifier", async () => {
   const directory = await mkdtemp(join(tmpdir(), "weather-normal-v14-receipt-recovery-"));
   const state = join(directory, "state");
   const releases = join(directory, "releases");
@@ -966,7 +987,7 @@ test("inert v14 provisions fixed rain target sources before producer activation"
 });
 
 // pin the backward-compatible migration boundary
-test("compatibility clone removes private evidence before replaying migrations through 0022", async () => {
+test("compatibility clone removes private evidence before replaying migrations through 0023", async () => {
   const update = await readFile(updateScript, "utf8");
   const compatibility = update
     .split("verify_previous_image_compatibility() (")[1]
@@ -979,7 +1000,7 @@ test("compatibility clone removes private evidence before replaying migrations t
   assert.match(compatibility, /compatibility database absence check failed/u);
   assert.match(compatibility, /compatibility task name already exists/u);
   assert.match(compatibility,
-    /require_owned_compatibility_task_container[\s\S]*Config\.Labels\.com\.docker\.compose\.project[\s\S]*Config\.Image/u);
+    /require_owned_compatibility_task_container[\s\S]*index \.Config\.Labels "com\.docker\.compose\.project"[\s\S]*Config\.Image/u);
   assert.ok(compatibility.indexOf("ALTER TABLE ecmwf_temperature_canary_runs DROP COLUMN") <
     compatibility.indexOf("DROP FUNCTION IF EXISTS weather_adjustment_revision_receipt_valid_v1"));
   const maintenanceTablesDrop = compatibility.indexOf("DROP TABLE IF EXISTS adjustment_shadow_predictions_v2");
@@ -994,7 +1015,9 @@ test("compatibility clone removes private evidence before replaying migrations t
   const claimGuardDrop = compatibility.indexOf("DROP FUNCTION IF EXISTS weather_guard_rain_capture_claim()");
   const receiptGuardDrop = compatibility.indexOf("DROP FUNCTION IF EXISTS weather_guard_rain_capture_receipt()");
   const mutationGuardDrop = compatibility.indexOf("DROP FUNCTION IF EXISTS weather_reject_rain_capture_mutation()");
-  const ledgerReset = compatibility.indexOf("'0017_adjustment_evaluation_export.sql', '0018_adjustment_maintenance_v2.sql', '0019_adjustment_maintenance_recurring.sql', '0020_adjustment_revision_frontier.sql', '0021_adjustment_rolling_registration.sql', '0022_forecast_product_catalog.sql')");
+  const forecastReadIndexDrop = compatibility.indexOf("DROP INDEX IF EXISTS public.weather_records_forecast_product_valid_idx");
+  const catalogTriggerDrop = compatibility.indexOf("DROP TRIGGER IF EXISTS weather_records_forecast_products_insert");
+  const ledgerReset = compatibility.indexOf("'0017_adjustment_evaluation_export.sql', '0018_adjustment_maintenance_v2.sql', '0019_adjustment_maintenance_recurring.sql', '0020_adjustment_revision_frontier.sql', '0021_adjustment_rolling_registration.sql', '0022_forecast_product_catalog.sql', '0023_forecast_product_read_index.sql')");
   const replay = compatibility.indexOf(
     'run_owned_compatibility_container "$target_env" "${candidate}_migration" migration --no-deps',
   );
@@ -1013,6 +1036,7 @@ test("compatibility clone removes private evidence before replaying migrations t
   assert.equal(receiptDrop < claimDrop, true);
   assert.equal(claimDrop < claimGuardDrop && claimGuardDrop < receiptGuardDrop, true);
   assert.equal(receiptGuardDrop < mutationGuardDrop, true);
+  assert.equal(forecastReadIndexDrop >= 0 && forecastReadIndexDrop < catalogTriggerDrop, true);
   assert.equal(mutationGuardDrop < ledgerReset && ledgerReset < replay, true);
   assert.equal(replay < replayProof, true);
   assert.equal(replayProof < stationReplayProof, true);

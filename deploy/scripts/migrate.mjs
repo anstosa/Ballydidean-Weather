@@ -1,12 +1,16 @@
 import { pathToFileURL } from "node:url";
 
-// accept only the separately reviewed inactive maintenance bridge
+// accept only the two separately reviewed atomic migration bridges
 export function parseMigrationEntrypointArguments(argumentsList) {
   // preserve the ordinary one-shot without adding runtime authority
   if (argumentsList.length === 0) return {};
   // bind atomicity to one fixed source and target ledger
   if (argumentsList.length === 1 && argumentsList[0] === "--atomic-maintenance-v14") {
     return { atomicMaintenanceV14: true };
+  }
+  // bind the normal release to the exact schema 21 through 23 bridge
+  if (argumentsList.length === 1 && argumentsList[0] === "--atomic-normal-21-23") {
+    return { atomicNormal21To23: true };
   }
   throw new Error("migration entrypoint arguments are invalid");
 }

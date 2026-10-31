@@ -362,7 +362,7 @@ test("real PostgreSQL serves active versioned API reads and exact readiness", { 
       assert.equal(healthyResponse.status, 200);
       assert.deepEqual(healthy.data.migration, {
         status: "current",
-        version: "0022_forecast_product_catalog.sql",
+        version: "0023_forecast_product_read_index.sql",
       });
       assert.deepEqual(healthy.data.worker, { freshness: "fresh" });
 
@@ -408,7 +408,7 @@ test("real PostgreSQL serves active versioned API reads and exact readiness", { 
       assert.equal(authorizedResponse.status, 200);
       assert.deepEqual(authorized.data.migration, {
         status: "current",
-        version: "0022_forecast_product_catalog.sql",
+        version: "0023_forecast_product_read_index.sql",
       });
 
       const ledger = await owner.query(

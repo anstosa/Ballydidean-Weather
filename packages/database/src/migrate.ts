@@ -47,6 +47,8 @@ const RELEASE_PATTERN = /^\d{4}\.\d{2}\.\d{2}-[1-9]\d?$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MAINTENANCE_V14_HISTORY_SHA256 =
   "adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93";
+const NORMAL_FORECAST_HISTORY_SHA256 =
+  "1db25d8a515e85b4c71c3a3dbe4a1f61ebdfdf14e095a24b307daa039dfb5201";
 
 // apply checked migrations serially
 export async function runMigrations(
@@ -54,6 +56,7 @@ export async function runMigrations(
   migrationDirectory: string,
   options: Readonly<{
     atomicMaintenanceV14?: boolean;
+    atomicNormal21To23?: boolean;
     lockTimeoutMs?: number;
     statementTimeoutMs?: number;
   }> = {},
@@ -78,6 +81,14 @@ export async function runMigrations(
     const applied: string[] = [];
     const current: string[] = [];
 
+    // keep the two closed atomic lanes mutually exclusive
+    if (
+      options.atomicMaintenanceV14 === true &&
+      options.atomicNormal21To23 === true
+    ) {
+      throw new Error("atomic migration modes are mutually exclusive");
+    }
+
     // close the inactive bridge to its exact reviewed source and target
     if (options.atomicMaintenanceV14 === true) {
       // reject partial tails and any unreviewed migration bytes
@@ -94,6 +105,28 @@ export async function runMigrations(
       if (appliedCount === 18) {
         await withTransaction(client, async () => {
           // apply the frozen maintenance tail under one database transaction
+          for (const migration of migrations.slice(appliedCount)) {
+            await applyMigration(client, migration);
+            applied.push(migration.name);
+          }
+        });
+      }
+    // close the normal forecast upgrade to its exact source and target
+    } else if (options.atomicNormal21To23 === true) {
+      // reject schema 22, partial tails and unreviewed migration bytes
+      if (
+        migrations.length !== 23 ||
+        (appliedCount !== 21 && appliedCount !== 23) ||
+        migrationHistorySha256(migrations) !== NORMAL_FORECAST_HISTORY_SHA256
+      ) {
+        throw new Error("atomic normal forecast upgrade requires the exact 21-to-23 migration bridge");
+      }
+
+      current.push(...migrations.slice(0, appliedCount).map((migration) => migration.name));
+      // retain schema 21 if either additive migration fails
+      if (appliedCount === 21) {
+        await withTransaction(client, async () => {
+          // apply the catalog and read index under one database transaction
           for (const migration of migrations.slice(appliedCount)) {
             await applyMigration(client, migration);
             applied.push(migration.name);

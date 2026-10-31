@@ -19,6 +19,8 @@ const root = resolve(import.meta.dirname, "../..");
 const migrationRoot = join(root, "packages/database/migrations");
 const catalogChecksum =
   "8d04170868414cd17e78cde2a4d6dd8144dfd606cba4e171686523f045cb77d2";
+const readIndexChecksum =
+  "e637542cb2e742fe8f22f60313a11f00adbc1d140a811ee718524849fcece12a";
 
 // apply the checked-in runtime ACL to one disposable database
 async function applyAcl(server, database) {
@@ -75,8 +77,34 @@ test("forecast product catalog runtime ACL rejects drift and partial installs", 
       ALTER DATABASE weather_test OWNER TO weather_owner;
       ALTER SCHEMA public OWNER TO weather_owner;`);
     owner = createTestPool(server, "weather_test", "weather_owner", "owner-test");
-    assert.equal((await runMigrations(owner, migrationRoot)).applied.length, 22);
+    assert.equal((await runMigrations(owner, migrationRoot)).applied.length, 23);
     await applyAcl(server, "weather_test");
+    await verifyAcl(server, "weather_test");
+
+    // preserve exact schema 22 without requiring the additive read index
+    await admin.query(`DROP INDEX weather_records_forecast_product_valid_idx;
+      DELETE FROM schema_migrations
+      WHERE name = '0023_forecast_product_read_index.sql'`);
+    await verifyAcl(server, "weather_test");
+    assert.deepEqual(
+      (await runMigrations(owner, migrationRoot)).applied,
+      ["0023_forecast_product_read_index.sql"],
+    );
+    await verifyAcl(server, "weather_test");
+
+    // reject index ledger and object drift independently of catalog ACLs
+    await admin.query(`UPDATE schema_migrations SET checksum = repeat('f', 64)
+      WHERE name = '0023_forecast_product_read_index.sql'`);
+    await assert.rejects(verifyAcl(server, "weather_test"),
+      /runtime database ACL verification failed/u);
+    await admin.query(`UPDATE schema_migrations SET checksum = $1
+      WHERE name = '0023_forecast_product_read_index.sql'`, [readIndexChecksum]);
+    await admin.query(`ALTER INDEX weather_records_forecast_product_valid_idx
+      RENAME TO weather_records_forecast_product_valid_missing`);
+    await assert.rejects(verifyAcl(server, "weather_test"),
+      /runtime database ACL verification failed/u);
+    await admin.query(`ALTER INDEX weather_records_forecast_product_valid_missing
+      RENAME TO weather_records_forecast_product_valid_idx`);
     await verifyAcl(server, "weather_test");
 
     const graph = await admin.query(`SELECT

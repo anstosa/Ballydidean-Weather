@@ -110,6 +110,7 @@ test(
         "0020_adjustment_revision_frontier.sql",
         "0021_adjustment_rolling_registration.sql",
         "0022_forecast_product_catalog.sql",
+        "0023_forecast_product_read_index.sql",
       ]);
       await applyRuntimeAcl(server);
       await verifyRuntimeAcl(server);
@@ -190,7 +191,7 @@ test(
         status: null,
       });
       const replayed = await runMigrations(pool, migrationDirectory);
-      assert.deepEqual(replayed.applied.slice(-9), [
+      assert.deepEqual(replayed.applied.slice(-10), [
         "0014_rain_collection.sql",
         "0015_rain_station_access.sql",
         "0016_rain_adjustment.sql",
@@ -200,6 +201,7 @@ test(
         "0020_adjustment_revision_frontier.sql",
         "0021_adjustment_rolling_registration.sql",
         "0022_forecast_product_catalog.sql",
+        "0023_forecast_product_read_index.sql",
       ]);
       const replayedCatalog = await pool.query(`
         SELECT to_regclass('forecast_products')::text AS catalog,
