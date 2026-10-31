@@ -562,6 +562,96 @@ test("only exact versioned GET and HEAD routes are public", async () => {
   }
 });
 
+test("private observation input bypasses site discovery and exposes only compact fields", async () => {
+  let reads = 0;
+  const { handler } = createFixture({
+    async getForecastObservationInput(asOf) {
+      reads += 1;
+      assert.equal(asOf, "2026-08-22T05:00:00.000Z");
+      return {
+        projectionFrom: "2026-08-21T07:00:00.000Z",
+        queryFrom: "2026-08-21T04:00:00.000Z",
+        records: [{
+          apparentTemperatureC: 9,
+          cloudCoverPercent: 20,
+          id: "100",
+          lastReceivedAt: "2026-08-22T04:00:00.000Z",
+          pm25MicrogramsPerCubicMeter: null,
+          precipitationRateMmPerHour: 0,
+          pressureHpa: 1010,
+          providerKey: "ecowitt-local",
+          relativeHumidityPercent: 80,
+          solarRadiationWm2: 0,
+          sourceId: "1",
+          sourceKey: "ecowitt-88f15505d89f-local-live-v1",
+          sourceKind: "physical_sensor",
+          stationSlug: "ballydidean-ecowitt",
+          temperatureC: 10,
+          uvIndex: 0,
+          validAt: "2026-08-22T04:00:00.000Z",
+          windDirectionDegrees: 90,
+          windGustMps: 3,
+          windSpeedMps: 2,
+        }],
+        siteSlug: "ballydidean",
+        through: asOf,
+        timezone: "America/Los_Angeles",
+      };
+    },
+    async listSites() {
+      assert.fail("private input must bypass site discovery");
+    },
+  });
+  const response = await handler(new Request(
+    "http://weather.test/internal/v1/forecast-observation-input",
+  ));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.contractVersion, "forecast-observation-input/v1");
+  assert.equal(body.records.length, 1);
+  assert.deepEqual(Object.keys(body.records[0]).sort(), [
+    "id", "metrics", "provenance", "receivedAt", "validAt",
+  ]);
+  assert.equal(JSON.stringify(body).includes("metadata"), false);
+  assert.equal(reads, 1);
+
+  assert.equal((await handler(new Request(
+    "http://weather.test/internal/v1/forecast-observation-input?from=x",
+  ))).status, 400);
+  assert.equal((await handler(new Request(
+    "http://weather.test/internal/v1/forecast-observation-input",
+    { method: "POST" },
+  ))).status, 405);
+});
+
+test("private observation input refuses a body above four MiB", async () => {
+  const { handler } = createFixture({
+    async getForecastObservationInput(asOf) {
+      return {
+        projectionFrom: "2026-08-21T07:00:00.000Z",
+        queryFrom: "2026-08-21T04:00:00.000Z",
+        records: [{
+          apparentTemperatureC: null, cloudCoverPercent: null, id: "1",
+          lastReceivedAt: asOf, pm25MicrogramsPerCubicMeter: null,
+          precipitationRateMmPerHour: null, pressureHpa: null,
+          providerKey: "x".repeat(4 * 1024 * 1024), relativeHumidityPercent: null,
+          solarRadiationWm2: null, sourceId: "1", sourceKey: "source",
+          sourceKind: "physical_sensor", stationSlug: "station", temperatureC: null,
+          uvIndex: null, validAt: "2026-08-22T04:00:00.000Z",
+          windDirectionDegrees: null, windGustMps: null, windSpeedMps: null,
+        }],
+        siteSlug: "ballydidean", through: asOf,
+        timezone: "America/Los_Angeles",
+      };
+    },
+  });
+  const response = await handler(new Request(
+    "http://weather.test/internal/v1/forecast-observation-input",
+  ));
+  assert.equal(response.status, 500);
+  assert.equal((await response.json()).error.code, "internal_error");
+});
+
 test("mutation methods fail on every documented route without store writes", async () => {
   const { handler } = createFixture();
   const paths = [

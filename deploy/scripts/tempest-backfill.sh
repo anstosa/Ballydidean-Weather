@@ -11,6 +11,7 @@ fi
 
 (($# == 0)) || die "Tempest backfill takes no arguments"
 require_command docker
+acquire_weather_lifecycle_lock
 
 current=$(read_release_state "$deploy_dir/state/current-release")
 current_env="$deploy_dir/releases/$current.env"

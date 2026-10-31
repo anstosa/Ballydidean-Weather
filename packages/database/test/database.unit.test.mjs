@@ -519,13 +519,13 @@ test("forecast pressure context requires one complete recent v4 vintage", async 
     [],
   );
   assert.equal(captured.length, 1);
-  assert.match(captured[0].text, /candidate\.product_run_at >= \$4/u);
-  assert.match(captured[0].text, /candidate\.product_run_at <= \$5/u);
+  assert.match(captured[0].text, /product\.product_run_at >= \$4/u);
+  assert.match(captured[0].text, /product\.product_run_at <= \$5/u);
   assert.match(captured[0].text, /HAVING COUNT\(\*\) = 6/u);
-  assert.match(captured[0].text, /MIN\(candidate\.valid_at\) = \$2/u);
+  assert.match(captured[0].text, /MIN\(raw\.valid_at\) = \$2/u);
   assert.match(
     captured[0].text,
-    /MAX\(candidate\.valid_at\) = \$3::timestamptz - interval '1 hour'/u,
+    /MAX\(raw\.valid_at\) = \$3::timestamptz - interval '1 hour'/u,
   );
   assert.match(captured[0].text, /s\.source_key = 'open-meteo-forecast-v4'/u);
   assert.match(captured[0].text, /weather_source_is_current\(s\.id\)/u);

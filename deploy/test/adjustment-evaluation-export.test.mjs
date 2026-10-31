@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { PassThrough, Readable } from "node:stream";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
@@ -12,6 +12,13 @@ import { gzipSync } from "node:zlib";
 
 import {
   buildAdjustmentEvaluationPackage,
+  BLUEBERRY_NEXT_CAPTURE_BYTES,
+  BLUEBERRY_PROTECTED_FREE_BYTES,
+  collectNormalActivationCapacity,
+  collectNormalDatabaseFilesystemCapacity,
+  collectNormalStageCapacity,
+  evaluateNormalActivationCapacity,
+  evaluateNormalStageCapacity,
   frameAdjustmentConfirmationAuthorizationV2,
   frameAdjustmentConfirmationAvailabilityV2,
   loadVerifiedAdjustmentEvaluationPackage,
@@ -24,12 +31,15 @@ import {
   validateAdjustmentV13CompatibilityDatabaseManifest,
   validateAdjustmentV14DatabaseManifest,
   validateAdjustmentV14RollingDatabaseManifest,
+  validateNormalCapacityReceipt,
+  NORMAL_RELEASE_CAPACITY_SCHEMA_VERSION,
   projectAdjustmentMaintenanceDatabaseLedgerV3,
 } from "../scripts/adjustment-evaluation-package.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const executeFile = promisify(execFile);
 const hashA = "a".repeat(64);
+const normalCapacityNow = new Date("2026-10-29T00:01:00.000Z");
 const queryContractSha256 =
   "c860039c72818a9b813ed9f9d93f5d8e115f4144e99d698734e9159ca3457bd4";
 const rowSchemaSha256 =
@@ -69,10 +79,174 @@ const completeMigrationLedger = migrationLedger(
   completeMigrationNames,
   completeMigrationChecksums,
 );
+const rollingMigrationLedger = migrationLedger(
+  completeMigrationNames.slice(0, 21),
+  completeMigrationChecksums.slice(0, 21),
+);
 const legacyMigrationLedger = migrationLedger(
   legacyMigrationNames,
   legacyMigrationChecksums,
 );
+
+// create one exact normal stage capacity fixture
+function normalStageCapacityInput(overrides = {}) {
+  return {
+    activeDatabaseBytes: 1_000_000,
+    captureReserveBytes: BLUEBERRY_NEXT_CAPTURE_BYTES,
+    capturedAt: "2026-10-29T00:00:00.000Z",
+    fixtureInodes: 4_096,
+    freeBytes: 4_000_000_000,
+    freeInodes: 100_000,
+    imagePullPeakBytes: 159_862_784,
+    imageReferences: [
+      { reference: `ghcr.io/anstosa/weather-server@sha256:${"1".repeat(64)}`,
+        role: "source", runtime: "server" },
+      { reference: `ghcr.io/anstosa/weather-web@sha256:${"2".repeat(64)}`,
+        role: "source", runtime: "web" },
+      { reference: `ghcr.io/anstosa/weather-server@sha256:${"3".repeat(64)}`,
+        role: "target", runtime: "server" },
+      { reference: `ghcr.io/anstosa/weather-web@sha256:${"4".repeat(64)}`,
+        role: "target", runtime: "web" },
+    ],
+    inodeFloor: 32_768,
+    largestSourceIndexBytes: 500_000,
+    maxWalBytes: 10_000_000,
+    newImageInodes: 4_000,
+    operationId: "normal-release-test-1",
+    persistentImageGrowthBytes: 90_000_000,
+    phase: "pre_pull",
+    postgresComposeProject: "weather",
+    postgresContainerId: "c".repeat(64),
+    postgresContainerImageId: `sha256:${"6".repeat(64)}`,
+    postgresContainerImageReference: `postgres@sha256:${"8".repeat(64)}`,
+    postgresDataDirectory: "/var/lib/postgresql/data",
+    postgresDataFilesystemDevice: 2_048,
+    protectedFloorBytes: BLUEBERRY_PROTECTED_FREE_BYTES,
+    retirementCreditBytes: 0,
+    scratchBytes: 268_435_456,
+    sourceDatabaseFileCount: 10_000,
+    sourceDatabaseOid: 16_384,
+    sourceEnvSha256: "5".repeat(64),
+    sourceLedgerSha256:
+      "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
+    sourceRelease: "2026.10.09-3",
+    sourceSchemaVersion: 21,
+    systemIdentifier: "7558888888888888888",
+    targetEnvSha256: "7".repeat(64),
+    targetLedgerSha256:
+      "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
+    targetRelease: "2026.10.29-1",
+    targetSchemaVersion: 22,
+    weatherPostgresDir: "/var/lib/weather/postgres",
+    weatherPostgresDirFilesystemDevice: 2_048,
+    ...overrides,
+  };
+}
+
+// create one exact normal activation capacity fixture
+function normalActivationCapacityInput(overrides = {}) {
+  const liveDatabaseBytes = 1_000_000;
+  return {
+    actualBackupBytes: 0,
+    backupHeadroomBytes: 1_073_741_824,
+    boundedBackupCeilingBytes: liveDatabaseBytes + 1_073_741_824,
+    captureReserveBytes: BLUEBERRY_NEXT_CAPTURE_BYTES,
+    capturedAt: "2026-10-29T00:00:00.000Z",
+    fixtureInodes: 4_096,
+    freeBytes: 4_000_000_000,
+    freeInodes: 100_000,
+    inodeFloor: 32_768,
+    liveDatabaseBytes,
+    measuredMigrationPeakBytes: 50_000_000,
+    measuredMigrationPeakInodes: 2_000,
+    operationId: "normal-release-test-1",
+    phase: "pre_backup",
+    postgresComposeProject: "weather",
+    postgresContainerId: "c".repeat(64),
+    postgresContainerImageId: `sha256:${"6".repeat(64)}`,
+    postgresContainerImageReference: `postgres@sha256:${"8".repeat(64)}`,
+    postgresDataDirectory: "/var/lib/postgresql/data",
+    postgresDataFilesystemDevice: 2_048,
+    protectedFloorBytes: BLUEBERRY_PROTECTED_FREE_BYTES,
+    retirementCreditBytes: 0,
+    sourceDatabaseOid: 16_384,
+    sourceEnvSha256: "5".repeat(64),
+    sourceLedgerSha256:
+      "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
+    sourceRelease: "2026.10.09-3",
+    sourceSchemaVersion: 21,
+    stageReceiptSha256: "9".repeat(64),
+    systemIdentifier: "7558888888888888888",
+    targetEnvSha256: "7".repeat(64),
+    targetLedgerSha256:
+      "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
+    targetRelease: "2026.10.29-1",
+    targetSchemaVersion: 22,
+    weatherPostgresDir: "/var/lib/weather/postgres",
+    weatherPostgresDirFilesystemDevice: 2_048,
+    ...overrides,
+  };
+}
+
+// remove every evaluator-owned stage measurement from the CLI fixture
+function normalStageCapacityCollectionInput(overrides = {}) {
+  const {
+    freeBytes: _freeBytes,
+    freeInodes: _freeInodes,
+    imagePullPeakBytes: _imagePullPeakBytes,
+    newImageInodes: _newImageInodes,
+    persistentImageGrowthBytes: _persistentImageGrowthBytes,
+    postgresContainerImageId: _postgresContainerImageId,
+    postgresContainerImageReference: _postgresContainerImageReference,
+    postgresDataDirectory: _postgresDataDirectory,
+    postgresDataFilesystemDevice: _postgresDataFilesystemDevice,
+    weatherPostgresDirFilesystemDevice: _weatherPostgresDirFilesystemDevice,
+    ...input
+  } = normalStageCapacityInput(overrides);
+  return input;
+}
+
+// remove every evaluator-owned activation measurement from the CLI fixture
+function normalActivationCapacityCollectionInput(overrides = {}) {
+  const {
+    freeBytes: _freeBytes,
+    freeInodes: _freeInodes,
+    postgresContainerImageId: _postgresContainerImageId,
+    postgresContainerImageReference: _postgresContainerImageReference,
+    postgresDataDirectory: _postgresDataDirectory,
+    postgresDataFilesystemDevice: _postgresDataFilesystemDevice,
+    weatherPostgresDirFilesystemDevice: _weatherPostgresDirFilesystemDevice,
+    ...input
+  } = normalActivationCapacityInput(overrides);
+  return input;
+}
+
+// provide one exact injected host filesystem observation
+function normalCapacityFilesystemFacts(overrides = {}) {
+  return {
+    freeBytes: 4_000_000_000,
+    freeInodes: 100_000,
+    postgresContainerImageId: `sha256:${"6".repeat(64)}`,
+    postgresContainerImageReference: `postgres@sha256:${"8".repeat(64)}`,
+    postgresDataDirectory: "/var/lib/postgresql/data",
+    postgresDataFilesystemDevice: 2_048,
+    weatherPostgresDirFilesystemDevice: 2_048,
+    ...overrides,
+  };
+}
+
+// encode one recursively canonical JSON record
+function canonicalRecord(value) {
+  // sort every object while preserving array order
+  if (Array.isArray(value)) return value.map(canonicalRecord);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map(
+      // canonicalize every named field
+      (key) => [key, canonicalRecord(value[key])],
+    ));
+  }
+  return value;
+}
 
 // create one fixed transaction manifest
 function transactionManifest(
@@ -107,9 +281,10 @@ function transactionManifest(
   };
 }
 
-// keep frozen frontier and rolling deployment ledger authority disjoint
-test("v14 ledger gates accept only their exact reviewed complete schema", () => {
-  const rolling = transactionManifest().payload;
+// keep frozen capture and exact live ledger authority disjoint
+test("v14 ledger gates accept only exact reviewed live schemas", () => {
+  const catalog = transactionManifest().payload;
+  const rolling = transactionManifest(rollingMigrationLedger).payload;
   const compatibility = transactionManifest(migrationLedger(
     completeMigrationNames.slice(0, 18), completeMigrationChecksums.slice(0, 18),
   )).payload;
@@ -118,13 +293,259 @@ test("v14 ledger gates accept only their exact reviewed complete schema", () => 
   )).payload;
   assert.equal(validateAdjustmentV13CompatibilityDatabaseManifest(compatibility), compatibility);
   assert.equal(validateAdjustmentV14RollingDatabaseManifest(rolling), rolling);
+  assert.equal(validateAdjustmentV14RollingDatabaseManifest(catalog), catalog);
   assert.equal(validateAdjustmentV14DatabaseManifest(frontier), frontier);
   assert.throws(() => validateAdjustmentV14DatabaseManifest(rolling));
+  assert.throws(() => validateAdjustmentV14DatabaseManifest(catalog));
   assert.throws(() => validateAdjustmentV14RollingDatabaseManifest(frontier));
   assert.throws(() => validateAdjustmentV13CompatibilityDatabaseManifest(frontier));
-  const changed = structuredClone(rolling);
+  const changed = structuredClone(catalog);
   changed.migration_checksums[20] = hashA;
   assert.throws(() => validateAdjustmentV14RollingDatabaseManifest(changed));
+  assert.equal(catalog.migration_history_sha256,
+    "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e");
+});
+
+// bind exact stage capacity formulas and every admission boundary
+test("normal stage capacity binds actual facts without deletion credit", () => {
+  const ready = evaluateNormalStageCapacity(normalStageCapacityInput(), normalCapacityNow);
+  assert.equal(ready.schemaVersion, NORMAL_RELEASE_CAPACITY_SCHEMA_VERSION);
+  assert.equal(ready.operation, "stage");
+  assert.equal(ready.state, "capacity_ready");
+  assert.match(ready.receiptSha256, /^[a-f0-9]{64}$/u);
+  assert.equal(ready.requiredBytes, BLUEBERRY_PROTECTED_FREE_BYTES +
+    BLUEBERRY_NEXT_CAPTURE_BYTES + 90_000_000 + 1_000_000 + 500_000 +
+    20_000_000 + 268_435_456);
+  assert.equal(ready.requiredInodes, 32_768 + 4_000 + 10_000 + 4_096);
+  assert.equal(ready.evaluatedAt, normalCapacityNow.toISOString());
+  assert.deepEqual(validateNormalCapacityReceipt(ready, normalCapacityNow), ready);
+  assert.deepEqual(validateNormalCapacityReceipt(
+    ready,
+    new Date("2026-10-29T00:05:00.000Z"),
+  ), ready);
+  assert.throws(() => validateNormalCapacityReceipt({
+    ...ready,
+    receiptSha256: "f".repeat(64),
+  }, normalCapacityNow), /differs/u);
+  assert.throws(() => validateNormalCapacityReceipt(
+    ready,
+    new Date("2026-10-29T00:10:01.000Z"),
+  ), /stale/u);
+
+  const exactBytes = evaluateNormalStageCapacity(normalStageCapacityInput({
+    freeBytes: ready.requiredBytes,
+    freeInodes: ready.requiredInodes,
+  }), normalCapacityNow);
+  assert.equal(exactBytes.state, "capacity_ready");
+  const postPullFreeBytes = ready.requiredBytes - 90_000_000;
+  const postPullFreeInodes = ready.requiredInodes - 4_000;
+  const postPull = evaluateNormalStageCapacity(normalStageCapacityInput({
+    freeBytes: postPullFreeBytes,
+    freeInodes: postPullFreeInodes,
+    phase: "post_pull",
+  }), normalCapacityNow);
+  assert.equal(postPull.requiredBytes, postPullFreeBytes);
+  assert.equal(postPull.requiredInodes, postPullFreeInodes);
+  assert.equal(postPull.state, "capacity_ready");
+  assert.deepEqual(evaluateNormalStageCapacity(normalStageCapacityInput({
+    freeBytes: postPullFreeBytes - 1,
+    freeInodes: postPullFreeInodes - 1,
+    phase: "post_pull",
+  }), normalCapacityNow).reasons, ["insufficient_free_bytes", "insufficient_free_inodes"]);
+  assert.deepEqual(evaluateNormalStageCapacity(normalStageCapacityInput({
+    freeBytes: ready.requiredBytes - 1,
+    freeInodes: ready.requiredInodes - 1,
+  }), normalCapacityNow).reasons, ["insufficient_free_bytes", "insufficient_free_inodes"]);
+  assert.deepEqual(evaluateNormalStageCapacity(normalStageCapacityInput({
+    postgresDataFilesystemDevice: 4_096,
+  }), normalCapacityNow).reasons, ["postgres_filesystem_mismatch"]);
+  assert.throws(() => evaluateNormalStageCapacity(normalStageCapacityInput({
+    retirementCreditBytes: 1,
+  }), normalCapacityNow), /constants/u);
+  assert.throws(() => evaluateNormalStageCapacity(normalStageCapacityInput({
+    capturedAt: "2026-10-28T23:00:00.000Z",
+  }), normalCapacityNow), /stale/u);
+  assert.throws(() => evaluateNormalStageCapacity(normalStageCapacityInput({
+    capturedAt: "2026-10-29T00:01:00.001Z",
+  }), normalCapacityNow), /stale/u);
+  assert.throws(() => evaluateNormalStageCapacity(normalStageCapacityInput({
+    systemIdentifier: "99999999999999999999",
+  }), normalCapacityNow), /identity/u);
+  assert.throws(() => evaluateNormalStageCapacity(normalStageCapacityInput({
+    sourceLedgerSha256: "a".repeat(64),
+  }), normalCapacityNow), /identity/u);
+  assert.throws(() => evaluateNormalStageCapacity(normalStageCapacityInput({
+    targetLedgerSha256: "b".repeat(64),
+  }), normalCapacityNow), /identity/u);
+});
+
+// preserve the full backup ceiling through post-backup activation
+test("normal activation capacity retains backup ceiling and measured migration peak", () => {
+  const ready = evaluateNormalActivationCapacity(normalActivationCapacityInput(), normalCapacityNow);
+  assert.equal(ready.schemaVersion, NORMAL_RELEASE_CAPACITY_SCHEMA_VERSION);
+  assert.equal(ready.operation, "activation");
+  assert.equal(ready.state, "capacity_ready");
+  assert.equal(ready.requiredBytes, BLUEBERRY_PROTECTED_FREE_BYTES +
+    BLUEBERRY_NEXT_CAPTURE_BYTES + 1_074_741_824 + 50_000_000);
+  assert.equal(ready.requiredInodes, 32_768 + 2_000 + 4_096);
+  assert.equal(evaluateNormalActivationCapacity(normalActivationCapacityInput({
+    freeBytes: ready.requiredBytes,
+    freeInodes: ready.requiredInodes,
+  }), normalCapacityNow).state, "capacity_ready");
+  const actualBackupBytes = 500_000_000;
+  const postBackupFreeBytes = ready.requiredBytes - actualBackupBytes;
+  const postBackup = evaluateNormalActivationCapacity(normalActivationCapacityInput({
+    actualBackupBytes,
+    freeBytes: postBackupFreeBytes,
+    freeInodes: ready.requiredInodes,
+    phase: "post_backup",
+  }), normalCapacityNow);
+  assert.equal(postBackup.requiredBytes, postBackupFreeBytes);
+  assert.equal(postBackup.requiredInodes, ready.requiredInodes);
+  assert.equal(postBackup.state, "capacity_ready");
+  assert.deepEqual(evaluateNormalActivationCapacity(normalActivationCapacityInput({
+    actualBackupBytes,
+    freeBytes: postBackupFreeBytes - 1,
+    freeInodes: ready.requiredInodes - 1,
+    phase: "post_backup",
+  }), normalCapacityNow).reasons, ["insufficient_free_bytes", "insufficient_free_inodes"]);
+  assert.deepEqual(evaluateNormalActivationCapacity(normalActivationCapacityInput({
+    actualBackupBytes: 1_074_741_825,
+    phase: "post_backup",
+  }), normalCapacityNow).reasons, ["bounded_backup_ceiling_exceeded"]);
+  assert.throws(() => evaluateNormalActivationCapacity(normalActivationCapacityInput({
+    boundedBackupCeilingBytes: 1_000_000,
+  }), normalCapacityNow), /backup envelope/u);
+  assert.throws(() => evaluateNormalActivationCapacity(normalActivationCapacityInput({
+    actualBackupBytes: 1,
+  }), normalCapacityNow), /backup envelope/u);
+});
+
+// map SQL data_directory through one unshadowed Compose bind to its host filesystem
+test("normal capacity filesystem collection proves the running PostgreSQL mount", () => {
+  const inspected = {
+    Config: {
+      Image: `postgres@sha256:${"8".repeat(64)}`,
+      Labels: {
+        "com.docker.compose.project": "weather",
+        "com.docker.compose.service": "postgres",
+      },
+    },
+    Id: "c".repeat(64),
+    Image: `sha256:${"6".repeat(64)}`,
+    Mounts: [{
+      Destination: "/var/lib/postgresql/data",
+      RW: true,
+      Source: "/var/lib/weather/postgres",
+      Type: "bind",
+    }],
+    State: { Running: true },
+  };
+  const input = normalStageCapacityCollectionInput();
+  const options = {
+    execute: (_command, argumentsList) => argumentsList[0] === "inspect"
+      ? JSON.stringify(inspected)
+      : "/var/lib/postgresql/data/pgdata\n",
+    realpath: (path) => path,
+    stat: (path) => ({ dev: path.endsWith("/pgdata") ? 2_048n : 2_048n,
+      isDirectory: () => true }),
+    statFilesystem: () => ({ bavail: 1_000_000n, bsize: 4_096n, ffree: 100_000n }),
+  };
+  assert.deepEqual(collectNormalDatabaseFilesystemCapacity(input, options), {
+    freeBytes: 4_096_000_000,
+    freeInodes: 100_000,
+    postgresContainerImageId: inspected.Image,
+    postgresContainerImageReference: inspected.Config.Image,
+    postgresDataDirectory: "/var/lib/postgresql/data/pgdata",
+    postgresDataFilesystemDevice: 2_048,
+    weatherPostgresDirFilesystemDevice: 2_048,
+  });
+  inspected.Mounts.push({
+    Destination: "/var/lib/postgresql/data/pgdata",
+    RW: true,
+    Source: "/var/lib/weather/other",
+    Type: "bind",
+  });
+  assert.throws(() => collectNormalDatabaseFilesystemCapacity(input, options), /bind mount/u);
+  inspected.Mounts.pop();
+  inspected.Config.Labels["com.docker.compose.project"] = "other";
+  assert.throws(() => collectNormalDatabaseFilesystemCapacity(input, options),
+    /container identity/u);
+});
+
+// collect only evaluator-owned host and image facts at the CLI trust boundary
+test("normal capacity collectors reject caller-shaped physical measurements", async () => {
+  const collectFilesystem = async () => normalCapacityFilesystemFacts();
+  const collectImages = async () => ({
+    imagePullPeakBytes: 159_862_784,
+    newImageInodes: 4_000,
+    persistentImageGrowthBytes: 90_000_000,
+  });
+  const ready = await collectNormalStageCapacity(normalStageCapacityCollectionInput(), {
+    collectFilesystem,
+    collectImages,
+    trustedNow: normalCapacityNow,
+  });
+  assert.equal(ready.state, "capacity_ready");
+  assert.equal(ready.evaluatedAt, normalCapacityNow.toISOString());
+  const blocked = await collectNormalStageCapacity(normalStageCapacityCollectionInput(), {
+    collectFilesystem: async () => normalCapacityFilesystemFacts({ freeBytes: 0 }),
+    collectImages,
+    trustedNow: normalCapacityNow,
+  });
+  assert.deepEqual(blocked.reasons, ["insufficient_free_bytes"]);
+  const activation = await collectNormalActivationCapacity(
+    normalActivationCapacityCollectionInput(),
+    { collectFilesystem, trustedNow: normalCapacityNow },
+  );
+  assert.equal(activation.state, "capacity_ready");
+  let collected = false;
+  await assert.rejects(collectNormalStageCapacity({
+    ...normalStageCapacityCollectionInput(),
+    freeBytes: 9_999_999_999,
+  }, {
+    collectFilesystem: async () => {
+      collected = true;
+      return normalCapacityFilesystemFacts();
+    },
+    collectImages,
+    trustedNow: normalCapacityNow,
+  }), /unexpected keys/u);
+  assert.equal(collected, false);
+});
+
+// expose only bounded canonical collection requests through the shell boundary
+test("normal capacity CLIs reject noncanonical and caller-measured stdin", async () => {
+  const script = join(repoRoot, "deploy/scripts/adjustment-evaluation-package.mjs");
+  const callerMeasured = {
+    ...normalStageCapacityCollectionInput(),
+    freeBytes: 4_000_000_000,
+  };
+  const input = `${JSON.stringify(canonicalRecord(callerMeasured))}\n`;
+  const rejected = spawnSync(process.execPath, [script, "normal-stage-capacity"], {
+    encoding: "utf8",
+    input,
+  });
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.stderr, /unexpected keys/u);
+  const malformed = spawnSync(process.execPath, [script, "normal-stage-capacity"], {
+    encoding: "utf8",
+    input: JSON.stringify(canonicalRecord(normalStageCapacityCollectionInput())),
+  });
+  assert.equal(malformed.status, 1);
+  assert.match(malformed.stderr, /not canonical/u);
+
+  const root = await mkdtemp(join(tmpdir(), "weather-normal-capacity-"));
+  const inputPath = join(root, "input.json");
+
+  try {
+    await writeFile(inputPath, input, { mode: 0o600 });
+    await assert.rejects(executeFile("bash", ["-c",
+      'source "$1"; normal_release_capacity_receipt normal-stage-capacity "$2"',
+      "bash", join(repoRoot, "deploy/scripts/common.sh"), inputPath]), /unexpected keys/u);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });
 
 // bind the typed ledger to its real read-only transaction without leaking function values
@@ -461,8 +882,8 @@ test("package still accepts complete 0018 and rejects partial 0019", async () =>
   }
 });
 
-// accept the exact additive maintenance ledger without widening the export query
-test("package accepts the complete 0021 ledger for the unchanged v1 query", async () => {
+// accept the exact additive catalog ledger without widening the export query
+test("package accepts the complete 0022 ledger for the unchanged v1 query", async () => {
   const root = await mkdtemp(join(tmpdir(), "weather-adjustment-export-"));
   const packageRoot = join(root, "package");
 
@@ -472,6 +893,7 @@ test("package accepts the complete 0021 ledger for the unchanged v1 query", asyn
       "0019_adjustment_maintenance_recurring.sql",
       "0020_adjustment_revision_frontier.sql",
       "0021_adjustment_rolling_registration.sql",
+      "0022_forecast_product_catalog.sql",
     ]);
     const snapshotPath = await createEdgeSnapshot(root);
     const rainRow = rainReceiptRow();

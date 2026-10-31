@@ -1,0 +1,254 @@
+{
+  "/opt/weather/current/deploy/compose.yaml": {
+    "gid": 0,
+    "mode": 420,
+    "sha256": "0fa4b2b990345a110ab324e13bf2e3528c19d530bf9a4d2b8576d3b42eebeade",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/postgres/010-create-runtime-roles.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "c598784b280e13b9f12982e93df751b1b9a4290bb3c7a5c1994808cb75e16223",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/postgres/postgres-admin-entrypoint.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "20f90bfd9f86f9c35a8c0fa540760c71a96e0a9d1d2a71049ca0fbcf15a3031f",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/postgres/runtime-acl-v1.sql": {
+    "gid": 0,
+    "mode": 436,
+    "sha256": "b1e1f92d24a84317797bbe1ead5b877d3335e1ccadc54cb2680a55d033a24cc5",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/postgres/runtime-acl-v2.sql": {
+    "gid": 0,
+    "mode": 420,
+    "sha256": "fd277fe573c737da78bbb3b06432530597fbc0472f6e8212a56e045b0409c474",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/adjustment-evaluation-export.sh": {
+    "gid": 0,
+    "mode": 493,
+    "sha256": "09a456e821cf39d03a257f4795a05fd9787e10893869c455df7ca78bd2d7919a",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/adjustment-evaluation-package.mjs": {
+    "gid": 0,
+    "mode": 420,
+    "sha256": "8cbe75eb781cf0886513e24d1c3fcfa582202897314ac4d1aea4d30071502226",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/adjustment-evidence-store.mjs": {
+    "gid": 0,
+    "mode": 420,
+    "sha256": "1570c6154682fc1f2a7619e9a229a2477da32b5316d607cdedbf70f64591b332",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/backup-stream.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "3446f5d8a3840bf4caf57ee7c09bdfccaa546d69abb6f31888d6a51192273038",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/backup.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "cb862c9ff824c1558f8475e42f51ae658ba94ddc8b8db5ed0fec47abd236733a",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/common.sh": {
+    "gid": 0,
+    "mode": 493,
+    "sha256": "00b98a09ee8e44672acb50517e0cab95766956c73d57d587001575c10fb1cd2a",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/compatibility-provider.mjs": {
+    "gid": 0,
+    "mode": 436,
+    "sha256": "8b7b4b1fa44ad2969066487ced0269b9d594cba4b3c29d17d6bffb474e16a6e3",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/forecast-adjustment-scorecard-contract.mjs": {
+    "gid": 0,
+    "mode": 420,
+    "sha256": "50c70b59285d2dd10e5e63a5c04b7331cfadd1da7e3db872d8c5561839e54975",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/forecast-training-export.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "48db6635659da7dba0062594f9ae1146176c40d22a714a58b7675b3f1570b5f8",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/forecast-training-package.mjs": {
+    "gid": 0,
+    "mode": 493,
+    "sha256": "f1bd65685da06f0d6969ad9b96722c5edb6f030e291a375bfb3e36192db76787",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/home-network.mjs": {
+    "gid": 0,
+    "mode": 420,
+    "sha256": "3dc0cf6b07f4a844f95fffd58352523636d7b93c4b51f42ad47e1161c7dd0266",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/install-adjustment-scorecard.sh": {
+    "gid": 0,
+    "mode": 493,
+    "sha256": "6cc70ddf1ad123c0ba4863405f0fe7b83b124ad5ff69fd126a295f354b6a4226",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/migrate.mjs": {
+    "gid": 0,
+    "mode": 436,
+    "sha256": "4b56fc50489d90c64271d129fb0bda63968eacfd54201e8ae7985c0df5d6227d",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/preflight-capacity.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "e8e70038bf77a85ca5eafc8047800ebbd931edd81d5f58a0228908ea4858987e",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/public-stations-backfill.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "f57d8568f87040821c32274d1fa84b3058aba353ee03447b95dbcdfaf6191e57",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/publish-adjustment-scorecard.sh": {
+    "gid": 0,
+    "mode": 493,
+    "sha256": "9fda1ec3e3a4a6d9522e6a00c478af406b2767b20b9e971cdb9d7a4cf0bfae8b",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/pull-adjustment-evaluation-export.sh": {
+    "gid": 0,
+    "mode": 493,
+    "sha256": "72875b48e703da00b9683c9f6a86506e0bcfe9f492f4c4a5275ee69590f0dd1d",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/pull-backup.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "566e114a050d54743e679f2ba5b1c39a7466a24dc8040fed910dff30da72355e",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/pull-forecast-training-export.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "1cd1f32732bb30837f86e3fdab10d31ebb06e3bace2de1e219aed8ee4b320053",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/remote-ops.sh": {
+    "gid": 0,
+    "mode": 493,
+    "sha256": "7a0bc4c09cb1044f5e3a3123319a819138a7d029158e07163673f80c18331496",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/resolve-image.mjs": {
+    "gid": 0,
+    "mode": 436,
+    "sha256": "f4f845fd094ac39c5ab1533efff0a4d5acd5e820a2916e625fbd7532dd070d22",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/restore.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "106957ec33fe86dfcef039129a2890df8655cf8521ee80cd4cf1282fefa9e9a9",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/ssh-dispatch.sh": {
+    "gid": 0,
+    "mode": 493,
+    "sha256": "0b8bf4c0e65a9a1f1f272c519ba4c7c098f5367ccaf30f47304fe966c9f29dd5",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/ssh-run.sh": {
+    "gid": 0,
+    "mode": 493,
+    "sha256": "f568eec0fb0c16dfe9096dd6a54780c3aa07ea39af0318b08fcea68c82b16fd9",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/status.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "a18d836d4646634d31bfd0fa3f7d5e73264f299391c958763151c6f0c0ed2b86",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/tempest-backfill.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "8218aae7bb2f7af21348e4d8e3a6d5796a3d52279ab70607c61f362a5ef2090f",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/tide-backfill.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "3709e03ada7f1864b49f50e880a81f1b3ae23bd903d6c9b0109d9b15d553e5fa",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/update.sh": {
+    "gid": 0,
+    "mode": 493,
+    "sha256": "36680cbe7d3c0af638a276817db071727dc47e353a3ad9c4f6362f3941b2353d",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/verify-static.sh": {
+    "gid": 0,
+    "mode": 509,
+    "sha256": "aadfcdfa9fbdf76761616675e8c52995840b5bf6489185e4ba8a8eb9589e4dad",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/weather-admin-store.mjs": {
+    "gid": 0,
+    "mode": 420,
+    "sha256": "27ac1c81f2d178d1d36e5b350f294ce901873e35876ad5e128422141d7eab0cd",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/web-server.mjs": {
+    "gid": 0,
+    "mode": 420,
+    "sha256": "b6e19b27c63a7a9cc1808e0a0ca97423d357af21904bf090152b7ce95f774fca",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/xweather-tile-cache.mjs": {
+    "gid": 0,
+    "mode": 436,
+    "sha256": "2a0006cf85e7b6416c4628bcef23ddd55553402f63382358b283e2f8c37ffa82",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/scripts/xweather-usage-budget.mjs": {
+    "gid": 0,
+    "mode": 436,
+    "sha256": "2a2f3e0cc8f59369a5235454a4237eed91c60cdbe374dcd1c8c7821731e2e3d0",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/sudoers/weather-ops": {
+    "gid": 0,
+    "mode": 436,
+    "sha256": "4f8b4d58b8645f40e5da779857669114a2bec11cb720aedd7be340c3c6c1ac00",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/systemd/weather-backup-local.service": {
+    "gid": 0,
+    "mode": 436,
+    "sha256": "85d77f2e61be5dab2d387e867a8dfb4ff70a90e659c5e9e91d633858d0c3d4aa",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/systemd/weather-backup-local.timer": {
+    "gid": 0,
+    "mode": 436,
+    "sha256": "9fb0866ceb3b81f90e0c579628a8028bc807d3f7c1a7ac9ff3e37c505c2d02dd",
+    "uid": 0
+  },
+  "/opt/weather/current/deploy/systemd/weather-compose.service": {
+    "gid": 0,
+    "mode": 436,
+    "sha256": "12e33019380f77215a44340e4d6feb4a0dc13f76c968ab36c4501d039ec24de8",
+    "uid": 0
+  }
+}

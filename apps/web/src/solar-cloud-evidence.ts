@@ -1,4 +1,4 @@
-import type { WeatherRecord, WeatherSite } from "./index.js";
+import type { ForecastObservationInputRecord, WeatherSite } from "./index.js";
 import { createSolarCloudBias, type SolarCloudBias } from "./solar-cloud.js";
 
 export interface SolarCloudEvidenceSample {
@@ -96,13 +96,13 @@ export function parseSolarCloudEvidenceResponse(value: unknown, site: Pick<Weath
 }
 
 // extract only original scalar values and closed source identities from normalized history
-function recordSample(record: WeatherRecord, kind: keyof typeof SOURCES): SolarCloudEvidenceSample | null {
+function recordSample(record: ForecastObservationInputRecord, kind: keyof typeof SOURCES): SolarCloudEvidenceSample | null {
   return sample({ ...record.provenance, recordId: record.id, validAt: record.validAt, receivedAt: record.receivedAt,
     value: kind === "ws90" ? record.metrics.solarRadiationWm2 : record.metrics.cloudCoverPercent }, kind);
 }
 
 // find the newest viable daylight pair with a bounded search over complete history
-export function buildSolarCloudEvidence(records: readonly WeatherRecord[], site: Pick<WeatherSite, "latitude" | "longitude">, through: string): SolarCloudEvidence | null {
+export function buildSolarCloudEvidence(records: readonly ForecastObservationInputRecord[], site: Pick<WeatherSite, "latitude" | "longitude">, through: string): SolarCloudEvidence | null {
   const nowMs = timestamp(through);
   // refuse incomplete or unbounded input rather than silently choosing an older correction
   if (!Number.isFinite(nowMs) || records.length > 20_000) {

@@ -2,23 +2,21 @@
 set -euo pipefail
 
 readonly maintenance_previous_release=2026.10.09-1
-readonly maintenance_previous_control_plane_sha256=603eb8f488ba78be3d7ecf76b0d587346d1c36432255d390d86d2b768c8fecba
+readonly maintenance_recorded_control_plane_sha256=603eb8f488ba78be3d7ecf76b0d587346d1c36432255d390d86d2b768c8fecba
+readonly maintenance_installed_predecessor_control_plane_sha256=08b25ce2c80baadbc3f94c8e57a694387853c3a9bab06364c7e7906e5e04de40
 readonly maintenance_backup_max_bytes=$((4 * 1024 * 1024 * 1024))
 readonly maintenance_backup_overhead_bytes=$((1024 * 1024))
 readonly -a maintenance_changed_paths=(
-  deploy/compose.yaml
-  deploy/scripts/adjustment-evaluation-export.sh
+  deploy/postgres/runtime-acl-v2.sql
   deploy/scripts/adjustment-evaluation-package.mjs
   deploy/scripts/adjustment-evidence-store.mjs
-  deploy/scripts/migrate.mjs
-  deploy/scripts/remote-ops.sh
-  deploy/scripts/ssh-dispatch.sh
-  deploy/scripts/ssh-run.sh
-  deploy/scripts/status.sh
-  deploy/scripts/web-server.mjs
-  deploy/postgres/runtime-acl-v2.sql
+  deploy/scripts/backup.sh
   deploy/scripts/common.sh
+  deploy/scripts/public-stations-backfill.sh
+  deploy/scripts/tempest-backfill.sh
+  deploy/scripts/tide-backfill.sh
   deploy/scripts/update.sh
+  deploy/scripts/web-server.mjs
 )
 
 # print one fatal installer error
@@ -30,42 +28,42 @@ fail() {
 # emit the frozen forty-two predecessor identities
 predecessor_identity_manifest() {
   cat <<'EOF'
-fe2de752a807672543c789cb900ce0d23fbcc60663462ca29ddb1070acb2fd2e 0 0 0644 deploy/compose.yaml
+0fa4b2b990345a110ab324e13bf2e3528c19d530bf9a4d2b8576d3b42eebeade 0 0 0644 deploy/compose.yaml
 c598784b280e13b9f12982e93df751b1b9a4290bb3c7a5c1994808cb75e16223 0 0 0775 deploy/postgres/010-create-runtime-roles.sh
 20f90bfd9f86f9c35a8c0fa540760c71a96e0a9d1d2a71049ca0fbcf15a3031f 0 0 0775 deploy/postgres/postgres-admin-entrypoint.sh
 b1e1f92d24a84317797bbe1ead5b877d3335e1ccadc54cb2680a55d033a24cc5 0 0 0664 deploy/postgres/runtime-acl-v1.sql
-00102aa766a944af8b44c2d5f70b2e9b763f0ee48cd85e418e995d4b44f12783 0 0 0644 deploy/postgres/runtime-acl-v2.sql
-bacf48a5a1a92b7ed09deda54570bb0d8b9caaadde8cbec94e65f1fc62d7dc0c 0 0 0755 deploy/scripts/adjustment-evaluation-export.sh
-201dc5cc929ade2ace5d564e6dbc32d5019e24ab6bd8e1d3f022234283589847 0 0 0644 deploy/scripts/adjustment-evaluation-package.mjs
-132f1ab1da2418329e9c2276d5fe6167fe912cf9be784e1082759b56a492ad74 0 0 0644 deploy/scripts/adjustment-evidence-store.mjs
+fd277fe573c737da78bbb3b06432530597fbc0472f6e8212a56e045b0409c474 0 0 0644 deploy/postgres/runtime-acl-v2.sql
+09a456e821cf39d03a257f4795a05fd9787e10893869c455df7ca78bd2d7919a 0 0 0755 deploy/scripts/adjustment-evaluation-export.sh
+8cbe75eb781cf0886513e24d1c3fcfa582202897314ac4d1aea4d30071502226 0 0 0644 deploy/scripts/adjustment-evaluation-package.mjs
+1570c6154682fc1f2a7619e9a229a2477da32b5316d607cdedbf70f64591b332 0 0 0644 deploy/scripts/adjustment-evidence-store.mjs
 3446f5d8a3840bf4caf57ee7c09bdfccaa546d69abb6f31888d6a51192273038 0 0 0775 deploy/scripts/backup-stream.sh
 cb862c9ff824c1558f8475e42f51ae658ba94ddc8b8db5ed0fec47abd236733a 0 0 0775 deploy/scripts/backup.sh
-da133ff965bee4ae6fc3df5c43235db41ef1d28d672dc87e7122d1f4f05efcc4 0 0 0755 deploy/scripts/common.sh
+00b98a09ee8e44672acb50517e0cab95766956c73d57d587001575c10fb1cd2a 0 0 0755 deploy/scripts/common.sh
 8b7b4b1fa44ad2969066487ced0269b9d594cba4b3c29d17d6bffb474e16a6e3 0 0 0664 deploy/scripts/compatibility-provider.mjs
 50c70b59285d2dd10e5e63a5c04b7331cfadd1da7e3db872d8c5561839e54975 0 0 0644 deploy/scripts/forecast-adjustment-scorecard-contract.mjs
 48db6635659da7dba0062594f9ae1146176c40d22a714a58b7675b3f1570b5f8 0 0 0775 deploy/scripts/forecast-training-export.sh
 f1bd65685da06f0d6969ad9b96722c5edb6f030e291a375bfb3e36192db76787 0 0 0755 deploy/scripts/forecast-training-package.mjs
 3dc0cf6b07f4a844f95fffd58352523636d7b93c4b51f42ad47e1161c7dd0266 0 0 0644 deploy/scripts/home-network.mjs
 6cc70ddf1ad123c0ba4863405f0fe7b83b124ad5ff69fd126a295f354b6a4226 0 0 0755 deploy/scripts/install-adjustment-scorecard.sh
-309024c28ff33f2fc2fe3cc21bb7ca294b3de3243e5158eb72f414023ceb5fa2 0 0 0664 deploy/scripts/migrate.mjs
+4b56fc50489d90c64271d129fb0bda63968eacfd54201e8ae7985c0df5d6227d 0 0 0664 deploy/scripts/migrate.mjs
 e8e70038bf77a85ca5eafc8047800ebbd931edd81d5f58a0228908ea4858987e 0 0 0775 deploy/scripts/preflight-capacity.sh
 f57d8568f87040821c32274d1fa84b3058aba353ee03447b95dbcdfaf6191e57 0 0 0775 deploy/scripts/public-stations-backfill.sh
 9fda1ec3e3a4a6d9522e6a00c478af406b2767b20b9e971cdb9d7a4cf0bfae8b 0 0 0755 deploy/scripts/publish-adjustment-scorecard.sh
 72875b48e703da00b9683c9f6a86506e0bcfe9f492f4c4a5275ee69590f0dd1d 0 0 0755 deploy/scripts/pull-adjustment-evaluation-export.sh
 566e114a050d54743e679f2ba5b1c39a7466a24dc8040fed910dff30da72355e 0 0 0775 deploy/scripts/pull-backup.sh
 1cd1f32732bb30837f86e3fdab10d31ebb06e3bace2de1e219aed8ee4b320053 0 0 0775 deploy/scripts/pull-forecast-training-export.sh
-41bd0cdc9bb0f73cfdc11805528af49ea22e5c9675303167fbe62a534b74a60c 0 0 0755 deploy/scripts/remote-ops.sh
+7a0bc4c09cb1044f5e3a3123319a819138a7d029158e07163673f80c18331496 0 0 0755 deploy/scripts/remote-ops.sh
 f4f845fd094ac39c5ab1533efff0a4d5acd5e820a2916e625fbd7532dd070d22 0 0 0664 deploy/scripts/resolve-image.mjs
 106957ec33fe86dfcef039129a2890df8655cf8521ee80cd4cf1282fefa9e9a9 0 0 0775 deploy/scripts/restore.sh
-8f19f12b133fc96bbc289fc18c2fff3c76ad36fad32a2c7f7230368637353f2b 0 0 0755 deploy/scripts/ssh-dispatch.sh
-d080ad3955d096352223d53b412ce8a0cc7b9912fb661e3f4bdaa9327979e79b 0 0 0755 deploy/scripts/ssh-run.sh
-175213abae060ab40ea30a21998484d81e80e253d535f701e6ccb864f465c495 0 0 0775 deploy/scripts/status.sh
+0b8bf4c0e65a9a1f1f272c519ba4c7c098f5367ccaf30f47304fe966c9f29dd5 0 0 0755 deploy/scripts/ssh-dispatch.sh
+f568eec0fb0c16dfe9096dd6a54780c3aa07ea39af0318b08fcea68c82b16fd9 0 0 0755 deploy/scripts/ssh-run.sh
+a18d836d4646634d31bfd0fa3f7d5e73264f299391c958763151c6f0c0ed2b86 0 0 0775 deploy/scripts/status.sh
 8218aae7bb2f7af21348e4d8e3a6d5796a3d52279ab70607c61f362a5ef2090f 0 0 0775 deploy/scripts/tempest-backfill.sh
 3709e03ada7f1864b49f50e880a81f1b3ae23bd903d6c9b0109d9b15d553e5fa 0 0 0775 deploy/scripts/tide-backfill.sh
-d2ef2759979863898d68c1fb7733ceb4d11839fc07eda4da73d3c70693759206 0 0 0755 deploy/scripts/update.sh
+36680cbe7d3c0af638a276817db071727dc47e353a3ad9c4f6362f3941b2353d 0 0 0755 deploy/scripts/update.sh
 aadfcdfa9fbdf76761616675e8c52995840b5bf6489185e4ba8a8eb9589e4dad 0 0 0775 deploy/scripts/verify-static.sh
 27ac1c81f2d178d1d36e5b350f294ce901873e35876ad5e128422141d7eab0cd 0 0 0644 deploy/scripts/weather-admin-store.mjs
-827cba99f50d2e2865be54024302e436f287b772808ad3c4c9da9912a55aa11b 0 0 0644 deploy/scripts/web-server.mjs
+b6e19b27c63a7a9cc1808e0a0ca97423d357af21904bf090152b7ce95f774fca 0 0 0644 deploy/scripts/web-server.mjs
 2a0006cf85e7b6416c4628bcef23ddd55553402f63382358b283e2f8c37ffa82 0 0 0664 deploy/scripts/xweather-tile-cache.mjs
 2a2f3e0cc8f59369a5235454a4237eed91c60cdbe374dcd1c8c7821731e2e3d0 0 0 0664 deploy/scripts/xweather-usage-budget.mjs
 4f8b4d58b8645f40e5da779857669114a2bec11cb720aedd7be340c3c6c1ac00 0 0 0664 deploy/sudoers/weather-ops
@@ -219,7 +217,7 @@ verify_predecessor_identities() {
       "$actual_gid" == "$expected_gid" && "$actual_mode" == "$mode" ]] ||
       fail "predecessor identity differs: $relative"
   done < <(predecessor_identity_manifest)
-  [[ "$(control_digest "$root")" == "$maintenance_previous_control_plane_sha256" ]] ||
+  [[ "$(control_digest "$root")" == "$maintenance_installed_predecessor_control_plane_sha256" ]] ||
     fail "predecessor control digest differs"
 }
 
@@ -238,7 +236,7 @@ require_maintenance_predecessor_release() {
     fail "maintenance predecessor release identity differs"
   grep -Fxq 'WEATHER_CONTROL_PLANE_VERSION=13' "$release_env" ||
     fail "maintenance predecessor control version differs"
-  grep -Fxq "WEATHER_CONTROL_PLANE_SHA256=$maintenance_previous_control_plane_sha256" \
+  grep -Fxq "WEATHER_CONTROL_PLANE_SHA256=$maintenance_recorded_control_plane_sha256" \
     "$release_env" || fail "maintenance predecessor control digest differs"
 }
 
@@ -267,7 +265,7 @@ require_quiet_weather() {
 is_maintenance_changed_path() {
   local requested=$1
   local relative
-  # match only the fixed thirteen-path list
+  # match only the fixed ten-path list
   for relative in "${maintenance_changed_paths[@]}"; do
     [[ "$requested" != "$relative" ]] || return 0
   done
@@ -385,7 +383,8 @@ verify_candidate_identity_manifest_file() {
       changed_count=$((changed_count + 1))
     fi
   done <"$manifest"
-  [[ "$line_count" == 42 && "${#expected[@]}" == 0 && "$changed_count" == 13 ]] ||
+  [[ "$line_count" == 42 && "${#expected[@]}" == 0 &&
+    "$changed_count" == "${#maintenance_changed_paths[@]}" ]] ||
     fail "sealed candidate identity manifest is incomplete"
   # require all reviewed changes
   for relative in "${maintenance_changed_paths[@]}"; do
@@ -410,7 +409,7 @@ actual_identity_manifest() {
   done < <(predecessor_identity_manifest)
 }
 
-# require exactly the thirteen reviewed candidate changes
+# require exactly the ten reviewed candidate changes
 verify_candidate_identities() {
   local candidate=$1
   local candidate_digest=$2
@@ -430,19 +429,19 @@ verify_candidate_identities() {
       changed_count=$((changed_count + 1))
     fi
   done < <(predecessor_identity_manifest)
-  [[ "$changed_count" == 13 ]] ||
-    fail "candidate must change exactly thirteen reviewed paths; found $changed_count"
+  [[ "$changed_count" == "${#maintenance_changed_paths[@]}" ]] ||
+    fail "candidate must change exactly ${#maintenance_changed_paths[@]} reviewed paths; found $changed_count"
   # require every reviewed path to change
   for relative in "${maintenance_changed_paths[@]}"; do
     [[ -n "${changed["$relative"]:-}" ]] ||
       fail "candidate leaves a required path unchanged: $relative"
   done
-  grep -Fxq 'control_plane_version=14' "$candidate/deploy/scripts/update.sh" ||
-    fail "candidate control version is not fourteen"
+  grep -Fxq 'control_plane_version=15' "$candidate/deploy/scripts/update.sh" ||
+    fail "candidate control version is not fifteen"
   grep -Fxq "recurring_previous_release=$maintenance_previous_release" \
     "$candidate/deploy/scripts/update.sh" ||
     fail "candidate does not pin the maintenance predecessor release"
-  grep -Fxq "recurring_previous_control_plane_sha256=$maintenance_previous_control_plane_sha256" \
+  grep -Fxq "recurring_previous_control_plane_sha256=$maintenance_recorded_control_plane_sha256" \
     "$candidate/deploy/scripts/update.sh" ||
     fail "candidate does not pin the maintenance predecessor digest"
   [[ "$(control_digest "$candidate")" == "$candidate_digest" ]] ||
@@ -630,15 +629,18 @@ backup_member_manifest() {
 expected_recovery_seal() {
   local backup=$1
   local candidate_digest
-  candidate_digest=$(cat "$backup/v14-control.sha256")
+  candidate_digest=$(cat "$backup/v15-control.sha256")
   printf '%s\n' \
-    'contractVersion=adjustment-maintenance-control-recovery/v1' \
+    'contractVersion=adjustment-maintenance-control-recovery/v2' \
     "transactionName=$(basename "$backup")" \
     "predecessorRelease=$maintenance_previous_release" \
-    "predecessorControlSha256=$maintenance_previous_control_plane_sha256" \
+    'recordedSourceControlVersion=13' \
+    "recordedSourceControlSha256=$maintenance_recorded_control_plane_sha256" \
+    'installedPredecessorControlVersion=14' \
+    "predecessorControlSha256=$maintenance_installed_predecessor_control_plane_sha256" \
     "predecessorIdentityManifestSha256=$(predecessor_identity_manifest | sha256sum | awk '{print $1}')" \
     "candidateControlSha256=$candidate_digest" \
-    "candidateIdentityManifestSha256=$(sha256sum "$backup/v14-identities.txt" | awk '{print $1}')" \
+    "candidateIdentityManifestSha256=$(sha256sum "$backup/v15-identities.txt" | awk '{print $1}')" \
     "state0Identity=$(cat "$backup/state/0.identity")" \
     "state1Identity=$(cat "$backup/state/1.identity")" \
     "memberManifestSha256=$(sha256sum "$backup/members.manifest" | awk '{print $1}')"
@@ -654,9 +656,9 @@ seal_recovery_backup() {
   local expected_gid=$6
   local current_bytes manifest_bytes
   install -o "$expected_uid" -g "$expected_gid" -m 0600 \
-    "$candidate_manifest" "$backup/v14-identities.txt"
-  printf '%s\n' "$candidate_digest" >"$backup/v14-control.sha256"
-  chmod 600 "$backup/v14-control.sha256"
+    "$candidate_manifest" "$backup/v15-identities.txt"
+  printf '%s\n' "$candidate_digest" >"$backup/v15-control.sha256"
+  chmod 600 "$backup/v15-control.sha256"
   backup_member_manifest "$backup" >"$scratch/members.manifest"
   current_bytes=$(du -sx --apparent-size --block-size=1 "$backup" | awk '{print $1}')
   manifest_bytes=$(stat -c '%s' "$scratch/members.manifest")
@@ -712,7 +714,7 @@ verify_sealed_recovery_backup() {
   local candidate_digest index=0 state_identity
   verify_backup_root "$backup_root" "$expected_uid" "$expected_gid"
   [[ "$(dirname "$backup")" == "$backup_root" &&
-    "$(basename "$backup")" =~ ^v14-${maintenance_previous_control_plane_sha256:0:12}\.[a-zA-Z0-9]{8}$ ]] ||
+    "$(basename "$backup")" =~ ^v15-${maintenance_installed_predecessor_control_plane_sha256:0:12}\.[a-zA-Z0-9]{8}$ ]] ||
     fail "recovery backup is not a fixed-root transaction"
   require_owned_directory "$backup" "$expected_uid" "$expected_gid" \
     "recovery transaction"
@@ -722,7 +724,7 @@ verify_sealed_recovery_backup() {
     fail "recovery transaction exceeds four GiB"
   # require all closed envelope files
   for member in members.manifest sealed-transaction.manifest \
-    v14-identities.txt v14-control.sha256 state/0.identity state/1.identity; do
+    v15-identities.txt v15-control.sha256 state/0.identity state/1.identity; do
     [[ -f "$backup/$member" && ! -L "$backup/$member" ]] ||
       fail "sealed recovery member is missing or linked: $member"
   done
@@ -733,11 +735,11 @@ verify_sealed_recovery_backup() {
       "$(stat -c '%a' "$backup/$member")" == 600 ]] ||
       fail "sealed recovery envelope owner or mode differs: $member"
   done
-  candidate_digest=$(cat "$backup/v14-control.sha256")
+  candidate_digest=$(cat "$backup/v15-control.sha256")
   [[ "$candidate_digest" =~ ^[a-f0-9]{64}$ ]] ||
     fail "sealed candidate digest is invalid"
   verify_predecessor_identities "$backup/control" "$expected_uid" "$expected_gid"
-  verify_candidate_identity_manifest_file "$backup/v14-identities.txt" \
+  verify_candidate_identity_manifest_file "$backup/v15-identities.txt" \
     "$candidate_digest" "$expected_uid" "$expected_gid"
   # require both captured state identities and contents
   while ((index < 2)); do
@@ -806,7 +808,7 @@ verify_recoverable_control_identities() {
 }
 
 # restore control identities without overwriting live runtime state
-restore_v14_transaction() (
+restore_v15_transaction() (
   local destination=$1
   local runtime_root=$2
   local backup=$3
@@ -827,7 +829,7 @@ restore_v14_transaction() (
   verify_sealed_recovery_backup "$backup_root" "$backup" \
     "$expected_uid" "$expected_gid" || exit 1
   verify_recoverable_control_identities "$destination" \
-    "$backup/v14-identities.txt" "$expected_uid" "$expected_gid" || exit 1
+    "$backup/v15-identities.txt" "$expected_uid" "$expected_gid" || exit 1
   # cache fixed predecessor modes
   while read -r sha _uid _gid mode relative; do
     backup_mode["$relative"]=$mode
@@ -873,8 +875,8 @@ require_no_dashboard_override() {
   done
 }
 
-# recover one interrupted v14 transaction
-recover_v14_control_plane() {
+# recover one interrupted v15 transaction
+recover_v15_control_plane() {
   local destination=$1
   local backup_root=$2
   local runtime_root=$3
@@ -907,15 +909,15 @@ recover_v14_control_plane() {
   verify_sealed_recovery_backup "$backup_root" "$backup" \
     "$expected_uid" "$expected_gid"
   verify_recoverable_control_identities "$destination" \
-    "$backup/v14-identities.txt" "$expected_uid" "$expected_gid"
-  restore_v14_transaction "$destination" "$runtime_root" "$backup" \
+    "$backup/v15-identities.txt" "$expected_uid" "$expected_gid"
+  restore_v15_transaction "$destination" "$runtime_root" "$backup" \
     "$expected_uid" "$expected_gid" "$data_uid" "$data_gid" "$backup_root"
   printf 'Recovered maintenance predecessor control plane: %s\n' \
-    "$maintenance_previous_control_plane_sha256"
+    "$maintenance_installed_predecessor_control_plane_sha256"
 }
 
-# install one exact v14 candidate transaction
-install_v14_control_plane() (
+# install one exact v15 candidate transaction
+install_v15_control_plane() (
   local destination=$1
   local backup_root=$2
   local runtime_root=$3
@@ -945,7 +947,7 @@ install_v14_control_plane() (
       set +e
       (
         set -e
-        restore_v14_transaction "$destination" "$runtime_root" "$backup" \
+        restore_v15_transaction "$destination" "$runtime_root" "$backup" \
           "$expected_uid" "$expected_gid" "$data_uid" "$data_gid" "$backup_root"
       )
       recovery_status=$?
@@ -976,7 +978,7 @@ install_v14_control_plane() (
   [[ "$archive_sha256" =~ ^[a-f0-9]{64}$ &&
     "$candidate_digest" =~ ^[a-f0-9]{64}$ ]] ||
     fail "candidate hashes must be complete SHA-256 values"
-  [[ "$failure_step" =~ ^([0-9]|1[0-7])$ ]] ||
+  [[ "$failure_step" =~ ^(0|[1-9]|1[0-2])$ ]] ||
     fail "invalid internal failure probe"
   [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha256" ]] ||
     fail "candidate archive hash differs from the committed artifact"
@@ -1037,7 +1039,7 @@ install_v14_control_plane() (
   verify_predecessor_identities "$destination" "$expected_uid" "$expected_gid"
   # remeasure the sealed-copy reservation after the transaction lock is held
   require_maintenance_capacity "$runtime_root" "$recovery_bytes" "$recovery_inodes"
-  backup=$(mktemp -d "$backup_root/v14-${maintenance_previous_control_plane_sha256:0:12}.XXXXXXXX")
+  backup=$(mktemp -d "$backup_root/v15-${maintenance_installed_predecessor_control_plane_sha256:0:12}.XXXXXXXX")
   chmod 700 "$backup"
   create_recovery_backup "$destination" "$runtime_root" "$backup" "$failure_step"
   seal_recovery_backup "$backup" "$stage/candidate-identities" \
@@ -1083,9 +1085,9 @@ install_v14_control_plane() (
   current_manifest="$stage/installed-identities"
   actual_identity_manifest "$destination" >"$current_manifest"
   cmp -s "$stage/candidate-identities" "$current_manifest" ||
-    fail "installed v14 identity manifest differs from candidate"
+    fail "installed v15 identity manifest differs from candidate"
   [[ "$(control_digest "$destination")" == "$candidate_digest" ]] ||
-    fail "installed v14 control digest differs from candidate"
+    fail "installed v15 control digest differs from candidate"
   index=0
   while IFS= read -r state_root; do
     expected_state=$(cat "$backup/state/$index.identity")
@@ -1094,12 +1096,12 @@ install_v14_control_plane() (
     index=$((index + 1))
   done < <(runtime_state_roots "$runtime_root")
   transaction_started=0
-  printf 'Installed inert maintenance v14 control plane: %s\nRetained recovery backup: %s\n' \
+  printf 'Installed inert maintenance v15 control plane: %s\nRetained recovery backup: %s\n' \
     "$candidate_digest" "$backup"
 )
 
-# replace only the two actual forced-command mirrors after verifying installed v14
-install_v14_ssh_mirrors() (
+# replace only the two actual forced-command mirrors after verifying installed v15
+install_v15_ssh_mirrors() (
   local destination=$1
   local backup_root=$2
   local dispatcher=$3
@@ -1109,12 +1111,13 @@ install_v14_ssh_mirrors() (
   local gid=$7
   local old_dispatcher=8f19f12b133fc96bbc289fc18c2fff3c76ad36fad32a2c7f7230368637353f2b
   local old_operations=41bd0cdc9bb0f73cfdc11805528af49ea22e5c9675303167fbe62a534b74a60c
-  local new_dispatcher new_operations backup= path sha mode
+  local new_dispatcher new_operations backup path sha mode
   local mutated=0 completed=0
+  backup=
   [[ "$candidate_digest" =~ ^[a-f0-9]{64}$ &&
     "$(control_digest "$destination")" == "$candidate_digest" &&
-    "$(awk -F= '$1 == "control_plane_version" {print $2}' "$destination/deploy/scripts/update.sh")" == 14 ]] ||
-    fail "SSH mirrors require the exact installed v14 control identity"
+    "$(awk -F= '$1 == "control_plane_version" {print $2}' "$destination/deploy/scripts/update.sh")" == 15 ]] ||
+    fail "SSH mirrors require the exact installed v15 control identity"
   verify_backup_root "$backup_root" "$uid" "$gid"
   prepare_transaction_lock "$backup_root" "$uid" "$gid"
   exec {mirror_lock_fd}>"$backup_root/.adjustment-maintenance-control-install.lock"
@@ -1138,13 +1141,13 @@ install_v14_ssh_mirrors() (
   # a fully completed exact pair is an idempotent retry
   if [[ "$(sha256sum "$dispatcher" | awk '{print $1}')" == "$new_dispatcher" &&
     "$(sha256sum "$operations" | awk '{print $1}')" == "$new_operations" ]]; then
-    printf 'SSH mirrors already match exact installed v14 controls\n'
+    printf 'SSH mirrors already match exact installed v15 controls\n'
     return
   fi
   [[ "$(sha256sum "$dispatcher" | awk '{print $1}')" == "$old_dispatcher" &&
     "$(sha256sum "$operations" | awk '{print $1}')" == "$old_operations" ]] ||
     fail "SSH mirror predecessor differs"
-  backup=$(mktemp -d "$backup_root/ssh-mirrors-v14.XXXXXXXX")
+  backup=$(mktemp -d "$backup_root/ssh-mirrors-v15.XXXXXXXX")
   chmod 700 "$backup"
   install -m 0600 "$dispatcher" "$backup/dispatcher"
   install -m 0600 "$operations" "$backup/operations"
@@ -1155,6 +1158,7 @@ install_v14_ssh_mirrors() (
   sync -f "$backup/identities"
   sync -f "$backup"
   # restore only verified original bytes when a pair replacement fails
+  # shellcheck disable=SC2329
   restore_failed_mirrors() {
     local status=$?
     trap - EXIT
@@ -1184,7 +1188,7 @@ install_v14_ssh_mirrors() (
     fail "installed SSH mirror pair differs"
   completed=1
   trap - EXIT
-  printf 'SSH mirrors match exact installed v14 controls\nRetained SSH mirror backup: %s\n' "$backup"
+  printf 'SSH mirrors match exact installed v15 controls\nRetained SSH mirror backup: %s\n' "$backup"
 )
 
 # accept only one fixed production installation or recovery
@@ -1198,20 +1202,20 @@ main() {
       mode=$(stat -c '%a' "$ancestor")
       (( (8#$mode & 0022) == 0 )) || fail "SSH mirror ancestor is externally writable"
     done
-    install_v14_ssh_mirrors /opt/weather/current /var/lib/weather/control-plane-backups \
+    install_v15_ssh_mirrors /opt/weather/current /var/lib/weather/control-plane-backups \
       /usr/local/bin/weather-ssh-dispatch /usr/local/sbin/weather-remote-ops "$2" 0 0
     return
   fi
   # recover one explicitly named retained transaction
   if (($# == 2)) && [[ "$1" == --recover ]]; then
-    recover_v14_control_plane /opt/weather/current \
+    recover_v15_control_plane /opt/weather/current \
       /var/lib/weather/control-plane-backups /var/lib/weather "$2" \
       0 0 10002 10002
     return
   fi
   (($# == 3)) ||
     fail "usage: install-adjustment-recurring-control-plane.sh ARCHIVE ARCHIVE_SHA256 CANDIDATE_SHA256 | --recover BACKUP | --install-ssh-mirrors CANDIDATE_SHA256"
-  install_v14_control_plane /opt/weather/current \
+  install_v15_control_plane /opt/weather/current \
     /var/lib/weather/control-plane-backups /var/lib/weather \
     "$1" "$2" "$3" 0 0 0 10002 10002
 }

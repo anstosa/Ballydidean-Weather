@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import test from "node:test";
+import { fromSiteWallClock, toSiteWallClock } from "../../apps/web/dist/index.js";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const site = { slug: "ballydidean", name: "Ballydidean", latitude: 47.950429954185445, longitude: -122.42797012608193, stations: [], timezone: "America/Los_Angeles" };
@@ -53,13 +54,24 @@ async function startEdge(context, archive) {
 }
 
 // both compact read products share one completed scan but retain distinct public envelopes
-test("solar cloud endpoint shares paging and preserves the recorded envelope and query guards", async (context) => {
+test("solar cloud endpoint shares compact input and preserves envelope guards", async (context) => {
   const requests = [];
   const origin = await startEdge(context, (request, response) => {
-    // serve only the existing fixed core archive contract
+    // serve only the fixed compact core input contract
     requests.push(new URL(request.url, "http://api"));
+    const generatedAt = new Date().toISOString();
+    const day = toSiteWallClock(generatedAt, site.timezone).slice(0, 10);
+    const projectionFrom = fromSiteWallClock(`${day}T00:00`, site.timezone);
+    const queryFrom = new Date(Math.min(
+      Date.parse(projectionFrom) - 3 * 3_600_000,
+      Date.parse(generatedAt) - 24 * 3_600_000 - 20 * 60_000,
+    )).toISOString();
     response.setHeader("Content-Type", "application/json");
-    response.end(JSON.stringify({ site, data: [], page: { limit: 250, nextCursor: null } }));
+    response.end(JSON.stringify({
+      contractVersion: "forecast-observation-input/v1", generatedAt,
+      projectionFrom, queryFrom, records: [],
+      site: { slug: site.slug, timezone: site.timezone }, through: generatedAt,
+    }));
   });
   // the new transitive browser module must be served through the closed immutable asset map
   const asset = await fetch(`${origin}/assets/development/solar-cloud-evidence.js`);
@@ -72,6 +84,7 @@ test("solar cloud endpoint shares paging and preserves the recorded envelope and
   assert.equal(policy.status, 200);
   assert.match(policy.headers.get("content-type"), /javascript/u);
   assert.equal(await policy.text(), await readFile(resolve(repoRoot, "apps/web/dist/forecast-correction-policy.js"), "utf8"));
+  assert.equal((await fetch(`${origin}/internal/v1/forecast-observation-input`)).status, 404);
   const path = "/api/v1/sites/ballydidean/solar-cloud-evidence";
   assert.equal((await fetch(`${origin}${path}?from=unbounded`)).status, 400);
   const mutation = await fetch(`${origin}${path}`, { method: "POST" });
@@ -88,20 +101,18 @@ test("solar cloud endpoint shares paging and preserves the recorded envelope and
   assert.equal(evidence.evidence, null);
   assert.deepEqual(Object.keys(recorded).sort(), ["generatedAt", "data"].sort());
   assert.equal(evidence.generatedAt, recorded.generatedAt);
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 1);
   assert.equal(evidenceResponse.headers.get("cache-control"), "public, max-age=60, s-maxage=60");
   assert.equal(evidenceResponse.headers.get("x-content-type-options"), "nosniff");
   const head = await fetch(`${origin}${path}`, { method: "HEAD" });
   assert.equal(head.status, 200);
   assert.equal((await head.arrayBuffer()).byteLength, 0);
   assert.equal(head.headers.get("content-length"), evidenceResponse.headers.get("content-length"));
-  assert.equal(requests.length, 2);
-  // every upstream read remains fixed fully paged and queryless to the viewer
+  assert.equal(requests.length, 1);
+  // the only upstream read remains fixed and queryless to the viewer
   for (const url of requests) {
-    assert.equal(url.pathname, "/api/v1/sites/ballydidean/history");
-    assert.equal(url.searchParams.get("limit"), "250");
-    const span = Date.parse(url.searchParams.get("to")) - Date.parse(url.searchParams.get("from"));
-    assert.ok(span >= 24 * 3_600_000 + 20 * 60_000 && span < 29 * 3_600_000);
+    assert.equal(url.pathname, "/internal/v1/forecast-observation-input");
+    assert.equal(url.search, "");
   }
 });
 

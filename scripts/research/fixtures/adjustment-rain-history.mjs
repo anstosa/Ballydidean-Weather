@@ -15,7 +15,7 @@ export function rainHistoryEpochWitness() {
   const unsigned = { activationKind: "inert_v14_pre_activation", archiveCommitOrdinal: "0",
     catalogFrontierSha256: frontier, contractVersion: "adjustment-revision-capture-epoch-witness/v1",
     controlPlaneSha256: A, controlPlaneVersion: "14",
-    databaseMigrationHistorySha256: "c683c4f937c7f02b00f6ab49f75268eead81d2a221a8a9a23e38f9e4802a11b0",
+    databaseMigrationHistorySha256: "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
     epochAt, servingSnapshotSha256: adjustmentSha256(Buffer.from([
       "adjustment-revision-serving-snapshot/v1", epochAt, "0", frontier, ""].join("\n"))),
     sourceCommit: "1".repeat(40), sourceRelease: "2026.10.10-1",

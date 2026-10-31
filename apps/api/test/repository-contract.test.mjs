@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   getCurrentWeather,
+  listForecastObservationInputs,
   listActiveSites,
   listWeatherHistory,
   listWeatherTrends,
@@ -144,6 +145,47 @@ test("history SQL enforces active predicates, frozen filters, order, and bounded
         siteSlug: "ballydidean",
       }),
     /between 1 and 251/u,
+  );
+});
+
+test("forecast observation input is one fixed-site bounded statement", async () => {
+  const { pool, queries } = createCapturingPool([{
+    id: null,
+    projectionFrom: "2026-08-21T07:00:00.000Z",
+    queryFrom: "2026-08-21T04:00:00.000Z",
+    siteSlug: "ballydidean",
+    through: "2026-08-22T05:37:00.000Z",
+    timezone: "America/Los_Angeles",
+  }]);
+  const result = await listForecastObservationInputs(
+    pool,
+    "2026-08-22T05:37:00.000Z",
+  );
+
+  assert.equal(queries.length, 1);
+  assert.deepEqual(queries[0].values, ["2026-08-22T05:37:00.000Z"]);
+  assert.equal(result.records.length, 0);
+  assert.match(queries[0].text, /si\.slug = 'ballydidean'/u);
+  assert.match(queries[0].text, /si\.timezone = 'America\/Los_Angeles'/u);
+  assert.match(queries[0].text, /s\.source_kind IN \('physical_sensor', 'model_current'\)/u);
+  assert.match(queries[0].text, /weather_source_is_current\(s\.id\)/u);
+  assert.match(queries[0].text, /LIMIT 20001/u);
+  assert.match(queries[0].text, /CASE s\.source_kind WHEN 'physical_sensor' THEN 0 ELSE 1 END/u);
+});
+
+test("forecast observation input rejects the 20001st row", async () => {
+  const row = {
+    id: "1",
+    projectionFrom: "2026-08-21T07:00:00.000Z",
+    queryFrom: "2026-08-21T04:00:00.000Z",
+    siteSlug: "ballydidean",
+    through: "2026-08-22T05:37:00.000Z",
+    timezone: "America/Los_Angeles",
+  };
+  const { pool } = createCapturingPool(Array.from({ length: 20_001 }, () => row));
+  await assert.rejects(
+    listForecastObservationInputs(pool, "2026-08-22T05:37:00.000Z"),
+    /row limit exceeded/u,
   );
 });
 

@@ -9,12 +9,16 @@ const target = "a".repeat(40);
 
 // expose only complete same-repository immutable publication evidence
 function publicationFixture(release = targetRelease, commit = target) {
-  const repository = { id: 1_342_404_160, full_name: "anstosa/weather" };
+  const repository = {
+    fork: false,
+    full_name: "anstosa/Ballydidean-Weather",
+    id: 1_342_404_160,
+  };
   // retain workflow identity, tag and independent completion clocks
   const run = (filename, id, createdAt, updatedAt) => ({
     conclusion: "success", created_at: createdAt, event: "push", head_branch: release,
-    head_repository: repository, head_sha: commit, id,
-    path: `.github/workflows/${filename}`, repository, run_attempt: 1,
+    head_repository: { ...repository }, head_sha: commit, id,
+    path: `.github/workflows/${filename}`, repository: { ...repository }, run_attempt: 1,
     status: "completed", updated_at: updatedAt,
   });
   const responses = new Map([
@@ -90,4 +94,23 @@ test("dashboard publication rejects failed latest runs, incomplete pages and mis
   publish.workflow_runs[0].head_branch = targetRelease;
   check.workflow_runs[0].updated_at = "2026-10-10T05:22:00Z";
   await assert.rejects(verifyDashboardWebGitRelease(targetRelease, core, readJson), /preceded/u);
+});
+
+// reject the former repository name and every fork or head-repository substitution
+test("dashboard publication requires canonical repository and head identities", async () => {
+  const { readJson, responses } = publicationFixture();
+  const check = responses.get(
+    `actions/workflows/check.yml/runs?head_sha=${target}&event=push&per_page=100`,
+  );
+  check.workflow_runs[0].repository.full_name = "anstosa/weather";
+  await assert.rejects(verifyDashboardWebGitRelease(targetRelease, core, readJson),
+    /identity differs/u);
+  check.workflow_runs[0].repository.full_name = "anstosa/Ballydidean-Weather";
+  check.workflow_runs[0].head_repository.fork = true;
+  await assert.rejects(verifyDashboardWebGitRelease(targetRelease, core, readJson),
+    /identity differs/u);
+  check.workflow_runs[0].head_repository.fork = false;
+  check.workflow_runs[0].head_repository.id += 1;
+  await assert.rejects(verifyDashboardWebGitRelease(targetRelease, core, readJson),
+    /identity differs/u);
 });

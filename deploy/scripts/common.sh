@@ -121,6 +121,22 @@ compose() {
   docker compose --project-name "$project_name" --env-file "$env_file" -f "$compose_file" "$@"
 }
 
+# hold the shared Weather lifecycle lock before reading active release state
+acquire_weather_lifecycle_lock() {
+  local state_root="$deploy_dir/state"
+  require_command flock
+  [[ -d "$state_root" && ! -L "$state_root" &&
+    "$(realpath -e "$state_root")" == "$state_root" &&
+    "$(stat -c '%u' "$state_root")" == "$EUID" ]] ||
+    die "Weather lifecycle lock root is missing, linked or foreign-owned"
+  exec {weather_lifecycle_lock_fd}<"$state_root"
+  flock --exclusive --nonblock "$weather_lifecycle_lock_fd" ||
+    die "another Weather lifecycle operation is in flight"
+  [[ "$(stat -Lc '%d:%i' "/proc/self/fd/$weather_lifecycle_lock_fd")" == \
+    "$(stat -c '%d:%i' "$state_root")" ]] ||
+    die "Weather lifecycle lock identity changed"
+}
+
 # read a simple env value without evaluating it
 env_value() {
   local file=$1
@@ -172,6 +188,29 @@ control_plane_digest() {
       sha256sum "$file" | awk '{print $1}'
     done
   ) | sha256sum | awk '{print $1}'
+}
+
+# evaluate one bounded canonical normal-release capacity document
+normal_release_capacity_receipt() {
+  local command=$1
+  local input_path=$2
+  local input_mode input_size
+
+  # admit only the two reviewed formula domains
+  if [[ "$command" != normal-stage-capacity &&
+    "$command" != normal-activation-capacity ]]; then
+    die "invalid normal release capacity command"
+  fi
+  require_file "$input_path"
+  [[ ! -L "$input_path" ]] || die "normal release capacity input must not be a symbolic link"
+  input_mode=$(stat -c '%a' "$input_path")
+  input_size=$(stat -c '%s' "$input_path")
+
+  # keep measured host facts owner-private and inside the fixed parser bound
+  if (( (8#$input_mode & 077) != 0 || input_size < 2 || input_size > 16384 )); then
+    die "normal release capacity input is invalid"
+  fi
+  node "$deploy_dir/scripts/adjustment-evaluation-package.mjs" "$command" <"$input_path"
 }
 
 # apply the versioned runtime ACL contract
@@ -543,12 +582,154 @@ verify_adjustment_rolling_registration_acl() {
       END FROM present CROSS JOIN metadata_size"
 }
 
+# verify the optional forecast product catalog without scanning its rows
+verify_forecast_product_catalog_acl() {
+  local env_file=$1
+  local database_name=$2
+  validate_database_name "$database_name"
+  WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+    psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
+      --tuples-only --no-align --command "WITH
+      expected_functions(name, identity) AS (VALUES
+        ('weather_sync_forecast_products_after_insert',
+          'public.weather_sync_forecast_products_after_insert()'),
+        ('weather_sync_forecast_products_after_delete',
+          'public.weather_sync_forecast_products_after_delete()'),
+        ('weather_sync_forecast_products_after_truncate',
+          'public.weather_sync_forecast_products_after_truncate()')
+      ), resolved_functions AS (
+        SELECT expected.*, to_regprocedure(expected.identity)::oid AS oid
+        FROM expected_functions expected
+      ), expected_triggers(name, function_identity, trigger_type) AS (VALUES
+        ('weather_records_forecast_products_insert',
+          'public.weather_sync_forecast_products_after_insert()', 4::smallint),
+        ('weather_records_forecast_products_delete',
+          'public.weather_sync_forecast_products_after_delete()', 8::smallint),
+        ('weather_records_forecast_products_truncate',
+          'public.weather_sync_forecast_products_after_truncate()', 32::smallint)
+      ), objects AS (
+        SELECT to_regclass('public.forecast_products')::oid AS catalog_oid,
+          to_regclass('public.sources')::oid AS sources_oid,
+          to_regclass('public.weather_records')::oid AS records_oid
+      ), present AS (
+        SELECT (catalog_oid IS NOT NULL)::integer +
+          (SELECT count(*) FROM pg_proc procedure
+            JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
+            WHERE namespace.nspname = 'public'
+              AND procedure.proname IN (SELECT name FROM expected_functions)) +
+          (SELECT count(*) FROM pg_trigger trigger
+            WHERE trigger.tgrelid = records_oid
+              AND NOT trigger.tgisinternal
+              AND trigger.tgname IN (SELECT name FROM expected_triggers)) AS object_count
+        FROM objects
+      ), runtime_roles(name) AS (VALUES
+        ('weather_api'), ('weather_ingest'), ('weather_training_export')
+      )
+      SELECT CASE WHEN present.object_count = 0 THEN
+        NOT EXISTS (SELECT 1 FROM schema_migrations
+          WHERE name = '0022_forecast_product_catalog.sql')
+      ELSE present.object_count = 7
+        AND EXISTS (SELECT 1 FROM schema_migrations
+          WHERE name = '0022_forecast_product_catalog.sql'
+            AND checksum = '8d04170868414cd17e78cde2a4d6dd8144dfd606cba4e171686523f045cb77d2')
+        AND (SELECT relation.relkind = 'r'
+            AND relation.relowner = 'weather_owner'::regrole
+          FROM pg_class relation WHERE relation.oid = objects.catalog_oid)
+        AND (SELECT count(*) FROM pg_attribute attribute
+          WHERE attribute.attrelid = objects.catalog_oid
+            AND attribute.attnum > 0 AND NOT attribute.attisdropped) = 2
+        AND (SELECT count(*) FROM (VALUES
+          ('source_id', 'bigint', 1),
+          ('product_run_at', 'timestamp with time zone', 2)
+        ) expected(name, type_name, ordinal)
+          JOIN pg_attribute attribute ON attribute.attrelid = objects.catalog_oid
+            AND attribute.attname = expected.name
+            AND attribute.attnum = expected.ordinal
+            AND attribute.attnotnull
+            AND format_type(attribute.atttypid, attribute.atttypmod) = expected.type_name) = 2
+        AND (SELECT count(*) FROM pg_constraint constraint_
+          WHERE constraint_.conrelid = objects.catalog_oid
+            AND constraint_.contype = 'p'
+            AND constraint_.conkey = ARRAY[
+              (SELECT attnum FROM pg_attribute WHERE attrelid = objects.catalog_oid
+                AND attname = 'source_id'),
+              (SELECT attnum FROM pg_attribute WHERE attrelid = objects.catalog_oid
+                AND attname = 'product_run_at')
+            ]::smallint[]) = 1
+        AND (SELECT count(*) FROM pg_constraint constraint_
+          WHERE constraint_.conrelid = objects.catalog_oid
+            AND constraint_.confrelid = objects.sources_oid
+            AND constraint_.contype = 'f'
+            AND constraint_.confdeltype = 'r'
+            AND constraint_.confupdtype = 'a'
+            AND constraint_.conkey = ARRAY[
+              (SELECT attnum FROM pg_attribute WHERE attrelid = objects.catalog_oid
+                AND attname = 'source_id')
+            ]::smallint[]
+            AND constraint_.confkey = ARRAY[
+              (SELECT attnum FROM pg_attribute WHERE attrelid = objects.sources_oid
+                AND attname = 'id')
+            ]::smallint[]) = 1
+        AND (SELECT count(*) FROM resolved_functions WHERE oid IS NOT NULL) = 3
+        AND NOT EXISTS (SELECT 1 FROM resolved_functions expected
+          JOIN pg_proc procedure ON procedure.oid = expected.oid
+          WHERE procedure.proowner <> 'weather_owner'::regrole
+            OR procedure.prorettype::regtype::text <> 'trigger'
+            OR procedure.provolatile <> 'v'::\"char\"
+            OR NOT procedure.prosecdef
+            OR procedure.proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, public'])
+        AND (SELECT count(*) FROM expected_triggers expected
+          JOIN pg_trigger trigger ON trigger.tgrelid = objects.records_oid
+            AND trigger.tgname = expected.name
+            AND NOT trigger.tgisinternal
+            AND trigger.tgenabled = 'O'
+            AND trigger.tgfoid = to_regprocedure(expected.function_identity)::oid
+            AND trigger.tgtype = expected.trigger_type) = 3
+        AND (SELECT count(*) FROM pg_trigger trigger
+          WHERE trigger.tgrelid = objects.records_oid
+            AND NOT trigger.tgisinternal
+            AND trigger.tgname LIKE 'weather_records_forecast_products_%') = 3
+        AND has_table_privilege('weather_api', objects.catalog_oid, 'SELECT')
+        AND NOT has_table_privilege('weather_api', objects.catalog_oid,
+          'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+        AND NOT EXISTS (SELECT 1 FROM runtime_roles role
+          CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),
+            ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) privilege(name)
+          WHERE role.name <> 'weather_api'
+            AND has_table_privilege(role.name, objects.catalog_oid, privilege.name))
+        AND NOT EXISTS (SELECT 1 FROM pg_class relation
+          CROSS JOIN LATERAL aclexplode(coalesce(relation.relacl,
+            acldefault('r', relation.relowner))) acl
+          WHERE relation.oid = objects.catalog_oid
+            AND (acl.grantee = 0
+              OR (acl.grantee = 'weather_api'::regrole
+                AND acl.privilege_type <> 'SELECT')
+              OR acl.grantee IN (
+                'weather_ingest'::regrole, 'weather_training_export'::regrole)))
+        AND NOT EXISTS (SELECT 1 FROM pg_attribute attribute
+          CROSS JOIN LATERAL aclexplode(attribute.attacl) acl
+          WHERE attribute.attrelid = objects.catalog_oid
+            AND attribute.attnum > 0 AND NOT attribute.attisdropped
+            AND attribute.attacl IS NOT NULL
+            AND acl.grantee IN (0, 'weather_api'::regrole,
+              'weather_ingest'::regrole, 'weather_training_export'::regrole))
+        AND NOT EXISTS (SELECT 1 FROM resolved_functions expected
+          CROSS JOIN runtime_roles role
+          WHERE has_function_privilege(role.name, expected.oid, 'EXECUTE'))
+        AND NOT EXISTS (SELECT 1 FROM resolved_functions expected
+          JOIN pg_proc procedure ON procedure.oid = expected.oid
+          CROSS JOIN LATERAL aclexplode(coalesce(procedure.proacl,
+            acldefault('f', procedure.proowner))) acl
+          WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE')
+      END FROM present CROSS JOIN objects"
+}
+
 # verify effective runtime grants and denials
 verify_runtime_database_acl() {
   local env_file=$1
   local database_name=$2
   local verified maintenance_verified recurring_verified revision_frontier_verified
-  local rolling_registration_verified
+  local rolling_registration_verified forecast_product_catalog_verified
   validate_database_name "$database_name"
   verified=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
     psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
@@ -1012,8 +1193,11 @@ verify_runtime_database_acl() {
     "$env_file" "$database_name")
   rolling_registration_verified=$(verify_adjustment_rolling_registration_acl \
     "$env_file" "$database_name")
+  forecast_product_catalog_verified=$(verify_forecast_product_catalog_acl \
+    "$env_file" "$database_name")
   [[ "$verified" == t && "$maintenance_verified" == t && "$recurring_verified" == t \
-      && "$revision_frontier_verified" == t && "$rolling_registration_verified" == t ]] \
+      && "$revision_frontier_verified" == t && "$rolling_registration_verified" == t \
+      && "$forecast_product_catalog_verified" == t ]] \
     || die "runtime database ACL verification failed"
 }
 

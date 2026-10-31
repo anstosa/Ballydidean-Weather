@@ -9,6 +9,7 @@ import {
   getWeatherForecast,
   getLatestWorkerHeartbeat,
   listActiveSites,
+  listForecastObservationInputs,
   listTideRecords,
   listWeatherHistory,
   listWeatherTrends,
@@ -22,6 +23,7 @@ import {
   type EcmwfTemperatureCanarySidecar,
   type EcmwfTemperatureCanaryStatus,
   type ForecastProductSelection,
+  type ForecastObservationInput,
   type HistoryQuery,
   type MigrationReadinessAuthorization,
   type TrendPointRow,
@@ -100,6 +102,10 @@ export interface WeatherReadStore {
     hours: number,
     productSelection?: ForecastProductSelection,
   ): Promise<readonly WeatherRecordRow[]>;
+  // read one fixed private projection input without exposing archive controls
+  getForecastObservationInput?(
+    asOf: string,
+  ): Promise<ForecastObservationInput | null>;
   // read optional retained pressure context
   getForecastPressureContext?(
     siteSlug: string,
@@ -408,8 +414,9 @@ interface SourceDetails {
   readonly providerKey: string;
 }
 
-// describe one exact public route
+// describe one exact read route
 type Route =
+  | Readonly<{ kind: "forecastObservationInput" }>
   | Readonly<{ kind: "health" }>
   | Readonly<{ kind: "sites" }>
   | Readonly<{ kind: "current"; siteSlug: string }>
@@ -497,6 +504,10 @@ export function createDatabaseWeatherReadStore(
         ...(productSelection === undefined ? {} : { productSelection }),
         siteSlug,
       });
+    },
+    // read one fixed-site compact observation input
+    async getForecastObservationInput(asOf) {
+      return await listForecastObservationInputs(pool, asOf);
     },
     // read one complete retained pressure vintage
     async getForecastPressureContext(siteSlug, asOf) {
@@ -1184,6 +1195,81 @@ async function handleReadRoute(
   reportRainFailure: () => void,
   rainAdjustment: ApiRainAdjustmentStartupSnapshot | undefined,
 ): Promise<Response> {
+  // keep the private fixed input outside site discovery and public routing
+  if (route.kind === "forecastObservationInput") {
+    rejectUnexpectedParameters(url.searchParams, new Set());
+    const input = await store.getForecastObservationInput?.(generatedAt) ?? null;
+
+    // fail closed when the fixed site or compact reader is unavailable
+    if (input === null || input.siteSlug !== "ballydidean" ||
+      input.timezone !== "America/Los_Angeles" || input.records.length > 20_000) {
+      throw new HttpError(404, "not_found", "Endpoint not found");
+    }
+
+    const projectionFrom = toIsoInstant(input.projectionFrom);
+    const queryFrom = toIsoInstant(input.queryFrom);
+    const through = toIsoInstant(input.through);
+    const expectedProjection = siteForecastDayWindow(
+      generatedAt,
+      input.timezone,
+    ).asOf;
+    const expectedQuery = new Date(Math.min(
+      Date.parse(expectedProjection) - 3 * 3_600_000,
+      Date.parse(generatedAt) - 24 * 3_600_000 - 20 * 60_000,
+    )).toISOString();
+
+    // bind the repository result to this request's one fixed geometry
+    if (through !== generatedAt || projectionFrom !== expectedProjection ||
+      queryFrom !== expectedQuery) {
+      throw new Error("Forecast observation input geometry is invalid");
+    }
+
+    const body = JSON.stringify({
+      contractVersion: "forecast-observation-input/v1",
+      generatedAt,
+      projectionFrom,
+      queryFrom,
+      records: input.records.map(
+        // project only fields used by the edge algorithms
+        (row) => ({
+          id: row.id,
+          metrics: {
+            apparentTemperatureC: row.apparentTemperatureC,
+            cloudCoverPercent: row.cloudCoverPercent,
+            pm25MicrogramsPerCubicMeter: row.pm25MicrogramsPerCubicMeter,
+            precipitationRateMmPerHour: row.precipitationRateMmPerHour,
+            pressureHpa: row.pressureHpa,
+            relativeHumidityPercent: row.relativeHumidityPercent,
+            solarRadiationWm2: row.solarRadiationWm2,
+            temperatureC: row.temperatureC,
+            uvIndex: row.uvIndex,
+            windDirectionDegrees: row.windDirectionDegrees,
+            windGustMps: row.windGustMps,
+            windSpeedMps: row.windSpeedMps,
+          },
+          provenance: {
+            providerKey: row.providerKey,
+            sourceId: row.sourceId,
+            sourceKey: row.sourceKey,
+            sourceKind: row.sourceKind,
+            stationSlug: row.stationSlug,
+          },
+          receivedAt: toIsoInstant(row.lastReceivedAt),
+          validAt: toIsoInstant(row.validAt),
+        }),
+      ),
+      site: { slug: input.siteSlug, timezone: input.timezone },
+      through,
+    });
+
+    // refuse an oversized private envelope before allocating a second body
+    if (Buffer.byteLength(body, "utf8") > 4 * 1024 * 1024) {
+      throw new RangeError("forecast observation input byte limit exceeded");
+    }
+
+    return new Response(body, { headers: JSON_HEADERS });
+  }
+
   // serve liveness and readiness
   if (route.kind === "health") {
     rejectUnexpectedParameters(url.searchParams, new Set());
@@ -1495,6 +1581,11 @@ function describeWorkerFreshness(
 // match only the frozen public surface
 function matchRoute(pathname: string): Route {
   const segments = parsePathSegments(pathname);
+
+  // match only the exact private fixed-input path
+  if (pathname === "/internal/v1/forecast-observation-input") {
+    return { kind: "forecastObservationInput" };
+  }
 
   // match top-level reads
   if (segments.length === 3 && segments[0] === "api" && segments[1] === "v1") {

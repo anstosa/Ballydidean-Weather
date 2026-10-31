@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -9,12 +11,175 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const updateScript = join(repoRoot, "deploy/scripts/update.sh");
 
 // run one isolated release function
-function runBash(source, argumentsList = []) {
+function runBash(source, argumentsList = [], options = {}) {
   return spawnSync("bash", ["-c", source, "weather-update-test", updateScript, ...argumentsList], {
     cwd: repoRoot,
     encoding: "utf8",
+    ...options,
   });
 }
+
+// enforce exact semantic tables plus the narrow bootstrap sequence allowance
+test("preexisting data verifier accepts only monotonic bootstrap sequence drift", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-semantic-verifier-"));
+  const contract = join(directory, "contract");
+  const before = join(directory, "before");
+  const after = join(directory, "after");
+  const hash = "a".repeat(64);
+  const tableHash = "b".repeat(64);
+  const contractBody = `preexisting-data/v1\n` +
+    `T\tsources\tid,updated_at\tid\t${hash}\tid\tsources_pkey\n` +
+    `S\tsources_id_seq\t${hash}\ttrue\n` +
+    `S\tweather_records_id_seq\t${hash}\tfalse\n`;
+  const beforeBody = `preexisting-data-snapshot/v1\n` +
+    `T\tsources\t1\t${tableHash}\n` +
+    `S\tsources_id_seq\t${hash}\ttrue\t7\tt\n` +
+    `S\tweather_records_id_seq\t${hash}\tfalse\t11\tt\n`;
+
+  try {
+    await writeFile(contract, contractBody);
+    await writeFile(before, beforeBody);
+    await writeFile(after, beforeBody.replace("\t7\tt\n", "\t12\tt\n"));
+    const accepted = runBash(
+      'source "$1"; verify_preexisting_data_snapshots "$2" "$3" "$4"',
+      [contract, before, after],
+    );
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    // reject table mutation, sequence reset and non-bootstrap advance independently
+    const rejectedBodies = [
+      beforeBody.replace(tableHash, "c".repeat(64)),
+      beforeBody.replace("\t7\tt\n", "\t6\tt\n"),
+      beforeBody.replace("\t11\tt\n", "\t12\tt\n"),
+    ];
+    for (const rejectedBody of rejectedBodies) {
+      await writeFile(after, rejectedBody);
+      const rejected = runBash(
+        'source "$1"; verify_preexisting_data_snapshots "$2" "$3" "$4"',
+        [contract, before, after],
+      );
+      assert.notEqual(rejected.status, 0);
+    }
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+// keep both forward proof paths on the same streaming semantic contract
+test("normal and historical rehearsals use the preexisting semantic stream", async () => {
+  const update = await readFile(updateScript, "utf8");
+  const compatibility = update
+    .split("verify_previous_image_compatibility() (")[1]
+    .split("\n)\n\n# reconcile retained PostgreSQL")[0];
+  const historical = update
+    .split("historical_v14_18_21_rehearsal() (")[1]
+    .split("\n)\n\n# require one measured full-size ARM64 proof")[0];
+
+  for (const proof of [compatibility, historical]) {
+    assert.match(proof, /write_preexisting_data_contract/u);
+    assert.match(proof, /write_preexisting_data_snapshot/u);
+    assert.match(proof, /verify_preexisting_data_snapshots/u);
+  }
+  assert.doesNotMatch(compatibility, /--data-only[\s\S]*sha256sum/u);
+  assert.doesNotMatch(historical, /historical_application_data_sha256/u);
+});
+
+// reject partial or empty discovery output when the PostgreSQL producer fails
+test("preexisting contract rejects failed discovery producers", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-semantic-discovery-"));
+  const contract = join(directory, "contract");
+
+  try {
+    await writeFile(contract, "", { mode: 0o600 });
+    const partialTables = runBash(
+      `source "$1"
+compose() { printf 'sites\n'; return 1; }
+write_preexisting_data_contract ignored weather_test "$2"`,
+      [contract],
+    );
+    assert.notEqual(partialTables.status, 0);
+    assert.match(partialTables.stderr, /table discovery failed/u);
+
+    const failedSequences = runBash(
+      `source "$1"
+compose() {
+  if [[ "$*" == *"relkind IN ('r','p')"* ]]; then printf 'sites\n'; return 0; fi
+  if [[ "$*" == *"SELECT attribute.attname"* ]]; then printf 'id\nupdated_at\n'; return 0; fi
+  if [[ "$*" == *"SELECT attribute.attnum"* ]]; then printf 'metadata\n'; return 0; fi
+  if [[ "$*" == *"FROM pg_index primary_index"* ]]; then printf 'id\tsites_pkey\n'; return 0; fi
+  if [[ "$*" == *"relation.relkind = 'S'"* ]]; then return 1; fi
+  return 64
+}
+write_preexisting_data_contract ignored weather_test "$2"`,
+      [contract],
+    );
+    assert.notEqual(failedSequences.status, 0);
+    assert.match(failedSequences.stderr, /sequence discovery failed/u);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+// propagate a failed COPY producer even when the streaming hash consumer reaches EOF
+test("preexisting snapshot rejects a partial failed row stream", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-semantic-stream-"));
+  const contract = join(directory, "contract");
+  const snapshot = join(directory, "snapshot");
+  const metadata = "1|id|bigint|t|||\n";
+  const metadataSha256 = createHash("sha256").update(metadata).digest("hex");
+
+  try {
+    await writeFile(
+      contract,
+      `preexisting-data/v1\nT\tsites\tid\tid\t${metadataSha256}\tid\tsites_pkey\n`,
+      { mode: 0o600 },
+    );
+    await writeFile(snapshot, "", { mode: 0o600 });
+    const result = runBash(
+      `source "$1"
+compose() {
+  if [[ "$*" == *"SELECT attribute.attnum"* ]]; then printf '1|id|bigint|t|||\n'; return 0; fi
+  if [[ "$*" == *"FROM pg_index primary_index"* ]]; then printf 'id\tsites_pkey\n'; return 0; fi
+  if [[ "$*" == *"EXPLAIN (COSTS OFF)"* ]]; then printf 'Index Scan using sites_pkey on sites\n'; return 0; fi
+  if [[ "$*" == *"COPY (SELECT"* ]]; then printf '[1]\n'; return 1; fi
+  return 64
+}
+write_preexisting_data_snapshot ignored weather_test "$2" "$3"`,
+      [contract, snapshot],
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /row stream failed/u);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+// retain bounded private diagnostics before failed qualification cleanup
+test("release qualification failures publish private evidence packets", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-release-failure-"));
+  const sample = join(directory, "samples");
+
+  try {
+    await writeFile(sample, "0 1 2 3\n", { mode: 0o600 });
+    const result = runBash(
+      'source "$1"; state_dir="$2"; retain_release_failure_evidence normal-stage 1 "$3"',
+      [directory, sample],
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const names = await readdir(directory);
+    const packet = names.find((name) => name.startsWith("normal-stage-failure-"));
+    assert.ok(packet);
+    assert.equal((await stat(join(directory, packet))).mode & 0o777, 0o700);
+    assert.equal((await stat(join(directory, packet, "manifest"))).mode & 0o777, 0o600);
+    assert.equal((await stat(join(directory, packet, "samples"))).mode & 0o777, 0o600);
+    assert.equal(await readFile(join(directory, packet, "samples"), "utf8"), "0 1 2 3\n");
+    const update = await readFile(updateScript, "utf8");
+    assert.match(update, /retain_release_failure_evidence normal-stage/u);
+    assert.match(update, /retain_release_failure_evidence historical-v14-rehearsal/u);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
 
 // verify locale-independent control identity
 test("control-plane digest is locale independent", () => {
@@ -314,49 +479,179 @@ rollback_release`,
   }
 });
 
-test("failed activation records schema state before authorized image recovery", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "weather-activation-authorization-"));
-  const scripts = join(directory, "scripts");
-  const transcript = join(directory, "transcript");
+test("failed activation quiesces its owned migrator before exact-ledger recovery", () => {
+  const update = readFileSync(join(repoRoot, "deploy/scripts/update.sh"), "utf8");
+  const activation = update.split("start_release() (")[1].split("\n)\n\n# roll back images")[0];
+  const schemaIntent = activation.indexOf('write_private_state "$state_dir/schema-release" "$target"');
+  const migration = activation.indexOf("compose run --detach");
+  const failedHealth = activation.indexOf("if ! start_exact_release");
+  const quiesce = activation.indexOf('quiesce_normal_activation_migration "$activation_env"');
+  const classify = activation.indexOf("restore_normal_activation_after_quiescence");
+  assert.equal(schemaIntent < migration, true);
+  assert.equal(migration < failedHealth, true);
+  assert.equal(quiesce < classify, true);
+  assert.match(activation, /write_normal_activation_journal[\s\S]*prepared[\s\S]*running/u);
+});
 
-  try {
-    await mkdir(scripts);
-    await writeFile(join(scripts, "backup.sh"), "#!/usr/bin/env bash\nexit 0\n");
-    await chmod(join(scripts, "backup.sh"), 0o700);
-    const result = runBash(
-      `source "$1"
-deploy_dir=$2
-state_dir=$2/state
+test("normal activation recovery classifies only exact source or target ledgers", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-normal-ledger-recovery-"));
+  const transcript = join(directory, "transcript");
+  const sourceLedger = "adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93";
+  const targetLedger = "3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51";
+  const run = (ledger) => runBash(
+    `source "$1"
+state_dir=$2
 transcript=$3
-release_env() { printf '/releases/%s.env\n' "$1"; }
-validate_release_env() { :; }
-require_control_plane_compatibility() { :; }
-read_optional_release_state() { printf '2026.08.22-1\n'; }
-require_capacity_gate() { :; }
-require_deployment_secrets() { :; }
-start_postgres() { :; }
-compose() { printf 'compose:%s\n' "$*" >>"$transcript"; }
-write_private_state() { printf 'state:%s:%s\n' "$1" "$2" >>"$transcript"; }
-env_value() { printf 'weather_test\n'; }
-apply_runtime_database_acl() { printf 'apply-acl:%s:%s\n' "$1" "$2" >>"$transcript"; }
-verify_runtime_database_acl() { printf 'verify-acl:%s:%s\n' "$1" "$2" >>"$transcript"; }
-start_exact_release() { printf 'start-exact:%s\n' "$1" >>"$transcript"; return 1; }
-migration_authorization() { printf '/releases/%s.migration-authorization\n' "$1"; }
-validate_migration_authorization() { printf 'validate-auth:%s:%s:%s\n' "$1" "$2" "$3" >>"$transcript"; }
-restore_images() { printf 'restore:%s:%s:%s\n' "$1" "$2" "$3" >>"$transcript"; }
-start_release 2026.08.22-2`,
-      [directory, transcript],
+env_value() { printf 'weather_test\\n'; }
+migration_history_sha256() { printf '%s\\n' "$HISTORY"; }
+migration_authorization() { printf '/authorization/%s\\n' "$1"; }
+validate_migration_authorization() { printf 'authorize:%s:%s\\n' "$2" "$3" >>"$transcript"; }
+write_private_state() { printf 'marker:%s\\n' "$2" >>"$transcript"; }
+restore_images() { printf 'restore:%s:%s\\n' "$2" "$3" >>"$transcript"; }
+restore_normal_activation_after_quiescence /source.env 2026.10.29-1 2026.10.29-1 2026.10.29-2`,
+    [directory, transcript],
+    { env: { ...process.env, HISTORY: ledger } },
+  );
+  try {
+    // cover both failure classes that must retain the complete source ledger
+    for (const scenario of ["pre-sql", "transactional"]) {
+      await writeFile(transcript, "");
+      const result = run(sourceLedger);
+      assert.equal(result.status, 0, `${scenario}: ${result.stderr}`);
+      assert.equal(await readFile(transcript, "utf8"),
+        "marker:2026.10.29-1\nrestore:2026.10.29-1:2026.10.29-1\n");
+    }
+    // cover both post-commit failure classes that must retain target authority
+    for (const scenario of ["post-ledger-bootstrap", "acl"]) {
+      await writeFile(transcript, "");
+      const result = run(targetLedger);
+      assert.equal(result.status, 0, `${scenario}: ${result.stderr}`);
+      assert.equal(await readFile(transcript, "utf8"),
+        "authorize:2026.10.29-1:2026.10.29-2\n" +
+        "marker:2026.10.29-2\nrestore:2026.10.29-1:2026.10.29-2\n");
+    }
+    await writeFile(transcript, "");
+    const rejected = run("f".repeat(64));
+    assert.notEqual(rejected.status, 0);
+    assert.equal(await readFile(transcript, "utf8"), "");
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("historical rehearsal admission uses the measured scan envelope instead of mutable size equality", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-historical-envelope-"));
+  const state = join(directory, "state");
+  const postgres = join(directory, "postgres");
+  const source = join(directory, "source.env");
+  const target = join(directory, "target.env");
+  const receiptPath = join(state, "receipt.json");
+  const samplesPath = join(state, "samples.json");
+  const canonical = (value) => Array.isArray(value)
+    ? `[${value.map(canonical).join(",")}]`
+    : value !== null && typeof value === "object"
+      ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+      : JSON.stringify(value);
+  try {
+    await mkdir(join(postgres, "base/16384"), { recursive: true });
+    await mkdir(state);
+    await writeFile(join(postgres, "base/16384/1"), "fixture");
+    const sourceServer = `ghcr.io/example/server@sha256:${"1".repeat(64)}`;
+    const sourceWeb = `ghcr.io/example/web@sha256:${"2".repeat(64)}`;
+    const targetServer = `ghcr.io/example/server@sha256:${"3".repeat(64)}`;
+    const targetWeb = `ghcr.io/example/web@sha256:${"4".repeat(64)}`;
+    await writeFile(source, [
+      "WEATHER_DATABASE_NAME=weather",
+      `WEATHER_POSTGRES_DIR=${postgres}`,
+      `WEATHER_SERVER_IMAGE=${sourceServer}`,
+      `WEATHER_WEB_IMAGE=${sourceWeb}`,
+      "",
+    ].join("\n"));
+    await writeFile(target, [
+      "WEATHER_DATABASE_NAME=weather",
+      `WEATHER_POSTGRES_DIR=${postgres}`,
+      `WEATHER_SERVER_IMAGE=${targetServer}`,
+      `WEATHER_WEB_IMAGE=${targetWeb}`,
+      "",
+    ].join("\n"));
+    const retainedBody = {
+      contractVersion: "historical-v14-capacity-samples/v1",
+      samples: [
+        { capturedAtMilliseconds: Date.now() - 2_000, freeBytes: 5_000_000_000, freeInodes: 100_000, sequence: 0, tempBytes: 0 },
+        { capturedAtMilliseconds: Date.now() - 1_000, freeBytes: 4_900_000_000, freeInodes: 99_000, sequence: 1, tempBytes: 1_000 },
+      ],
+    };
+    const retained = { ...retainedBody,
+      receiptSha256: createHash("sha256").update(canonical(retainedBody)).digest("hex") };
+    const retainedBytes = Buffer.from(canonical(retained));
+    await writeFile(samplesPath, retainedBytes, { mode: 0o600 });
+    const requiredFreeBytes = 2_030_043_136 + 4_112_384 + 100_000_000 +
+      10_000_000 + 2 * 100_000_000 + 268_435_456;
+    const body = {
+      appDataEqual: true,
+      architecture: "aarch64",
+      candidateAppDataSha256: "a".repeat(64),
+      candidateScanHeapBytes: 1_000,
+      candidateScanRowCount: 100,
+      capacitySampleCount: 2,
+      capacitySamplesReceiptSha256: retained.receiptSha256,
+      capacitySamplesSha256: createHash("sha256").update(retainedBytes).digest("hex"),
+      capturedAt: new Date().toISOString(),
+      cleanupConfirmed: true,
+      contractVersion: "historical-v14-18-21-rehearsal/v1",
+      databaseBytes: 100_000_000,
+      databaseOid: 16_384,
+      durationMilliseconds: 100_000,
+      freeBytesBefore: 5_000_000_000,
+      freeInodesBefore: 100_000,
+      largestSourceIndexBytes: 10_000_000,
+      lockTimeoutMilliseconds: 10_000,
+      maxWalBytes: 100_000_000,
+      memoryLimitBytes: 512 * 1024 * 1024,
+      minimumFreeBytesObserved: 4_900_000_000,
+      minimumFreeInodesObserved: 99_000,
+      peakGrowthBytes: 100_000_000,
+      peakGrowthInodes: 1_000,
+      peakTempBytes: 1_000,
+      peakWalBytes: 100_000,
+      requiredFreeBytes,
+      requiredFreeInodes: 32_768 + 1 + 4_096,
+      sourceDatabaseFileCount: 1,
+      sourceEnvSha256: createHash("sha256").update(await readFile(source)).digest("hex"),
+      sourceLedgerSha256: "e4a73765078fba8235bf94753c799c209d59f737dde6f38d1a1a458e3164a82e",
+      sourceRelease: "2026.10.09-2",
+      sourceServerImage: sourceServer,
+      sourceWebImage: sourceWeb,
+      statementTimeoutMilliseconds: 300_000,
+      systemIdentifier: "123456789",
+      targetEnvSha256: createHash("sha256").update(await readFile(target)).digest("hex"),
+      targetLedgerSha256: "adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93",
+      targetRelease: "2026.10.09-3",
+      targetServerImage: targetServer,
+      targetWebImage: targetWeb,
+      weatherRecordBytes: 99_000_000,
+      weatherRecordCount: 90,
+    };
+    await writeFile(receiptPath, canonical({ ...body,
+      receiptSha256: createHash("sha256").update(canonical(body)).digest("hex"),
+    }), { mode: 0o600 });
+    const run = (liveRows, liveHeapBytes) => runBash(
+      `source "$1"
+state_dir=$2
+compose() { printf '123456789 16384 110000000 91 100000000 %s %s 10000000 100000000\\n' "$LIVE_ROWS" "$LIVE_HEAP_BYTES"; }
+migration_history_sha256() { printf 'e4a73765078fba8235bf94753c799c209d59f737dde6f38d1a1a458e3164a82e\\n'; }
+require_historical_v14_rehearsal_receipt "$3" "$4" "$5" "$6"`,
+      [state, source, target, receiptPath, samplesPath],
+      { env: { ...process.env, LIVE_ROWS: String(liveRows), LIVE_HEAP_BYTES: String(liveHeapBytes) } },
     );
-    assert.notEqual(result.status, 0);
-    const output = await readFile(transcript, "utf8");
-    assert.match(
-      output,
-      /validate-auth:.*2026\.08\.22-2\.migration-authorization:2026\.08\.22-1:2026\.08\.22-2[\s\S]*state:.*schema-release:2026\.08\.22-2[\s\S]*compose:run --rm migration/u,
-    );
-    assert.match(
-      output,
-      /compose:run --rm migration[\s\S]*apply-acl:.*2026\.08\.22-2\.env:weather_test[\s\S]*verify-acl:.*2026\.08\.22-2\.env:weather_test[\s\S]*start-exact:.*2026\.08\.22-2\.env[\s\S]*validate-auth:.*2026\.08\.22-2\.migration-authorization:2026\.08\.22-1:2026\.08\.22-2[\s\S]*restore:.*2026\.08\.22-1\.env:2026\.08\.22-1:2026\.08\.22-2/u,
-    );
+    // 100s measured duration admits at most 1.5x the candidate scan workload
+    const exact = run(150, 1_500);
+    assert.equal(exact.status, 0, exact.stderr);
+    for (const [rows, heapBytes] of [[151, 1_500], [150, 1_501]]) {
+      const rejected = run(rows, heapBytes);
+      assert.notEqual(rejected.status, 0);
+      assert.match(rejected.stderr, /differs from the live handoff/u);
+    }
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
@@ -390,6 +685,138 @@ main recover`,
       "restore:/releases/2026.08.22-1.env:2026.08.22-1:2026.08.22-2\n" +
         "active:2026.08.22-1\n",
     );
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("crash recovery quiesces the journaled migrator before ledger classification", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-normal-crash-recovery-"));
+  const state = join(directory, "state");
+  const transcript = join(directory, "transcript");
+  try {
+    await mkdir(state);
+    await writeFile(join(state, "normal-activation-v1.env"), "journal\n", { mode: 0o600 });
+    const result = runBash(
+      `source "$1"
+state_dir=$2
+normal_activation_journal=$2/normal-activation-v1.env
+dashboard_release_journal=$2/dashboard.env
+v14_compatibility_bridge_state=$2/v14.env
+transcript=$3
+acquire_release_transaction_lock() { :; }
+require_command() { :; }
+dashboard_override_present() { return 1; }
+read_release_state() { printf '2026.10.29-1\\n'; }
+read_optional_release_state() { printf '2026.10.29-2\\n'; }
+read_normal_activation_journal() { printf '2026.10.29-1 2026.10.29-2 migration absent prepared\\n'; }
+release_env() { printf '/releases/%s.env\\n' "$1"; }
+validate_release_env() { :; }
+require_control_plane_compatibility() { :; }
+require_deployment_secrets() { :; }
+quiesce_normal_activation_migration() { printf 'quiesce\\n' >>"$transcript"; }
+start_postgres() { printf 'postgres\\n' >>"$transcript"; }
+restore_normal_activation_after_quiescence() { printf 'classify:%s:%s:%s\\n' "$2" "$3" "$4" >>"$transcript"; }
+write_active_symlink() { printf 'active:%s\\n' "$1" >>"$transcript"; }
+sync() { :; }
+main recover`,
+      [state, transcript],
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(await readFile(transcript, "utf8"),
+      "quiesce\npostgres\nclassify:2026.10.29-1:2026.10.29-1:2026.10.29-2\n" +
+      "active:2026.10.29-1\n");
+    await assert.rejects(readFile(join(state, "normal-activation-v1.env")));
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("normal schema-22 recovery precedes the retained v14 bridge classifier", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-normal-v14-receipt-recovery-"));
+  const state = join(directory, "state");
+  const releases = join(directory, "releases");
+  const transcript = join(directory, "transcript");
+  const target = "2026.10.29-2";
+  try {
+    await mkdir(state);
+    await mkdir(releases);
+    await writeFile(join(state, "v14-compatibility-bridge-v1"), "retained\n");
+    await writeFile(join(releases, `${target}.normal-stage-receipt.json`), "{}", { mode: 0o600 });
+    const result = runBash(
+      `source "$1"
+state_dir=$2
+releases_dir=$3
+normal_activation_journal=$2/normal-activation-v1.env
+dashboard_release_journal=$2/dashboard.env
+v14_compatibility_bridge_state=$2/v14-compatibility-bridge-v1
+transcript=$4
+acquire_release_transaction_lock() { :; }
+require_command() { :; }
+dashboard_override_present() { return 1; }
+read_release_state() { printf '2026.10.29-2\\n'; }
+read_optional_release_state() { printf '2026.10.29-2\\n'; }
+require_deployment_secrets() { :; }
+recover_committed_normal_release() { printf 'normal:%s:%s\\n' "$1" "$2" >>"$transcript"; }
+require_v14_compatibility_bridge_receipt() { printf 'unexpected-v14\\n' >>"$transcript"; return 1; }
+main recover`,
+      [state, releases, transcript],
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(await readFile(transcript, "utf8"), `normal:${target}:${target}\n`);
+    assert.equal(await readFile(join(state, "v14-compatibility-bridge-v1"), "utf8"), "retained\n");
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("capacity monitor completion rejects early death, nonzero exit, and sequence gaps", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-capacity-monitor-"));
+  const harness = `source "$1"
+samples=$2
+completion=$3
+mode=$4
+case "$mode" in
+  success|nonzero|gap)
+    if [[ "$mode" == gap ]]; then
+      printf '0 1 100 100\\n2 2 90 90\\n' >"$samples"
+      next=2
+    else
+      printf '0 1 100 100\\n' >"$samples"
+      next=1
+    fi
+    (
+      trap 'printf "%s %s\\n" "$BASHPID" "$next" >"$completion"; if [[ "$mode" == nonzero ]]; then exit 7; else exit 0; fi' TERM
+      while :; do sleep 0.1; done
+    ) &
+    monitor=$!
+    sleep 0.2
+    ;;
+  early)
+    printf '0 1 100 100\\n' >"$samples"
+    (exit 0) &
+    monitor=$!
+    sleep 0.1
+    ;;
+esac
+if stop_owned_capacity_monitor "$monitor" "$completion" "$samples"; then
+  printf 'accepted:%s\\n' "$capacity_monitor_next_sequence"
+else
+  printf 'rejected\\n'
+fi`;
+  try {
+    for (const [mode, expected] of [
+      ["success", "accepted:1\n"],
+      ["early", "rejected\n"],
+      ["nonzero", "rejected\n"],
+      ["gap", "rejected\n"],
+    ]) {
+      const samples = join(directory, `${mode}.samples`);
+      const completion = join(directory, `${mode}.completion`);
+      const result = runBash(harness, [samples, completion, mode]);
+      assert.equal(result.status, 0, `${mode}: ${result.stderr}`);
+      assert.equal(result.stdout, expected, mode);
+    }
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
@@ -460,7 +887,7 @@ main recover`,
     assert.equal(result.status, 0, result.stderr);
     assert.match(
       await readFile(error, "utf8"),
-      /cannot activate release 2026\.08\.22-2 while runtime release 2026\.08\.22-1 differs from retained schema release 2026\.08\.22-3/u,
+      /normal activation requires one exact forward staged release/u,
     );
     assert.equal(await readFile(join(state, "schema-release"), "utf8"), "2026.08.22-3\n");
     assert.equal(
@@ -549,6 +976,10 @@ test("compatibility clone removes private evidence before replaying migrations t
   assert.match(compatibility, /ALTER TABLE weather_records DROP COLUMN IF EXISTS adjustment_revision_receipt/u);
   assert.match(compatibility, /0020_adjustment_revision_frontier\.sql/u);
   assert.match(compatibility, /0021_adjustment_rolling_registration\.sql/u);
+  assert.match(compatibility, /compatibility database absence check failed/u);
+  assert.match(compatibility, /compatibility task name already exists/u);
+  assert.match(compatibility,
+    /require_owned_compatibility_task_container[\s\S]*Config\.Labels\.com\.docker\.compose\.project[\s\S]*Config\.Image/u);
   assert.ok(compatibility.indexOf("ALTER TABLE ecmwf_temperature_canary_runs DROP COLUMN") <
     compatibility.indexOf("DROP FUNCTION IF EXISTS weather_adjustment_revision_receipt_valid_v1"));
   const maintenanceTablesDrop = compatibility.indexOf("DROP TABLE IF EXISTS adjustment_shadow_predictions_v2");
@@ -564,7 +995,9 @@ test("compatibility clone removes private evidence before replaying migrations t
   const receiptGuardDrop = compatibility.indexOf("DROP FUNCTION IF EXISTS weather_guard_rain_capture_receipt()");
   const mutationGuardDrop = compatibility.indexOf("DROP FUNCTION IF EXISTS weather_reject_rain_capture_mutation()");
   const ledgerReset = compatibility.indexOf("'0017_adjustment_evaluation_export.sql', '0018_adjustment_maintenance_v2.sql', '0019_adjustment_maintenance_recurring.sql', '0020_adjustment_revision_frontier.sql', '0021_adjustment_rolling_registration.sql')");
-  const replay = compatibility.indexOf("compose run --rm --no-deps");
+  const replay = compatibility.indexOf(
+    'run_owned_compatibility_container "$target_env" "${candidate}_migration" migration --no-deps',
+  );
   const replayProof = compatibility.indexOf("rain_collection_migration_count=$(WEATHER_ENV_FILE=");
   const stationReplayProof = compatibility.indexOf("station_access_migration_count=$(WEATHER_ENV_FILE=");
   const modelReplayProof = compatibility.indexOf("rain_adjustment_migration_count=$(WEATHER_ENV_FILE=");
@@ -885,61 +1318,22 @@ test("secret validation rejects a symlink outside the Weather secret root", asyn
   }
 });
 
-test("initial activation cleans the Weather project after every startup failure", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "weather-initial-cleanup-"));
-
-  try {
-    await mkdir(join(directory, "scripts"));
-    await writeFile(
-      join(directory, "scripts/backup.sh"),
-      '#!/usr/bin/env bash\nexit "${WEATHER_TEST_BACKUP_STATUS:-0}"\n',
-    );
-    await chmod(join(directory, "scripts/backup.sh"), 0o700);
-    const failureCases = ["backup", "migration", "health"];
-
-    // inject every post-start failure
-    for (const failureCase of failureCases) {
-      const transcript = join(directory, `${failureCase}.transcript`);
-      const result = runBash(
-        `source "$1"
-deploy_dir=$2
-state_dir=$2/state
-transcript=$3
-failure_case=$4
-release_env() { printf '/target.env\\n'; }
-validate_release_env() { :; }
-read_optional_release_state() { :; }
-require_capacity_gate() { :; }
-require_deployment_secrets() { :; }
-require_control_plane_compatibility() { :; }
-record_release_success() { printf 'recorded\\n' >>"$transcript"; }
-env_value() { printf 'weather_test\\n'; }
-apply_runtime_database_acl() { printf 'apply-acl\\n' >>"$transcript"; }
-verify_runtime_database_acl() { printf 'verify-acl\\n' >>"$transcript"; }
-compose() {
-  printf 'compose:%s\\n' "$*" >>"$transcript"
-  # fail the selected lifecycle stage
-  if [[ "$failure_case" == migration && "$*" == 'run --rm migration' ]]; then return 1; fi
-  if [[ "$failure_case" == health && "$*" == 'up -d --remove-orphans --wait' ]]; then return 1; fi
-}
-export WEATHER_TEST_BACKUP_STATUS=$([[ "$failure_case" == backup ]] && printf 1 || printf 0)
-start_release 2026.08.22-1`,
-        [directory, transcript, failureCase],
-      );
-      assert.notEqual(result.status, 0, failureCase);
-      const output = await readFile(transcript, "utf8");
-      assert.match(
-        output,
-        /compose:up -d --no-deps --force-recreate --wait postgres[\s\S]*compose:down --remove-orphans/u,
-      );
-      assert.doesNotMatch(output, /recorded/u);
-    }
-  } finally {
-    await rm(directory, { force: true, recursive: true });
-  }
+test("normal activation cleanup removes private evidence after exact-ledger restoration", () => {
+  const update = readFileSync(join(repoRoot, "deploy/scripts/update.sh"), "utf8");
+  const activation = update.split("start_release() (")[1].split("\n)\n\n# roll back images")[0];
+  const cleanup = activation.split("cleanup_normal_activation() {")[1].split("\n  }")[0];
+  assert.match(cleanup, /rm -f -- "\$pre_capacity_input" "\$pre_capacity_receipt"/u);
+  assert.match(cleanup, /quiesce_normal_activation_migration[\s\S]*restore_normal_activation_after_quiescence/u);
+  assert.match(cleanup, /rm -f -- "\$normal_activation_journal"/u);
+  assert.match(activation, /--max-output-bytes "\$backup_ceiling"/u);
+  assert.equal(
+    activation.lastIndexOf('write_private_state "$state_dir/schema-release" "$target"') <
+      activation.indexOf("compose run --detach"),
+    true,
+  );
 });
 
-test("release operations accept only current v14 and the exact reviewed predecessor", async () => {
+test("release operations accept only current v15 and the exact reviewed predecessor", async () => {
   const directory = await mkdtemp(join(tmpdir(), "weather-control-plane-"));
   const release = join(directory, "release.env");
 
@@ -950,7 +1344,7 @@ test("release operations accept only current v14 and the exact reviewed predeces
       [
         "WEATHER_RELEASE=2026.10.08-1",
         `WEATHER_CONTROL_PLANE_SHA256=${digest}`,
-        "WEATHER_CONTROL_PLANE_VERSION=14",
+        "WEATHER_CONTROL_PLANE_VERSION=15",
         "",
       ].join("\n"),
     );
@@ -1017,7 +1411,7 @@ test("release operations accept only current v14 and the exact reviewed predeces
       );
     }
 
-    await writeFile(release, "WEATHER_CONTROL_PLANE_VERSION=14\n");
+    await writeFile(release, "WEATHER_CONTROL_PLANE_VERSION=15\n");
     const incomplete = runBash(
       'source "$1"; require_control_plane_compatibility "$2"',
       [release],
@@ -1029,113 +1423,29 @@ test("release operations accept only current v14 and the exact reviewed predeces
 });
 
 // prove stage rejects before mutation
-test("stage rejects an unsupported current control plane before any mutation", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "weather-stage-current-gate-"));
-  const releases = join(directory, "releases");
-  const state = join(directory, "state");
-  const sourceEnv = join(directory, "source.env");
-  const transcript = join(directory, "transcript");
-
-  try {
-    await mkdir(releases);
-    await mkdir(state);
-    await writeFile(sourceEnv, "source\n");
-    const result = runBash(
-      `source "$1"
-deploy_dir=$2
-releases_dir=$3
-state_dir=$4
-transcript=$5
-test_source_env=$6
-require_file() { :; }
-require_command() { :; }
-retained_maintenance_source_env() { printf '%s\n' "$test_source_env"; }
-require_retained_maintenance_source() { :; }
-require_capacity_gate() { printf 'capacity\n' >>"$transcript"; }
-env_value() {
-  case "$2" in
-    WEATHER_SERVER_IMAGE) printf 'registry.example/weather-server\n' ;;
-    WEATHER_WEB_IMAGE) printf 'registry.example/weather-web\n' ;;
-    POSTGRES_IMAGE) printf 'postgres\n' ;;
-    CLOUDFLARED_IMAGE) printf 'cloudflare/cloudflared\n' ;;
-  esac
-}
-resolve_arm64_image() { printf 'resolve:%s\n' "$1" >>"$transcript"; printf '%s@sha256:%064d\n' "$1" 0; }
-write_release_env() { printf 'write:%s\n' "$2" >>"$transcript"; : >"$2"; }
-compose() {
-  printf 'compose:%s\n' "$*" >>"$transcript"
-  if [[ "$*" == 'config --images' ]]; then
-    printf '%s\n' \
-      'registry.example/weather-server@sha256:${"a".repeat(64)}' \
-      'registry.example/weather-web@sha256:${"b".repeat(64)}' \
-      'postgres@sha256:${"c".repeat(64)}' \
-      'cloudflare/cloudflared@sha256:${"d".repeat(64)}'
-  fi
-}
-read_optional_release_state() { printf '2026.08.22-1\n'; }
-release_env() { printf '%s/%s.env\n' "$releases_dir" "$1"; }
-validate_release_env() { :; }
-require_control_plane_compatibility() { printf 'gate:%s\n' "$1" >>"$transcript"; return 1; }
-require_deployment_secrets() { printf 'secrets\n' >>"$transcript"; }
-verify_previous_image_compatibility() { printf 'compatibility-migration\n' >>"$transcript"; }
-main stage 2026.08.22-2 --from "$6"`,
-      [directory, releases, state, transcript, sourceEnv],
-    );
-    assert.notEqual(result.status, 0);
-    const output = await readFile(transcript, "utf8");
-    assert.match(output, /gate:.*2026\.08\.22-1\.env/u);
-    assert.doesNotMatch(
-      output,
-      /capacity|resolve:|write:|compose:|secrets|compatibility-migration/u,
-    );
-  } finally {
-    await rm(directory, { force: true, recursive: true });
-  }
+test("stage rejects caller-selected predecessor arguments before mutation", () => {
+  const update = join(repoRoot, "deploy/scripts/update.sh");
+  const result = runBash(
+    'source "$1"; acquire_release_transaction_lock() { :; }; main stage 2026.08.22-2 --from /tmp/source.env',
+    [],
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /stage requires exactly one release/u);
+  const stage = readFileSync(update, "utf8").split("  stage)\n")[1].split("  activate)\n")[0];
+  assert.doesNotMatch(stage, /--from|retained_maintenance_source_env/u);
+  assert.match(stage, /source_env=\$\(normal_release_source_env\)/u);
 });
 
-test("activation never migrates or restores an unchecked current release", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "weather-activate-current-gate-"));
-  const scripts = join(directory, "scripts");
-  const transcript = join(directory, "transcript");
-
-  try {
-    await mkdir(scripts);
-    await writeFile(
-      join(scripts, "backup.sh"),
-      '#!/usr/bin/env bash\nprintf \'backup\\n\' >>"$WEATHER_TEST_TRANSCRIPT"\n',
-    );
-    await chmod(join(scripts, "backup.sh"), 0o700);
-    const result = runBash(
-      `source "$1"
-deploy_dir=$2
-state_dir=$2/state
-transcript=$3
-export WEATHER_TEST_TRANSCRIPT=$transcript
-release_env() { printf '/releases/%s.env\n' "$1"; }
-validate_release_env() { :; }
-read_optional_release_state() { printf '2026.08.22-1\n'; }
-require_capacity_gate() { :; }
-require_deployment_secrets() { :; }
-require_control_plane_compatibility() {
-  printf 'gate:%s\n' "$1" >>"$transcript"
-  [[ "$1" != */2026.08.22-1.env ]]
-}
-compose() {
-  printf 'compose:%s\n' "$*" >>"$transcript"
-  [[ "$*" != 'up -d --remove-orphans --wait' ]]
-}
-restore_images() { printf 'restore:%s\n' "$1" >>"$transcript"; }
-record_release_success() { printf 'record:%s\n' "$1" >>"$transcript"; }
-start_release 2026.08.22-2`,
-      [directory, transcript],
-    );
-    assert.notEqual(result.status, 0);
-    const output = await readFile(transcript, "utf8");
-    assert.match(output, /gate:.*2026\.08\.22-2\.env[\s\S]*gate:.*2026\.08\.22-1\.env/u);
-    assert.doesNotMatch(output, /backup|compose:|restore:|record:/u);
-  } finally {
-    await rm(directory, { force: true, recursive: true });
-  }
+test("activation gates exact target and live source identities before mutation", () => {
+  const update = readFileSync(join(repoRoot, "deploy/scripts/update.sh"), "utf8");
+  const activation = update.split("start_release() (")[1].split("\n)\n\n# roll back images")[0];
+  const targetGate = activation.indexOf('require_control_plane_compatibility "$activation_env"');
+  const sourceGate = activation.indexOf("current_env=$(normal_release_source_env)");
+  const stageReceipt = activation.indexOf("read_normal_stage_qualification");
+  const firstMutation = activation.lastIndexOf('start_postgres "$current_env"');
+  assert.equal(targetGate < sourceGate && sourceGate < stageReceipt, true);
+  assert.equal(stageReceipt < firstMutation, true);
+  assert.doesNotMatch(activation.slice(stageReceipt, firstMutation), /compose run --detach/u);
 });
 
 // prove rollback and recovery gate every release

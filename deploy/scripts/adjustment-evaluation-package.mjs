@@ -10,6 +10,7 @@ import {
   lstatSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   statfsSync,
   statSync,
 } from "node:fs";
@@ -67,6 +68,10 @@ const EXPECTED_QUERY_CONTRACT_SHA256 =
   "c860039c72818a9b813ed9f9d93f5d8e115f4144e99d698734e9159ca3457bd4";
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
+const WEATHER_GITHUB_REPOSITORY = Object.freeze({
+  fullName: "anstosa/Ballydidean-Weather",
+  id: 1_342_404_160,
+});
 const EXPECTED_MIGRATION_NAMES = [
   "0001_initial_weather.sql",
   "0002_worker_migration_readiness.sql",
@@ -165,6 +170,20 @@ const EXPECTED_ROLLING_MIGRATION_HISTORY_SHA256 = createHash("sha256").update(
     (name, index) => `${name}:${EXPECTED_ROLLING_MIGRATION_CHECKSUMS[index]}`,
   ).join("\n"),
 ).digest("hex");
+const EXPECTED_CATALOG_MIGRATION_NAMES = [
+  ...EXPECTED_ROLLING_MIGRATION_NAMES,
+  "0022_forecast_product_catalog.sql",
+];
+const EXPECTED_CATALOG_MIGRATION_CHECKSUMS = [
+  ...EXPECTED_ROLLING_MIGRATION_CHECKSUMS,
+  "8d04170868414cd17e78cde2a4d6dd8144dfd606cba4e171686523f045cb77d2",
+];
+const EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256 = createHash("sha256").update(
+  EXPECTED_CATALOG_MIGRATION_NAMES.map(
+    // bind the additive product catalog without changing the retained epoch
+    (name, index) => `${name}:${EXPECTED_CATALOG_MIGRATION_CHECKSUMS[index]}`,
+  ).join("\n"),
+).digest("hex");
 const EXPECTED_MIGRATION_LEDGERS = [
   {
     checksums: EXPECTED_MIGRATION_CHECKSUMS,
@@ -190,6 +209,11 @@ const EXPECTED_MIGRATION_LEDGERS = [
     checksums: EXPECTED_ROLLING_MIGRATION_CHECKSUMS,
     historySha256: EXPECTED_ROLLING_MIGRATION_HISTORY_SHA256,
     names: EXPECTED_ROLLING_MIGRATION_NAMES,
+  },
+  {
+    checksums: EXPECTED_CATALOG_MIGRATION_CHECKSUMS,
+    historySha256: EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256,
+    names: EXPECTED_CATALOG_MIGRATION_NAMES,
   },
 ];
 const RAIN_FIXED_GAUGE_TARGET_SOURCE_CATALOG_VERSION =
@@ -326,6 +350,7 @@ const ADJUSTMENT_FULL_V14_SOURCE_REFERENCES = new Map([
   ["web", "ghcr.io/anstosa/weather-web@sha256:34d824b03c5f84289b8f38028e751f183a953565fc929260c09b07c9e64f15ba"],
 ]);
 export const DASHBOARD_WEB_RELEASE_CAPACITY_VERSION = "dashboard-web-release-capacity/v1";
+export const NORMAL_RELEASE_CAPACITY_SCHEMA_VERSION = "normal-capacity-v1";
 const DASHBOARD_WEB_RELEASE_INVENTORY_VERSION = "dashboard-web-release-inventory/v1";
 const DASHBOARD_WEB_RELEASE_COMPENSATION_SCOPE = "fixed-core-web-only-source-restore";
 const DASHBOARD_WEB_RELEASE_CORE_COMMIT = "56b327d9c750946f6f6963b6fe1fa5c9bba791ca";
@@ -355,6 +380,20 @@ const ADJUSTMENT_RELEASE_SOURCE_REFERENCES = new Map([
 ]);
 const ADJUSTMENT_RELEASE_REFERENCE =
   /^ghcr\.io\/anstosa\/weather-(server|web)@sha256:([a-f0-9]{64})$/u;
+const NORMAL_CAPACITY_OPERATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/u;
+const NORMAL_CAPACITY_SYSTEM_IDENTIFIER_PATTERN = /^[1-9][0-9]{0,19}$/u;
+const NORMAL_CAPACITY_CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
+const NORMAL_CAPACITY_COMPOSE_PROJECT_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/u;
+const NORMAL_CAPACITY_MAXIMUM_AGE_MILLISECONDS = 5 * 60 * 1_000;
+const NORMAL_CAPACITY_MAXIMUM_FUTURE_MILLISECONDS = 30 * 1_000;
+const NORMAL_CAPACITY_SCRATCH_BYTES = 256 * 1_024 * 1_024;
+const NORMAL_CAPACITY_INODE_FLOOR = 32_768;
+const NORMAL_CAPACITY_FIXTURE_INODES = 4_096;
+const NORMAL_CAPACITY_BACKUP_HEADROOM_BYTES = 1_024 * 1_024 * 1_024;
+const NORMAL_CAPACITY_SOURCE_LEDGER_SHA256 =
+  "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424";
+const NORMAL_CAPACITY_TARGET_LEDGER_SHA256 =
+  "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e";
 const ADJUSTMENT_RELEASE_DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const ADJUSTMENT_FAMILY_RELEASE_ROOT =
   "/opt/weather/current/deploy/state/adjustment-release-state";
@@ -882,6 +921,536 @@ export function evaluateAdjustmentReleaseCapacity(input) {
   });
 }
 
+// require one exact normal-release integer measurement
+function normalCapacityInteger(value, name, minimum = 0) {
+  // prohibit negative, fractional, or inexact capacity authority
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new RangeError(`${name} is invalid`);
+  }
+  return value;
+}
+
+// require one exact normal-release instant
+function normalCapacityInstant(value, name) {
+  const milliseconds = Date.parse(value);
+
+  // prohibit normalized or non-millisecond clocks
+  if (typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) ||
+    !Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) {
+    throw new TypeError(`${name} is invalid`);
+  }
+  return milliseconds;
+}
+
+// validate immutable release identity shared by every capacity boundary
+function validateNormalCapacityReleaseIdentity(input) {
+  // bind only the exact schema-21 to schema-22 successor
+  if (!NORMAL_CAPACITY_OPERATION_ID_PATTERN.test(input.operationId) ||
+    typeof input.sourceRelease !== "string" ||
+    !/^\d{4}\.\d{2}\.\d{2}-[1-9]\d*$/u.test(input.sourceRelease) ||
+    typeof input.targetRelease !== "string" ||
+    !/^\d{4}\.\d{2}\.\d{2}-[1-9]\d*$/u.test(input.targetRelease) ||
+    input.sourceRelease === input.targetRelease ||
+    !HASH_PATTERN.test(input.sourceEnvSha256) ||
+    !HASH_PATTERN.test(input.targetEnvSha256) ||
+    input.sourceLedgerSha256 !== NORMAL_CAPACITY_SOURCE_LEDGER_SHA256 ||
+    input.targetLedgerSha256 !== NORMAL_CAPACITY_TARGET_LEDGER_SHA256 ||
+    !NORMAL_CAPACITY_SYSTEM_IDENTIFIER_PATTERN.test(input.systemIdentifier) ||
+    BigInt(input.systemIdentifier) > 18_446_744_073_709_551_615n ||
+    normalCapacityInteger(input.sourceDatabaseOid, "sourceDatabaseOid", 1) > 0xffff_ffff ||
+    input.sourceSchemaVersion !== 21 || input.targetSchemaVersion !== 22 ||
+    !NORMAL_CAPACITY_CONTAINER_ID_PATTERN.test(input.postgresContainerId) ||
+    !NORMAL_CAPACITY_COMPOSE_PROJECT_PATTERN.test(input.postgresComposeProject)) {
+    throw new Error("normal release capacity identity is invalid");
+  }
+
+  // require the literal canonical host mount source before inspection
+  if (typeof input.weatherPostgresDir !== "string" || input.weatherPostgresDir === "/" ||
+    resolve(input.weatherPostgresDir) !== input.weatherPostgresDir) {
+    throw new Error("weatherPostgresDir is invalid");
+  }
+}
+
+// validate measured filesystem identity shared by completed receipts
+function validateNormalCapacityIdentity(input) {
+  validateNormalCapacityReleaseIdentity(input);
+
+  // bind the actual SQL directory and inspected immutable container image
+  if (typeof input.postgresDataDirectory !== "string" ||
+    input.postgresDataDirectory === "/" || resolve(input.postgresDataDirectory) !==
+      input.postgresDataDirectory ||
+    !ADJUSTMENT_RELEASE_DIGEST.test(input.postgresContainerImageId) ||
+    !/^[^@\s]+@sha256:[a-f0-9]{64}$/u.test(input.postgresContainerImageReference)) {
+    throw new Error("normal release PostgreSQL identity is invalid");
+  }
+  normalCapacityInteger(input.weatherPostgresDirFilesystemDevice,
+    "weatherPostgresDirFilesystemDevice", 1);
+  normalCapacityInteger(input.postgresDataFilesystemDevice,
+    "postgresDataFilesystemDevice", 1);
+}
+
+// bind four immutable source and target images to their repository roles
+function validateNormalStageImageReferences(imageReferences) {
+  if (!Array.isArray(imageReferences) || imageReferences.length !== 4) {
+    throw new Error("normal stage image references are invalid");
+  }
+  const images = new Map();
+
+  // reject aliases, role duplication, or repository/runtime mismatch
+  for (const image of imageReferences) {
+    requireExactKeys(image, ["reference", "role", "runtime"],
+      "normal stage image reference");
+    const parsed = ADJUSTMENT_RELEASE_REFERENCE.exec(image.reference);
+    const role = `${image.role}/${image.runtime}`;
+
+    // require one immutable image for every source and target runtime
+    if (!["source", "target"].includes(image.role) ||
+      !ADJUSTMENT_RELEASE_RUNTIMES.includes(image.runtime) || parsed?.[1] !== image.runtime ||
+      images.has(role)) {
+      throw new Error("normal stage image references are invalid");
+    }
+    images.set(role, image.reference);
+  }
+  return ["source/server", "source/web", "target/server", "target/web"].map((role) => {
+    const reference = images.get(role);
+
+    // require the complete four-role matrix
+    if (reference === undefined) throw new Error("normal stage image references are invalid");
+    return reference;
+  });
+}
+
+// require one evaluator-owned capacity clock
+function normalCapacityTrustedInstant(value) {
+  // accept only a finite real Date supplied by the caller's trusted boundary
+  if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
+    throw new TypeError("trusted normal capacity clock is invalid");
+  }
+  return value.toISOString();
+}
+
+// validate one observation against the evaluator-owned current time
+function validateNormalCapacityClock(input, trustedNow) {
+  const capturedAt = normalCapacityInstant(input.capturedAt, "capturedAt");
+  const evaluatedAtValue = normalCapacityTrustedInstant(trustedNow);
+  const evaluatedAt = Date.parse(evaluatedAtValue);
+  const age = evaluatedAt - capturedAt;
+
+  // refuse stale observations or capture clocks later than evaluation
+  if (age > NORMAL_CAPACITY_MAXIMUM_AGE_MILLISECONDS || age < 0) {
+    throw new Error("normal release capacity observation is stale");
+  }
+  return evaluatedAtValue;
+}
+
+// close one canonical normal-release receipt
+function closeNormalCapacityReceipt(
+  input,
+  evaluatedAt,
+  operation,
+  requiredBytes,
+  requiredInodes,
+  reasons,
+) {
+  const receipt = {
+    ...input,
+    evaluatedAt,
+    operation,
+    reasons: [...reasons].sort(),
+    requiredBytes,
+    requiredInodes,
+    schemaVersion: NORMAL_RELEASE_CAPACITY_SCHEMA_VERSION,
+    state: reasons.length === 0 ? "capacity_ready" : "capacity_blocked",
+  };
+  return Object.freeze({
+    ...receipt,
+    receiptSha256: sha256(Buffer.from(canonicalJson(receipt))),
+  });
+}
+
+// evaluate the measured full-copy normal release stage envelope
+export function evaluateNormalStageCapacity(input, trustedNow = new Date()) {
+  const keys = [
+    "activeDatabaseBytes", "captureReserveBytes", "capturedAt",
+    "fixtureInodes", "freeBytes", "freeInodes", "imagePullPeakBytes",
+    "imageReferences", "inodeFloor", "largestSourceIndexBytes", "maxWalBytes",
+    "newImageInodes", "operationId", "persistentImageGrowthBytes", "phase",
+    "postgresComposeProject", "postgresContainerId", "postgresContainerImageId",
+    "postgresContainerImageReference", "postgresDataDirectory",
+    "postgresDataFilesystemDevice", "protectedFloorBytes",
+    "retirementCreditBytes", "scratchBytes", "sourceDatabaseFileCount",
+    "sourceDatabaseOid", "sourceEnvSha256", "sourceLedgerSha256", "sourceRelease",
+    "sourceSchemaVersion", "systemIdentifier", "targetEnvSha256", "targetLedgerSha256",
+    "targetRelease", "targetSchemaVersion", "weatherPostgresDir",
+    "weatherPostgresDirFilesystemDevice",
+  ];
+  requireExactKeys(input, keys, "normal stage capacity input");
+  validateNormalCapacityIdentity(input);
+  const evaluatedAt = validateNormalCapacityClock(input, trustedNow);
+
+  // require the reviewed fixed reserves and zero speculative deletion credit
+  if (!["pre_pull", "post_pull"].includes(input.phase) ||
+    input.protectedFloorBytes !== BLUEBERRY_PROTECTED_FREE_BYTES ||
+    input.captureReserveBytes !== BLUEBERRY_NEXT_CAPTURE_BYTES ||
+    input.scratchBytes !== NORMAL_CAPACITY_SCRATCH_BYTES ||
+    input.inodeFloor !== NORMAL_CAPACITY_INODE_FLOOR ||
+    input.fixtureInodes !== NORMAL_CAPACITY_FIXTURE_INODES ||
+    input.retirementCreditBytes !== 0) {
+    throw new Error("normal stage capacity constants are invalid");
+  }
+  const measuredNames = ["freeBytes", "freeInodes", "imagePullPeakBytes",
+    "persistentImageGrowthBytes", "activeDatabaseBytes", "largestSourceIndexBytes",
+    "maxWalBytes", "newImageInodes", "sourceDatabaseFileCount"];
+
+  // require every physical fact to be an exact nonnegative integer
+  for (const name of measuredNames) {
+    normalCapacityInteger(input[name], name, name === "activeDatabaseBytes" ||
+      name === "sourceDatabaseFileCount" ? 1 : 0);
+  }
+  validateNormalStageImageReferences(input.imageReferences);
+  const migrationPeakBytes = adjustmentReleaseSum(
+    input.activeDatabaseBytes,
+    input.largestSourceIndexBytes,
+    adjustmentReleaseSum(input.maxWalBytes, input.maxWalBytes),
+    input.scratchBytes,
+  );
+  const transactionPeakBytes = input.phase === "pre_pull"
+    ? Math.max(input.imagePullPeakBytes, adjustmentReleaseSum(
+      input.persistentImageGrowthBytes,
+      migrationPeakBytes,
+    ))
+    : migrationPeakBytes;
+  const requiredBytes = adjustmentReleaseSum(
+    input.protectedFloorBytes,
+    input.captureReserveBytes,
+    transactionPeakBytes,
+  );
+  const requiredInodes = adjustmentReleaseSum(
+    input.inodeFloor,
+    input.phase === "pre_pull" ? input.newImageInodes : 0,
+    input.sourceDatabaseFileCount,
+    input.fixtureInodes,
+  );
+  const reasons = [];
+
+  // preserve both the byte and inode envelope on the database filesystem
+  if (input.weatherPostgresDirFilesystemDevice !== input.postgresDataFilesystemDevice) {
+    reasons.push("postgres_filesystem_mismatch");
+  }
+  if (input.freeBytes < requiredBytes) reasons.push("insufficient_free_bytes");
+  if (input.freeInodes < requiredInodes) reasons.push("insufficient_free_inodes");
+  return closeNormalCapacityReceipt(
+    input,
+    evaluatedAt,
+    "stage",
+    requiredBytes,
+    requiredInodes,
+    reasons,
+  );
+}
+
+// evaluate the bounded-backup normal release activation envelope
+export function evaluateNormalActivationCapacity(input, trustedNow = new Date()) {
+  const keys = [
+    "actualBackupBytes", "backupHeadroomBytes", "boundedBackupCeilingBytes",
+    "captureReserveBytes", "capturedAt", "fixtureInodes", "freeBytes",
+    "freeInodes", "inodeFloor", "liveDatabaseBytes", "measuredMigrationPeakBytes",
+    "measuredMigrationPeakInodes", "operationId", "phase", "postgresDataDirectory",
+    "postgresComposeProject", "postgresContainerId", "postgresContainerImageId",
+    "postgresContainerImageReference", "postgresDataFilesystemDevice",
+    "protectedFloorBytes", "retirementCreditBytes",
+    "sourceDatabaseOid", "sourceEnvSha256", "sourceLedgerSha256", "sourceRelease",
+    "sourceSchemaVersion", "stageReceiptSha256", "systemIdentifier", "targetEnvSha256",
+    "targetLedgerSha256", "targetRelease", "targetSchemaVersion", "weatherPostgresDir",
+    "weatherPostgresDirFilesystemDevice",
+  ];
+  requireExactKeys(input, keys, "normal activation capacity input");
+  validateNormalCapacityIdentity(input);
+  const evaluatedAt = validateNormalCapacityClock(input, trustedNow);
+
+  // retain the stage authority and fixed backup/inode envelopes
+  if (!["pre_backup", "post_backup"].includes(input.phase) ||
+    !HASH_PATTERN.test(input.stageReceiptSha256) ||
+    input.protectedFloorBytes !== BLUEBERRY_PROTECTED_FREE_BYTES ||
+    input.captureReserveBytes !== BLUEBERRY_NEXT_CAPTURE_BYTES ||
+    input.backupHeadroomBytes !== NORMAL_CAPACITY_BACKUP_HEADROOM_BYTES ||
+    input.inodeFloor !== NORMAL_CAPACITY_INODE_FLOOR ||
+    input.fixtureInodes !== NORMAL_CAPACITY_FIXTURE_INODES ||
+    input.retirementCreditBytes !== 0) {
+    throw new Error("normal activation capacity constants are invalid");
+  }
+  for (const name of ["actualBackupBytes", "boundedBackupCeilingBytes", "freeBytes",
+    "freeInodes", "liveDatabaseBytes", "measuredMigrationPeakBytes",
+    "measuredMigrationPeakInodes"]) {
+    normalCapacityInteger(input[name], name, name === "liveDatabaseBytes" ? 1 : 0);
+  }
+  const expectedBackupCeiling = adjustmentReleaseSum(
+    input.liveDatabaseBytes,
+    input.backupHeadroomBytes,
+  );
+
+  // prohibit a lowered ceiling or a fabricated pre-backup allocation
+  if (input.boundedBackupCeilingBytes !== expectedBackupCeiling ||
+    (input.phase === "pre_backup" && input.actualBackupBytes !== 0)) {
+    throw new Error("normal activation backup envelope is invalid");
+  }
+  const backupCeilingExceeded = input.actualBackupBytes > input.boundedBackupCeilingBytes;
+  let remainingBackupBytes = input.boundedBackupCeilingBytes;
+
+  // reserve only the unconsumed backup ceiling after the measured backup exists
+  if (input.phase === "post_backup") {
+    remainingBackupBytes = backupCeilingExceeded
+      ? 0
+      : input.boundedBackupCeilingBytes - input.actualBackupBytes;
+  }
+  const requiredBytes = adjustmentReleaseSum(
+    input.protectedFloorBytes,
+    input.captureReserveBytes,
+    remainingBackupBytes,
+    input.measuredMigrationPeakBytes,
+  );
+  const requiredInodes = adjustmentReleaseSum(
+    input.inodeFloor,
+    input.measuredMigrationPeakInodes,
+    input.fixtureInodes,
+  );
+  const reasons = [];
+
+  // preserve the complete admitted backup and measured migration peak together
+  if (input.weatherPostgresDirFilesystemDevice !== input.postgresDataFilesystemDevice) {
+    reasons.push("postgres_filesystem_mismatch");
+  }
+  if (backupCeilingExceeded) {
+    reasons.push("bounded_backup_ceiling_exceeded");
+  }
+  if (input.freeBytes < requiredBytes) reasons.push("insufficient_free_bytes");
+  if (input.freeInodes < requiredInodes) reasons.push("insufficient_free_inodes");
+  return closeNormalCapacityReceipt(
+    input,
+    evaluatedAt,
+    "activation",
+    requiredBytes,
+    requiredInodes,
+    reasons,
+  );
+}
+
+// revalidate one stored normal capacity receipt and every echoed input fact
+export function validateNormalCapacityReceipt(value, trustedNow = new Date()) {
+  const receipt = requireObject(value, "normal capacity receipt");
+  const input = { ...receipt };
+  const evaluatedAt = normalCapacityInstant(receipt.evaluatedAt, "evaluatedAt");
+  const trustedAt = Date.parse(normalCapacityTrustedInstant(trustedNow));
+  const receiptAge = trustedAt - evaluatedAt;
+
+  // reject a stored evaluation outside the real caller-owned current-time window
+  if (receiptAge > NORMAL_CAPACITY_MAXIMUM_AGE_MILLISECONDS ||
+    receiptAge < -NORMAL_CAPACITY_MAXIMUM_FUTURE_MILLISECONDS) {
+    throw new Error("normal capacity receipt is stale");
+  }
+
+  // remove only the derived receipt fields before exact input validation
+  for (const name of ["evaluatedAt", "operation", "reasons", "receiptSha256", "requiredBytes",
+    "requiredInodes", "schemaVersion", "state"]) {
+    delete input[name];
+  }
+  const expected = receipt.operation === "stage"
+    ? evaluateNormalStageCapacity(input, new Date(evaluatedAt))
+    : receipt.operation === "activation"
+      ? evaluateNormalActivationCapacity(input, new Date(evaluatedAt))
+      : null;
+
+  // reject every unknown operation, changed fact, formula, reason, state, or digest
+  if (expected === null || canonicalJson(receipt) !== canonicalJson(expected)) {
+    throw new Error("normal capacity receipt differs");
+  }
+  return expected;
+}
+
+// read one bounded PostgreSQL data_directory from the exact running container
+function collectNormalPostgresDataDirectory(containerId, execute) {
+  let output;
+
+  // ask PostgreSQL itself instead of accepting a caller-shaped container path
+  try {
+    output = execute("docker", ["exec", containerId, "psql", "--no-psqlrc",
+      "--set=ON_ERROR_STOP=1", "--username", "postgres", "--dbname", "postgres",
+      "--tuples-only", "--no-align", "--command", "SHOW data_directory"], {
+      encoding: "utf8",
+      maxBuffer: 16_384,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    throw new Error("normal capacity PostgreSQL data directory inspection failed");
+  }
+  const lines = output.split(/\r?\n/u).filter((line) => line.length > 0);
+
+  // require one literal canonical absolute directory
+  if (Buffer.byteLength(output) > 16_384 || lines.length !== 1 || lines[0] === "/" ||
+    resolve(lines[0]) !== lines[0]) {
+    throw new Error("normal capacity PostgreSQL data directory is invalid");
+  }
+  return lines[0];
+}
+
+// measure the host filesystem backing the exact running PostgreSQL container
+export function collectNormalDatabaseFilesystemCapacity(input, options = {}) {
+  let output;
+  const execute = options.execute ?? execFileSync;
+  const realpathHost = options.realpath ?? realpathSync;
+  const statFilesystem = options.statFilesystem ?? statfsSync;
+  const statHost = options.stat ?? statSync;
+
+  // inspect only the exact Compose-selected container identity
+  try {
+    output = execute("docker", ["inspect", "--format", "{{json .}}",
+      input.postgresContainerId], {
+      encoding: "utf8",
+      maxBuffer: 1_048_576,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    throw new Error("normal capacity PostgreSQL container inspection failed");
+  }
+  if (Buffer.byteLength(output) > 1_048_576) {
+    throw new Error("normal capacity PostgreSQL container inspection exceeds its bound");
+  }
+  const inspected = JSON.parse(output);
+  const dataDirectory = collectNormalPostgresDataDirectory(input.postgresContainerId, execute);
+
+  // prove the exact running Compose service and immutable container image
+  if (inspected.Id !== input.postgresContainerId || inspected.State?.Running !== true ||
+    inspected.Config?.Labels?.["com.docker.compose.project"] !== input.postgresComposeProject ||
+    inspected.Config?.Labels?.["com.docker.compose.service"] !== "postgres" ||
+    !ADJUSTMENT_RELEASE_DIGEST.test(inspected.Image) ||
+    !/^[^@\s]+@sha256:[a-f0-9]{64}$/u.test(inspected.Config?.Image) ||
+    !Array.isArray(inspected.Mounts)) {
+    throw new Error("normal capacity PostgreSQL container identity is invalid");
+  }
+  const matchingMounts = inspected.Mounts.filter((mount) =>
+    dataDirectory === mount.Destination || dataDirectory.startsWith(`${mount.Destination}/`));
+
+  // reject nested mount shadowing and require the reviewed writable bind source
+  if (matchingMounts.length !== 1 || matchingMounts[0].Type !== "bind" ||
+    matchingMounts[0].RW !== true || matchingMounts[0].Source !== input.weatherPostgresDir ||
+    realpathHost(matchingMounts[0].Source) !== input.weatherPostgresDir) {
+    throw new Error("normal capacity PostgreSQL bind mount is invalid");
+  }
+  const mount = matchingMounts[0];
+  const suffix = relative(mount.Destination, dataDirectory);
+  const hostDataDirectory = resolve(mount.Source, suffix);
+  const canonicalHostDataDirectory = realpathHost(hostDataDirectory);
+
+  // keep the SQL-selected directory inside the canonical reviewed host source
+  if (suffix.startsWith(`..${sep}`) || suffix === ".." ||
+    (canonicalHostDataDirectory !== input.weatherPostgresDir &&
+      !canonicalHostDataDirectory.startsWith(`${input.weatherPostgresDir}${sep}`))) {
+    throw new Error("normal capacity PostgreSQL data directory escapes its bind mount");
+  }
+  const mountStatus = statHost(input.weatherPostgresDir, { bigint: true });
+  const dataStatus = statHost(canonicalHostDataDirectory, { bigint: true });
+  const filesystem = statFilesystem(canonicalHostDataDirectory, { bigint: true });
+  const freeBytes = filesystem.bavail * filesystem.bsize;
+
+  // retain exact host facts and detect a nested host filesystem boundary
+  if (!mountStatus.isDirectory() || !dataStatus.isDirectory() || mountStatus.dev < 1n ||
+    dataStatus.dev < 1n || mountStatus.dev > BigInt(Number.MAX_SAFE_INTEGER) ||
+    dataStatus.dev > BigInt(Number.MAX_SAFE_INTEGER) ||
+    freeBytes > BigInt(Number.MAX_SAFE_INTEGER) ||
+    filesystem.ffree > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("normal capacity PostgreSQL filesystem exceeds exact measurement bounds");
+  }
+  return {
+    freeBytes: Number(freeBytes),
+    freeInodes: Number(filesystem.ffree),
+    postgresContainerImageId: inspected.Image,
+    postgresContainerImageReference: inspected.Config.Image,
+    postgresDataDirectory: dataDirectory,
+    postgresDataFilesystemDevice: Number(dataStatus.dev),
+    weatherPostgresDirFilesystemDevice: Number(mountStatus.dev),
+  };
+}
+
+// derive image growth from exact registry manifests and local Docker layers
+async function collectNormalStageImageCapacity(input) {
+  const [sourceServer, sourceWeb, targetServer, targetWeb] =
+    validateNormalStageImageReferences(input.imageReferences);
+  const record = await collectLiteralReleaseCapacity([
+    sourceServer, sourceWeb, targetServer, targetWeb, sourceServer, sourceWeb,
+  ]);
+  const inventory = collectReleaseCapacityInventory({
+    ...record,
+    compensationScope: "normal-schema-release-source-restore",
+    sourceRelease: input.sourceRelease,
+    version: "normal-stage-release-inventory/v1",
+  }, "normal");
+  const measured = evaluateAdjustmentReleaseCapacity(inventory);
+  return {
+    imagePullPeakBytes: measured.pullPeakGrowthBytes,
+    newImageInodes: adjustmentReleaseSum(
+      measured.newLayerInodes,
+      ADJUSTMENT_RELEASE_ENGINE_METADATA_INODES,
+    ),
+    persistentImageGrowthBytes: measured.persistentGrowthBytes,
+  };
+}
+
+// collect authoritative stage facts before applying the pure reviewed formula
+export async function collectNormalStageCapacity(input, options = {}) {
+  const keys = [
+    "activeDatabaseBytes", "captureReserveBytes", "capturedAt", "fixtureInodes",
+    "imageReferences", "inodeFloor", "largestSourceIndexBytes", "maxWalBytes",
+    "operationId", "phase", "postgresComposeProject", "postgresContainerId",
+    "protectedFloorBytes", "retirementCreditBytes", "scratchBytes",
+    "sourceDatabaseFileCount", "sourceDatabaseOid", "sourceEnvSha256",
+    "sourceLedgerSha256", "sourceRelease", "sourceSchemaVersion", "systemIdentifier",
+    "targetEnvSha256", "targetLedgerSha256", "targetRelease", "targetSchemaVersion",
+    "weatherPostgresDir",
+  ];
+  requireExactKeys(input, keys, "normal stage capacity collection input");
+  const trustedNow = options.trustedNow ?? new Date();
+  validateNormalCapacityReleaseIdentity(input);
+  validateNormalCapacityClock(input, trustedNow);
+  validateNormalStageImageReferences(input.imageReferences);
+  const collectFilesystem = options.collectFilesystem ?? collectNormalDatabaseFilesystemCapacity;
+  const collectImages = options.collectImages ?? collectNormalStageImageCapacity;
+  const filesystem = await collectFilesystem(input);
+  const images = await collectImages(input);
+  requireExactKeys(filesystem, ["freeBytes", "freeInodes", "postgresContainerImageId",
+    "postgresContainerImageReference", "postgresDataDirectory",
+    "postgresDataFilesystemDevice", "weatherPostgresDirFilesystemDevice"],
+  "normal stage filesystem collection");
+  requireExactKeys(images, ["imagePullPeakBytes", "newImageInodes",
+    "persistentImageGrowthBytes"], "normal stage image collection");
+  return evaluateNormalStageCapacity({ ...input, ...filesystem, ...images }, trustedNow);
+}
+
+// collect authoritative activation facts before applying the pure reviewed formula
+export async function collectNormalActivationCapacity(input, options = {}) {
+  const keys = [
+    "actualBackupBytes", "backupHeadroomBytes", "boundedBackupCeilingBytes",
+    "captureReserveBytes", "capturedAt", "fixtureInodes", "inodeFloor",
+    "liveDatabaseBytes", "measuredMigrationPeakBytes", "measuredMigrationPeakInodes",
+    "operationId", "phase", "postgresComposeProject", "postgresContainerId",
+    "protectedFloorBytes", "retirementCreditBytes", "sourceDatabaseOid",
+    "sourceEnvSha256", "sourceLedgerSha256", "sourceRelease", "sourceSchemaVersion",
+    "stageReceiptSha256", "systemIdentifier", "targetEnvSha256", "targetLedgerSha256",
+    "targetRelease", "targetSchemaVersion", "weatherPostgresDir",
+  ];
+  requireExactKeys(input, keys, "normal activation capacity collection input");
+  const trustedNow = options.trustedNow ?? new Date();
+  validateNormalCapacityReleaseIdentity(input);
+  validateNormalCapacityClock(input, trustedNow);
+  const collectFilesystem = options.collectFilesystem ?? collectNormalDatabaseFilesystemCapacity;
+  const filesystem = await collectFilesystem(input);
+  requireExactKeys(filesystem, ["freeBytes", "freeInodes", "postgresContainerImageId",
+    "postgresContainerImageReference", "postgresDataDirectory",
+    "postgresDataFilesystemDevice", "weatherPostgresDirFilesystemDevice"],
+  "normal activation filesystem collection");
+  return evaluateNormalActivationCapacity({ ...input, ...filesystem }, trustedNow);
+}
+
 const MODEL_ACTION_CONTRACT_VERSION = "forecast-adjustment-model-action/v1";
 const RAIN_CONTROL_REFERENCE_ACTION_CONTRACT_VERSION =
   "forecast-adjustment-rain-control-reference-action/v1";
@@ -1055,12 +1624,10 @@ export async function verifyAdjustmentFamilyGitRelease({ action, targetRelease, 
   } else {
     validateAdjustmentFamilyChangedPaths(action, compare.files);
   }
-  const repositoryId = 1_342_404_160;
-  const repositoryName = "anstosa/weather";
   const check = await readJson(`actions/workflows/check.yml/runs?head_sha=${targetCommit}&event=push&per_page=100`);
   const publish = await readJson(`actions/workflows/publish-images.yml/runs?head_sha=${targetCommit}&event=push&per_page=100`);
-  const checkRun = requireLatestWeatherWorkflow(check, targetCommit, repositoryId, repositoryName, "check.yml");
-  const publishRun = requireLatestWeatherWorkflow(publish, targetCommit, repositoryId, repositoryName, "publish-images.yml");
+  const checkRun = requireLatestWeatherWorkflow(check, targetCommit, "check.yml");
+  const publishRun = requireLatestWeatherWorkflow(publish, targetCommit, "publish-images.yml");
 
   // immutable tag publication must follow the authoritative exact-commit branch check
   if (Date.parse(checkRun.updated_at) > Date.parse(publishRun.created_at) ||
@@ -1101,8 +1668,8 @@ async function verifyAdjustmentDirectChildRelease({ expectedSourceCommit, expect
   }
   const check = await readJson(`actions/workflows/check.yml/runs?head_sha=${targetCommit}&event=push&per_page=100`);
   const publish = await readJson(`actions/workflows/publish-images.yml/runs?head_sha=${targetCommit}&event=push&per_page=100`);
-  const checkRun = requireLatestWeatherWorkflow(check, targetCommit, 1_342_404_160, "anstosa/weather", "check.yml");
-  const publishRun = requireLatestWeatherWorkflow(publish, targetCommit, 1_342_404_160, "anstosa/weather", "publish-images.yml");
+  const checkRun = requireLatestWeatherWorkflow(check, targetCommit, "check.yml");
+  const publishRun = requireLatestWeatherWorkflow(publish, targetCommit, "publish-images.yml");
   // the exact branch check must finish before the immutable release publish
   if (!Number.isFinite(Date.parse(checkRun.updated_at)) ||
     Date.parse(checkRun.updated_at) > Date.parse(publishRun.created_at)) {
@@ -1182,8 +1749,8 @@ export async function verifyDashboardWebGitRelease(
   }
   const check = await readJson(`actions/workflows/check.yml/runs?head_sha=${targetCommit}&event=push&per_page=100`);
   const publish = await readJson(`actions/workflows/publish-images.yml/runs?head_sha=${targetCommit}&event=push&per_page=100`);
-  const checkRun = requireLatestWeatherWorkflow(check, targetCommit, 1_342_404_160, "anstosa/weather", "check.yml");
-  const publishRun = requireLatestWeatherWorkflow(publish, targetCommit, 1_342_404_160, "anstosa/weather", "publish-images.yml");
+  const checkRun = requireLatestWeatherWorkflow(check, targetCommit, "check.yml");
+  const publishRun = requireLatestWeatherWorkflow(publish, targetCommit, "publish-images.yml");
   // match this tag and preserve Check-before-Publish ordering
   if (publishRun.head_branch !== targetRelease ||
     !Number.isFinite(Date.parse(checkRun.updated_at)) ||
@@ -1271,7 +1838,7 @@ async function resolvePublicWeatherTag(release, readJson) {
 }
 
 // select the latest complete same-repository push run without stale-success fallback
-function requireLatestWeatherWorkflow(document, commit, repositoryId, repositoryName, filename) {
+function requireLatestWeatherWorkflow(document, commit, filename) {
   // incomplete pages could conceal a failed newer attempt
   if (!Number.isSafeInteger(document.total_count) || document.total_count < 1 ||
     document.total_count > 100 || !Array.isArray(document.workflow_runs) ||
@@ -1279,8 +1846,12 @@ function requireLatestWeatherWorkflow(document, commit, repositoryId, repository
     throw new Error("Weather workflow evidence is incomplete");
   }
   const runs = document.workflow_runs.filter((run) => run.head_sha === commit && run.event === "push" &&
-    run.repository?.id === repositoryId && run.repository?.full_name === repositoryName &&
-    run.head_repository?.id === repositoryId && run.head_repository?.full_name === repositoryName);
+    run.repository?.id === WEATHER_GITHUB_REPOSITORY.id &&
+    run.repository?.full_name === WEATHER_GITHUB_REPOSITORY.fullName &&
+    run.repository?.fork === false &&
+    run.head_repository?.id === WEATHER_GITHUB_REPOSITORY.id &&
+    run.head_repository?.full_name === WEATHER_GITHUB_REPOSITORY.fullName &&
+    run.head_repository?.fork === false);
 
   // malformed scoped evidence cannot reveal an older successful run
   if (runs.length === 0 || runs.some((run) =>
@@ -1301,7 +1872,8 @@ function requireLatestWeatherWorkflow(document, commit, repositoryId, repository
 
 // read only bounded public GitHub metadata without a new credential or redirect
 async function readPublicWeatherGitJson(suffix) {
-  const url = new URL(`/repos/anstosa/weather/${suffix}`, "https://api.github.com");
+  const url = new URL(`/repos/${WEATHER_GITHUB_REPOSITORY.fullName}/${suffix}`,
+    "https://api.github.com");
   const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(15_000),
     headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10" } });
 
@@ -3487,7 +4059,8 @@ function installedFamilyReceiptSha256(catalog, family, slot = "shadow") {
 
 // fetch bounded public repository metadata through an injected transport
 async function readPublicWeatherGitJsonWithFetch(suffix, fetchImpl) {
-  const url = new URL(`/repos/anstosa/weather/${suffix}`, "https://api.github.com");
+  const url = new URL(`/repos/${WEATHER_GITHUB_REPOSITORY.fullName}/${suffix}`,
+    "https://api.github.com");
   const response = await fetchImpl(url, { redirect: "error", signal: AbortSignal.timeout(15_000),
     headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10" } });
 
@@ -5915,13 +6488,33 @@ export function validateAdjustmentV14DatabaseManifest(value) {
   return manifest;
 }
 
-// require the complete reviewed rolling schedule for new maintenance activation
+// require one exact live rolling or catalog ledger
 export function validateAdjustmentV14RollingDatabaseManifest(value) {
   const manifest = validateCompleteMaintenanceDatabaseManifest(value);
-  // reject legacy and partial function graphs at the current deployment boundary
-  if (manifest.migration_names.length !== 21 ||
-    manifest.migration_names.at(-1) !== "0021_adjustment_rolling_registration.sql") {
+  // admit only the pre-catalog and additive catalog live schemas
+  if (![EXPECTED_ROLLING_MIGRATION_HISTORY_SHA256,
+    EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256].includes(manifest.migration_history_sha256)) {
+    throw new Error("rolling v14 requires an exact live ledger");
+  }
+  return manifest;
+}
+
+// require the exact retained 0021 historical handoff ledger
+function validateAdjustmentV14RollingActivationDatabaseManifest(value) {
+  const manifest = validateCompleteMaintenanceDatabaseManifest(value);
+  // reject the later normal-release catalog extension
+  if (manifest.migration_history_sha256 !== EXPECTED_ROLLING_MIGRATION_HISTORY_SHA256) {
     throw new Error("rolling v14 requires the exact complete 0021 ledger");
+  }
+  return manifest;
+}
+
+// require the exact additive catalog ledger for a normal release
+export function validateAdjustmentV15CatalogDatabaseManifest(value) {
+  const manifest = validateCompleteMaintenanceDatabaseManifest(value);
+  // reject the retained capture ledger and every later suffix
+  if (manifest.migration_history_sha256 !== EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256) {
+    throw new Error("normal v15 requires the exact complete 0022 ledger");
   }
   return manifest;
 }
@@ -6742,8 +7335,12 @@ export function projectAdjustmentRegistrationScheduleStatusV3(value, epochWitnes
     // occupied slots retain their exact terminal clock rather than a fabricated deadline
     if (slot.terminalAt !== null) validateV2Instant(slot.terminalAt, "registration terminal");
   }
-  // bind the actual database history and transaction clock to the retained epoch
-  if (witness.databaseMigrationHistorySha256 !== ledger.databaseManifest.migration_history_sha256 ||
+  // bind only the retained 0021 witness to an exact 0021 or 0022 live ledger
+  if (witness.databaseMigrationHistorySha256 !== EXPECTED_ROLLING_MIGRATION_HISTORY_SHA256 ||
+    ![EXPECTED_ROLLING_MIGRATION_HISTORY_SHA256,
+      EXPECTED_CATALOG_MIGRATION_HISTORY_SHA256].includes(
+      ledger.databaseManifest.migration_history_sha256,
+    ) ||
     Date.parse(ledger.snapshotAt) < Date.parse(witness.epochAt) ||
     Date.parse(slots[0].horizonEndAt) <= Date.parse(witness.epochAt)) {
     throw new Error("registration schedule database epoch differs");
@@ -9094,6 +9691,26 @@ async function main() {
     return;
   }
 
+  // evaluate one canonical normal stage or activation capacity document
+  if (command === "normal-stage-capacity" || command === "normal-activation-capacity") {
+    if (argumentsList.length !== 0) throw new Error(`${command} takes no arguments`);
+    const bytes = await readBoundedScheduleMetadata(16 * 1_024);
+    const input = JSON.parse(bytes.toString("utf8"));
+
+    // reject noncanonical or multiply framed capacity evidence
+    if (!bytes.equals(Buffer.from(canonicalJson(input)))) {
+      throw new Error("normal capacity input is not canonical");
+    }
+    const receipt = command === "normal-stage-capacity"
+      ? await collectNormalStageCapacity(input)
+      : await collectNormalActivationCapacity(input);
+    process.stdout.write(canonicalJson(receipt));
+
+    // preserve the complete refusal receipt while returning a failing gate
+    if (receipt.state !== "capacity_ready") process.exitCode = 3;
+    return;
+  }
+
   // collect and enforce the fixed inert v13 literal image capacity
   if (command === "release-capacity") {
     if (argumentsList.length !== 4) {
@@ -9177,6 +9794,7 @@ async function main() {
   if (command === "verify-maintenance-ledger-v13-compatibility" ||
     command === "verify-maintenance-ledger-v14" ||
     command === "verify-maintenance-ledger-v14-rolling" ||
+    command === "verify-maintenance-ledger-v15-catalog" ||
     command === "project-maintenance-ledger-v3") {
     if (argumentsList.length !== 0) throw new Error(`${command} takes no arguments`);
     const chunks = [];
@@ -9194,7 +9812,9 @@ async function main() {
     } else if (command === "verify-maintenance-ledger-v13-compatibility") {
       validateAdjustmentV13CompatibilityDatabaseManifest(manifest);
     } else if (command === "verify-maintenance-ledger-v14-rolling") {
-      validateAdjustmentV14RollingDatabaseManifest(manifest);
+      validateAdjustmentV14RollingActivationDatabaseManifest(manifest);
+    } else if (command === "verify-maintenance-ledger-v15-catalog") {
+      validateAdjustmentV15CatalogDatabaseManifest(manifest);
     } else {
       validateAdjustmentV14DatabaseManifest(manifest);
     }

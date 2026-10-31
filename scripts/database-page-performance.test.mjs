@@ -25,6 +25,7 @@ import {
   evaluateEvidence,
   nearestRankPercentile,
   parseDockerContainerObservation,
+  parseSupervisorDatabaseObservation,
   pgdataColdProofBindingSha256,
   requiredTiersForEndpoint,
   runCli,
@@ -417,6 +418,94 @@ function validSupervisorConfiguration(overrides = {}) {
   };
 }
 
+// freeze one D-backed storage identity
+function dLoopStorageIdentity() {
+  return {
+    backingFile: "/mnt/d/Weather-DB-benchmark-20261030T0424Z/benchmark.ext4",
+    backingFileBytes: 137_438_953_472,
+    loopDevice: "/dev/loop0",
+    loopUuid: "439491a2-6408-4c49-b9e4-36044f1ef084",
+    mount: "/mnt/weather-db-benchmark-20261030t0424z",
+    mountSource: "/dev/loop0",
+    volumeNames: [
+      "weather-b5d-20261030t0424z-proofSeed",
+      "database-volume",
+      "weather-b10d-query-candidate",
+      "weather-b10d-write-baseline",
+      "weather-b10d-write-candidate",
+    ],
+  };
+}
+
+// build one complete raw D-loop eviction proof
+function dLoopColdProof(overrides = {}) {
+  const storageIdentity = dLoopStorageIdentity();
+  const target = {
+    fileCount: 1_485,
+    inventoryAfterSha256: "b".repeat(64),
+    inventoryBeforeSha256: "b".repeat(64),
+    pgdataRoot: `${storageIdentity.mount}/queryBaseline`,
+    postmasterPidAbsent: true,
+    totalBytes: 15_267_659_335,
+    volumeName: "database-volume",
+  };
+  const inner = {
+    completedAt: "2026-10-28T16:59:57.000Z",
+    completedFiles: target.fileCount,
+    fadviseCompleted: true,
+    fallbackUsed: false,
+    mincoreCompleted: true,
+    startedAt: "2026-10-28T16:59:50.000Z",
+    totalPages: 3_726_479,
+    totalResidentAfter: 0,
+  };
+  const outer = {
+    backingFileBytes: storageIdentity.backingFileBytes,
+    completedAt: "2026-10-28T16:59:59.000Z",
+    completedFiles: 1,
+    fadviseCompleted: true,
+    fallbackUsed: false,
+    mincoreCompleted: true,
+    startedAt: inner.completedAt,
+    totalPages: 33_554_432,
+    totalResidentAfter: 0,
+  };
+
+  return {
+    completedAt: outer.completedAt,
+    contractVersion: "weather-page-d-loop-cold-proof/v1",
+    inner,
+    outer,
+    startedAt: inner.startedAt,
+    storageIdentity,
+    target,
+    volumes: storageIdentity.volumeNames.map(
+      // prove every benchmark volume was detached during eviction
+      (name) => ({ name, runningAttachments: [] }),
+    ),
+    ...overrides,
+  };
+}
+
+// write one private raw proof fixture
+async function writeDLoopColdProof(directory, name, proof) {
+  const path = join(directory, name);
+  await writeFile(path, `${JSON.stringify(proof)}\n`, { mode: 0o600 });
+  return path;
+}
+
+// configure one disposable K3 observation
+function k3SupervisorConfiguration(coldProofFile, endpointIds = ["current"]) {
+  return validSupervisorConfiguration({
+    coldProofFile,
+    endpointIds,
+    expiryBufferMs: 0,
+    runtimeId: "disposable-runtime",
+    storageIdentity: dLoopStorageIdentity(),
+    tier: "K3",
+  });
+}
+
 // build one complete web-container probe result
 function rawProbe(endpointId, startedAt, completedAt, responseGeneratedAt) {
   return {
@@ -438,8 +527,11 @@ function rawProbe(endpointId, startedAt, completedAt, responseGeneratedAt) {
 }
 
 // build one stable three-container observation
-function observedProcesses(startedAt = "2026-10-28T16:59:00.000Z") {
-  const identity = runtimeIdentities()["blueberry-runtime"];
+function observedProcesses(
+  startedAt = "2026-10-28T16:59:00.000Z",
+  runtimeId = "blueberry-runtime",
+) {
+  const identity = runtimeIdentities()[runtimeId];
 
   // build one observed compose service
   function observed(service, pid, configImage) {
@@ -529,6 +621,108 @@ test("complete warm and cold evidence passes every endpoint independently", () =
     },
   ), true);
   assert.equal(result.strata.length, 69);
+});
+
+// preserve a fresh process-local pool without retained PostgreSQL connections
+test("K2 accepts an observed empty pool only with fresh stable processes", () => {
+  const evidence = passingEvidence();
+  const sample = findSample(evidence, "current", "K2");
+  const witness = evidence.stateWitnesses[sample.witnessId];
+  witness.observation.databasePool = {
+    backends: [],
+    generationId: createHash("sha256").update("[]").digest("hex"),
+  };
+  witness.observationSha256 = createHash("sha256")
+    .update(JSON.stringify(witness.observation)).digest("hex");
+  const result = evaluateEvidence(evidence);
+  assert.equal(result.pass, true, result.issues.join("\n"));
+
+  const stale = "2026-10-28T16:00:00.000Z";
+  witness.observation.before.api.startedAt = stale;
+  witness.observation.after.api.startedAt = stale;
+  witness.observationSha256 = createHash("sha256")
+    .update(JSON.stringify(witness.observation)).digest("hex");
+  const rejected = evaluateEvidence(evidence);
+  assert.equal(rejected.pass, false);
+  assert.match(JSON.stringify(rejected.strata), /K2 witness api process is not fresh/u);
+});
+
+// retain array, digest and observed-connection validation
+test("K2 rejects missing malformed stale or misbound backend observations", () => {
+  const invalidPools = [
+    { generationId: createHash("sha256").update("[]").digest("hex") },
+    { backends: null, generationId: "a".repeat(64) },
+    { backends: [], generationId: "a".repeat(64) },
+    { backends: [{ pid: 0, startedAt: "2026-10-28T17:00:00.000Z" }], generationId: "a".repeat(64) },
+    { backends: [{ pid: 201, startedAt: "2026-10-28T16:00:00.000Z" }], generationId: "a".repeat(64) },
+  ];
+
+  // reject each independent malformed observation without changing the denominator
+  for (const invalid of invalidPools) {
+    // isolate malformed and stale backends from digest failures
+    if (Array.isArray(invalid.backends) && invalid.backends.length > 0) {
+      invalid.generationId = createHash("sha256")
+        .update(JSON.stringify(invalid.backends)).digest("hex");
+    }
+    const evidence = passingEvidence();
+    const sample = findSample(evidence, "current", "K2");
+    const witness = evidence.stateWitnesses[sample.witnessId];
+    witness.observation.databasePool = invalid;
+    witness.observationSha256 = createHash("sha256")
+      .update(JSON.stringify(witness.observation)).digest("hex");
+    assert.equal(evaluateEvidence(evidence).pass, false);
+  }
+});
+
+// bind an idle pool through the actual bundled supervision path
+test("bundled K2 supervisor retains a fresh empty connection pool", async () => {
+  const startedAt = "2026-10-28T17:00:00.000Z";
+  const database = observedDatabase(startedAt);
+  database.databasePool = {
+    backends: [],
+    generationId: createHash("sha256").update("[]").digest("hex"),
+  };
+  const result = await superviseColdSamples(validSupervisorConfiguration({
+    endpointIds: ["current"],
+    expiryBufferMs: 0,
+    tier: "K2",
+  }), {
+    // return one complete measured response
+    async collectGroup() {
+      return [rawProbe("current", startedAt, "2026-10-28T17:00:01.000Z", null)];
+    },
+    // retain the exact observed empty backend set
+    async inspectDatabase() {
+      return database;
+    },
+    // retain one exact fresh API generation around dispatch
+    async inspectProcesses() {
+      return observedProcesses(startedAt);
+    },
+  });
+  assert.equal(result.supervisionResult.pass, true,
+    result.supervisionResult.issues.join("\n"));
+  assert.deepEqual(result.witnessFile.witnesses[0].observation.databasePool, database.databasePool);
+  assert.equal(result.evidence.samples[0].status, 200);
+  assert.equal(result.evidence.samples[0].bodyComplete, true);
+});
+
+// represent an observed idle pool without inventing a PostgreSQL backend
+test("database supervisor parses and hashes the exact empty backend set", () => {
+  const observation = {
+    backends: [],
+    postgresStartedAt: "2026-10-28T17:00:00.000Z",
+    schemaLedger: [{ name: "0018_adjustment_maintenance_v2.sql", checksum: "a".repeat(64) }],
+    serverVersionNum: "170010",
+  };
+  const parsed = parseSupervisorDatabaseObservation(JSON.stringify(observation));
+  assert.deepEqual(parsed.databasePool.backends, []);
+  assert.equal(parsed.databasePool.generationId, createHash("sha256").update("[]").digest("hex"));
+
+  // reject absent and malformed arrays before producing any witness
+  for (const backends of [undefined, null, {}, [{ pid: 0, startedAt: observation.postgresStartedAt }]]) {
+    assert.throws(() => parseSupervisorDatabaseObservation(JSON.stringify({ ...observation, backends })));
+  }
 });
 
 // reject one omitted response instead of pooling neighboring endpoints
@@ -753,6 +947,231 @@ test("supervisor configuration permits only bounded exact cold observations", ()
     () => validateSupervisorConfiguration(validSupervisorConfiguration({ password: "forbidden" })),
     /unsupported/u,
   );
+});
+
+// bind one raw dual-layer proof to a complete concurrent K3 group
+test("bundled K3 supervisor binds one exact D-loop proof to every sample", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-k3-proof-"));
+
+  try {
+    const proofPath = await writeDLoopColdProof(directory, "proof.json", dLoopColdProof());
+    const endpointIds = ENDPOINT_INVENTORY.slice(0, 8).map(
+      // retain one maximum-concurrency endpoint group
+      (endpoint) => endpoint.id,
+    );
+    const configuration = k3SupervisorConfiguration(proofPath, endpointIds);
+    const startedAt = "2026-10-28T17:00:00.000Z";
+    const result = await superviseColdSamples(configuration, {
+      // return one complete concurrent K3 group
+      async collectGroup() {
+        return endpointIds.map(
+          // retain generatedAt only for process-local cache endpoints
+          (endpointId, index) => rawProbe(
+            endpointId,
+            `2026-10-28T17:00:01.${String(index).padStart(3, "0")}Z`,
+            "2026-10-28T17:00:02.000Z",
+            endpointId === "forecast-observations" ? "2026-10-28T17:00:01.500Z" : null,
+          ),
+        );
+      },
+      // retain one exact fresh database generation
+      async inspectDatabase() {
+        const database = observedDatabase(startedAt);
+        database.databasePool = {
+          backends: [],
+          generationId: createHash("sha256").update("[]").digest("hex"),
+        };
+        return database;
+      },
+      // retain one stable disposable process generation
+      async inspectProcesses() {
+        return observedProcesses(startedAt, "disposable-runtime");
+      },
+    });
+
+    assert.equal(result.supervisionResult.pass, true,
+      result.supervisionResult.issues.join("\n"));
+    assert.equal(result.witnessFile.witnesses.length, 8);
+    const proofHashes = new Set();
+    const bindingHashes = new Set();
+
+    // require compact raw-proof binding without duplicated inventories
+    for (const witness of result.witnessFile.witnesses) {
+      assert.equal(witness.pgdataColdProof.contractVersion,
+        "weather-page-d-loop-cold-proof/v1");
+      assert.equal(witness.pgdataColdProof.innerResidentPagesAfter, 0);
+      assert.equal(witness.pgdataColdProof.outerResidentPagesAfter, 0);
+      assert.deepEqual(witness.pgdataColdProof.storageIdentity, dLoopStorageIdentity());
+      assert.equal("files" in witness.pgdataColdProof, false);
+      proofHashes.add(witness.pgdataColdProof.proofSha256);
+      bindingHashes.add(witness.pgdataColdProof.bindingSha256);
+    }
+    assert.equal(proofHashes.size, 1);
+    assert.equal(bindingHashes.size, 8);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+// reject K3 proof capabilities outside K3 and require them inside K3
+test("supervisor scopes D-loop proof configuration to K3", () => {
+  const proofFields = {
+    coldProofFile: "/tmp/private-proof.json",
+    storageIdentity: dLoopStorageIdentity(),
+  };
+  assert.throws(
+    () => validateSupervisorConfiguration(validSupervisorConfiguration({
+      endpointIds: ["current"],
+      expiryBufferMs: 0,
+      runtimeId: "disposable-runtime",
+      tier: "K3",
+    })),
+    /cold proof/u,
+  );
+
+  // prevent K1 and K2 from accepting irrelevant cache-eviction authority
+  for (const tier of ["K1", "K2"]) {
+    const base = tier === "K1" ? {} : {
+      endpointIds: ["current"],
+      expiryBufferMs: 0,
+      tier,
+    };
+    assert.throws(
+      () => validateSupervisorConfiguration(validSupervisorConfiguration({ ...base, ...proofFields })),
+      /only supported for K3/u,
+    );
+  }
+});
+
+// reject malformed dual-layer proofs before dispatching HTTP
+test("bundled K3 supervisor rejects incomplete D-loop eviction proofs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-k3-invalid-"));
+  const cases = [
+    ["inner-resident", (proof) => { proof.inner.totalResidentAfter = 1; }],
+    ["outer-resident", (proof) => { proof.outer.totalResidentAfter = 1; }],
+    ["running-attachment", (proof) => { proof.volumes[0].runningAttachments = ["container"]; }],
+    ["postmaster", (proof) => { proof.target.postmasterPidAbsent = false; }],
+    ["inventory-drift", (proof) => { proof.target.inventoryAfterSha256 = "c".repeat(64); }],
+    ["inner-fallback", (proof) => { proof.inner.fallbackUsed = true; }],
+    ["inner-mincore", (proof) => { proof.inner.mincoreCompleted = false; }],
+    ["outer-fadvise", (proof) => { proof.outer.fadviseCompleted = false; }],
+    ["wrong-backing-size", (proof) => { proof.outer.backingFileBytes += 1; }],
+    ["wrong-loop", (proof) => { proof.storageIdentity.loopDevice = "/dev/loop1"; }],
+    ["wrong-uuid", (proof) => { proof.storageIdentity.loopUuid = "00000000-0000-0000-0000-000000000000"; }],
+    ["wrong-mount", (proof) => { proof.storageIdentity.mount = "/mnt/wrong"; }],
+    ["wrong-backing", (proof) => { proof.storageIdentity.backingFile = "/mnt/d/wrong.ext4"; }],
+  ];
+  let dispatches = 0;
+
+  try {
+    // isolate every invalid proof in a private immutable fixture
+    for (const [name, mutate] of cases) {
+      const proof = dLoopColdProof();
+      mutate(proof);
+      const proofPath = await writeDLoopColdProof(directory, `${name}.json`, proof);
+      await assert.rejects(
+        () => superviseColdSamples(k3SupervisorConfiguration(proofPath), {
+          async collectGroup() {
+            dispatches += 1;
+            return [];
+          },
+        }),
+        /D-loop cold proof/u,
+      );
+    }
+    assert.equal(dispatches, 0);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+// reject proof mutation and observations that do not follow the exact eviction
+test("bundled K3 supervisor rechecks proof bytes and startup ordering", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-k3-race-"));
+  const original = dLoopColdProof();
+  const proofPath = await writeDLoopColdProof(directory, "proof.json", original);
+  const configuration = k3SupervisorConfiguration(proofPath);
+  const startedAt = "2026-10-28T17:00:00.000Z";
+  const controls = {
+    async collectGroup() {
+      return [rawProbe("current", "2026-10-28T17:00:01.000Z", "2026-10-28T17:00:02.000Z", null)];
+    },
+    async inspectDatabase() {
+      return observedDatabase(startedAt);
+    },
+    async inspectProcesses() {
+      return observedProcesses(startedAt, "disposable-runtime");
+    },
+  };
+
+  try {
+    const mutatedControls = {
+      ...controls,
+      async collectGroup() {
+        await writeFile(proofPath, `${JSON.stringify({ ...original, mutation: true })}\n`, {
+          mode: 0o600,
+        });
+        return controls.collectGroup();
+      },
+    };
+    await assert.rejects(
+      () => superviseColdSamples(configuration, mutatedControls),
+      /changed after initial validation/u,
+    );
+    await writeFile(proofPath, `${JSON.stringify(original)}\n`, { mode: 0o600 });
+
+    const late = dLoopColdProof({ completedAt: startedAt });
+    late.outer.completedAt = startedAt;
+    await writeFile(proofPath, `${JSON.stringify(late)}\n`, { mode: 0o600 });
+    await assert.rejects(
+      () => superviseColdSamples(configuration, controls),
+      /must complete before PostgreSQL starts/u,
+    );
+
+    await writeFile(proofPath, `${JSON.stringify(original)}\n`, { mode: 0o600 });
+    const mismatchedProcesses = {
+      ...controls,
+      async inspectProcesses() {
+        const processes = observedProcesses(startedAt, "disposable-runtime");
+        processes.database.dataVolume = "wrong-volume";
+        return processes;
+      },
+    };
+    await assert.rejects(
+      () => superviseColdSamples(configuration, mismatchedProcesses),
+      /target volume/u,
+    );
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+// reject public or linked proof inputs before any HTTP request
+test("bundled K3 supervisor requires a private owned regular proof file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-k3-private-"));
+
+  try {
+    const proofPath = await writeDLoopColdProof(directory, "proof.json", dLoopColdProof());
+    await chmod(proofPath, 0o644);
+    await assert.rejects(
+      () => superviseColdSamples(k3SupervisorConfiguration(proofPath)),
+      /must not grant group or other permissions/u,
+    );
+    await chmod(proofPath, 0o400);
+    await assert.rejects(
+      () => superviseColdSamples(k3SupervisorConfiguration(proofPath)),
+      /must have mode 0600/u,
+    );
+    await chmod(proofPath, 0o600);
+    const linkPath = join(directory, "proof-link.json");
+    await symlink(proofPath, linkPath);
+    await assert.rejects(
+      () => superviseColdSamples(k3SupervisorConfiguration(linkPath)),
+      /must not be a symbolic link/u,
+    );
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
 });
 
 // observe both shared-cache consumers during one natural refill

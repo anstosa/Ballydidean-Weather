@@ -2406,26 +2406,24 @@ test("revision cold transfer carries one terminal publication gap before the nex
   }
 });
 
-// create one exact future-only epoch and preserve its first database server clock
-test("revision capture epoch accepts disjoint full-0020 and full-0021 zero frontiers", async () => {
+// create one exact 0021 epoch and preserve its first database server clock
+test("revision capture epoch remains exact 0021 after the live 0022 advance", async () => {
   const root = await mkdtemp(join(tmpdir(), "weather-revision-epoch-"));
   const path = join(root, "adjustment-capture-epoch.json");
   try {
     const migrationRoot = join(repoRoot, "packages/database/migrations");
     const availableMigrationNames = (await readdir(migrationRoot))
       .filter((name) => name.endsWith(".sql")).sort();
-    const frontierMigrationIndex = availableMigrationNames.indexOf(
-      "0020_adjustment_revision_frontier.sql",
+    const rollingMigrationIndex = availableMigrationNames.indexOf(
+      "0021_adjustment_rolling_registration.sql",
     );
-    assert.notEqual(frontierMigrationIndex, -1);
-    const migrationNames = availableMigrationNames.slice(0, frontierMigrationIndex + 1);
+    assert.notEqual(rollingMigrationIndex, -1);
+    const migrationNames = availableMigrationNames.slice(0, rollingMigrationIndex + 1);
     const migrationChecksums = [];
     // hash the exact reviewed ledger in database order
     for (const name of migrationNames) {
-      // retain the deployed full-0020 ledger after the unapplied 0019 source advanced
-      migrationChecksums.push(name === "0019_adjustment_maintenance_recurring.sql"
-        ? "21a737e4efe8c42f76db186cb207a6b838435706e74c6c514f221ba83adb9513"
-        : createHash("sha256").update(await readFile(join(migrationRoot, name))).digest("hex"));
+      migrationChecksums.push(createHash("sha256")
+        .update(await readFile(join(migrationRoot, name))).digest("hex"));
     }
     const epochAt = "2026-10-08T02:00:00.000Z";
     const genesis = createHash("sha256")
@@ -2486,6 +2484,8 @@ test("revision capture epoch accepts disjoint full-0020 and full-0021 zero front
     assert.equal(witness.archiveCommitOrdinal, "0");
     assert.equal(witness.epochAt, epochAt);
     assert.equal(witness.catalogFrontierSha256, genesis);
+    assert.equal(witness.databaseMigrationHistorySha256,
+      "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424");
     const details = await lstat(path);
     assert.equal(details.mode & 0o777, 0o644);
     assert.equal(details.nlink, 1);
@@ -2511,32 +2511,26 @@ test("revision capture epoch accepts disjoint full-0020 and full-0021 zero front
       path,
     });
     assert.deepEqual(retry, witness);
-    const rollingMigrationName = "0021_adjustment_rolling_registration.sql";
-    const rollingMigrationNames = [...migrationNames, rollingMigrationName];
-    const rollingMigrationChecksums = [];
-    // hash the intended full-0021 source independently from the retained full-0020 ledger
-    for (const name of rollingMigrationNames) {
-      rollingMigrationChecksums.push(createHash("sha256")
-        .update(await readFile(join(migrationRoot, name))).digest("hex"));
-    }
-    const rollingManifest = {
+    const catalogMigrationName = "0022_forecast_product_catalog.sql";
+    const catalogMigrationNames = [...migrationNames, catalogMigrationName];
+    const catalogMigrationChecksums = [...migrationChecksums, createHash("sha256")
+      .update(await readFile(join(migrationRoot, catalogMigrationName))).digest("hex")];
+    const catalogManifest = {
       ...databaseManifest,
-      migration_checksums: rollingMigrationChecksums,
-      migration_history_sha256: createHash("sha256").update(rollingMigrationNames.map(
-        // serialize the exact additive full-0021 activation ledger
-        (name, index) => `${name}:${rollingMigrationChecksums[index]}`,
+      migration_checksums: catalogMigrationChecksums,
+      migration_history_sha256: createHash("sha256").update(catalogMigrationNames.map(
+        // serialize the exact additive live 0022 ledger
+        (name, index) => `${name}:${catalogMigrationChecksums[index]}`,
       ).join("\n")).digest("hex"),
-      migration_names: rollingMigrationNames,
+      migration_names: catalogMigrationNames,
     };
-    const rollingRoot = join(root, "rolling");
-    await mkdir(rollingRoot);
-    const rollingWitness = await writeAdjustmentRevisionCaptureEpochWitness({
-      databaseEnvelope: { ...envelope, databaseManifest: rollingManifest },
+    const catalogRoot = join(root, "catalog");
+    await mkdir(catalogRoot);
+    await assert.rejects(writeAdjustmentRevisionCaptureEpochWitness({
+      databaseEnvelope: { ...envelope, databaseManifest: catalogManifest },
       deployment,
-      path: join(rollingRoot, "adjustment-capture-epoch.json"),
-    });
-    assert.equal(rollingWitness.databaseMigrationHistorySha256,
-      "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424");
+      path: join(catalogRoot, "adjustment-capture-epoch.json"),
+    }), /database ledger differs/u);
     const advancedRoot = join(root, "advanced");
     await mkdir(advancedRoot);
     const advancedPath = join(advancedRoot, "adjustment-capture-epoch.json");

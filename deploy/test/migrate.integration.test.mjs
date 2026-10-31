@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -25,6 +26,78 @@ const publicStationConfigurationPath = join(
 const tempestConfigurationPath = join(repoRoot, "config/tempest/stations.json");
 const tideConfigurationPath = join(repoRoot, "config/tides/noaa.json");
 const runIntegration = process.env.WEATHER_RUN_DEPLOY_INTEGRATION === "1";
+
+// run one semantic snapshot command against the disposable PostgreSQL server
+async function runSemanticProof(server, action, contractPath, beforePath, afterPath) {
+  const script = `
+    source "$UPDATE_SCRIPT"
+    compose() {
+      while (( $# > 0 )); do
+        if [[ "$1" == psql ]]; then
+          shift
+          PGPASSWORD="$PGPASSWORD" command psql --host "$PGHOST" --port "$PGPORT" "$@"
+          return
+        fi
+        shift
+      done
+      return 1
+    }
+    case "$ACTION" in
+      contract)
+        write_preexisting_data_contract ignored weather_test "$CONTRACT_PATH"
+        ;;
+      before)
+        write_preexisting_data_snapshot ignored weather_test "$CONTRACT_PATH" "$BEFORE_PATH"
+        ;;
+      after)
+        write_preexisting_data_snapshot ignored weather_test "$CONTRACT_PATH" "$AFTER_PATH"
+        ;;
+      verify)
+        verify_preexisting_data_snapshots "$CONTRACT_PATH" "$BEFORE_PATH" "$AFTER_PATH"
+        ;;
+      *)
+        exit 64
+        ;;
+    esac
+  `;
+  await executeFile("bash", ["-c", script], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      ACTION: action,
+      AFTER_PATH: afterPath,
+      BEFORE_PATH: beforePath,
+      CONTRACT_PATH: contractPath,
+      PGHOST: server.host,
+      PGPASSWORD: server.password,
+      PGPORT: String(server.port),
+      UPDATE_SCRIPT: join(repoRoot, "deploy/scripts/update.sh"),
+    },
+    timeout: 120_000,
+  });
+}
+
+// hash one raw PG17 plain dump including its randomized restrict envelope
+async function rawDumpSha256(server) {
+  const { stdout } = await executeFile(
+    "docker",
+    [
+      "exec",
+      server.name,
+      "pg_dump",
+      "--username",
+      "weather_owner",
+      "--dbname",
+      "weather_test",
+      "--format=plain",
+      "--data-only",
+      "--no-owner",
+      "--no-privileges",
+    ],
+    { encoding: "buffer", timeout: 120_000 },
+  );
+  return createHash("sha256").update(stdout).digest("hex");
+}
 
 // enumerate exact export authority
 const exportAuthoritySnapshotSql = `
@@ -236,6 +309,156 @@ async function bootstrapRuntimeRoles(server, directory) {
   });
   return ownerPath;
 }
+
+// prove the release semantic data guard against real PostgreSQL bootstrap effects
+test(
+  "semantic migration proof accepts bootstrap volatility and rejects application drift",
+  {
+    skip: runIntegration ? false : "set WEATHER_RUN_DEPLOY_INTEGRATION=1",
+    timeout: 300_000,
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "weather-semantic-proof-"));
+    let server;
+    let pool;
+
+    try {
+      server = await startPostgres(17, "semantic-proof");
+      const ownerPath = await bootstrapRuntimeRoles(server, directory);
+      const contractPath = join(directory, "contract");
+      const beforePath = join(directory, "before");
+      const afterPath = join(directory, "after");
+      const configuredSitePath = join(directory, "ballydidean.json");
+      const configuredSite = JSON.parse(await readFile(siteConfigurationPath, "utf8"));
+      await Promise.all([
+        writeFile(contractPath, "", { mode: 0o600 }),
+        writeFile(beforePath, "", { mode: 0o600 }),
+        writeFile(afterPath, "", { mode: 0o600 }),
+        writeFile(configuredSitePath, `${JSON.stringify(configuredSite)}\n`),
+      ]);
+      const environment = {
+        ...process.env,
+        WEATHER_DATABASE_APPLICATION_NAME: "weather-semantic-proof-test",
+        WEATHER_DATABASE_HOST: server.host,
+        WEATHER_DATABASE_NAME: "weather_test",
+        WEATHER_DATABASE_PASSWORD_FILE: ownerPath,
+        WEATHER_DATABASE_PORT: String(server.port),
+        WEATHER_DATABASE_SSL: "false",
+        WEATHER_DATABASE_USER: "weather_owner",
+        WEATHER_ECOWITT_CONFIG_PATH: ecowittConfigurationPath,
+        WEATHER_MIGRATION_DIRECTORY: migrationDirectory,
+        WEATHER_PUBLIC_STATIONS_CONFIG_PATH: publicStationConfigurationPath,
+        WEATHER_SITE_CONFIG_PATH: configuredSitePath,
+        WEATHER_TEMPEST_CONFIG_PATH: tempestConfigurationPath,
+        WEATHER_TIDE_CONFIG_PATH: tideConfigurationPath,
+      };
+      await executeFile(process.execPath, ["deploy/scripts/migrate.mjs"], {
+        cwd: repoRoot,
+        env: environment,
+        timeout: 120_000,
+      });
+      pool = createTestPool(server, "weather_test", "weather_owner", "owner-test");
+      // seed one metric and one independently deletable application row
+      await pool.query(`
+        WITH selected_source AS (
+          SELECT id, source_kind, source_config_fingerprint
+          FROM sources
+          WHERE source_kind = 'physical_sensor'
+          ORDER BY id
+          LIMIT 1
+        ), inserted_run AS (
+          INSERT INTO ingestion_runs (
+            source_id, mode, requested_start, requested_end_exclusive,
+            source_config_fingerprint, adapter_version, started_at, deadline_at,
+            completed_at, state, attempts, record_count
+          )
+          SELECT id, 'scheduled', '2026-01-01T00:00:00Z',
+            '2026-01-01T01:00:00Z', source_config_fingerprint,
+            'semantic-proof-v1', '2026-01-01T00:00:00Z',
+            '2026-01-01T02:00:00Z', '2026-01-01T00:01:00Z',
+            'succeeded', 1, 1
+          FROM selected_source
+          RETURNING id, source_id
+        )
+        INSERT INTO weather_records (
+          source_id, source_kind, valid_at, first_ingestion_run_id,
+          last_ingestion_run_id, first_received_at, last_received_at,
+          upstream_timezone, temperature_c, content_hash
+        )
+        SELECT selected_source.id, selected_source.source_kind,
+          '2026-01-01T00:30:00Z', inserted_run.id, inserted_run.id,
+          '2026-01-01T00:31:00Z', '2026-01-01T00:31:00Z',
+          'UTC', 7.5, repeat('a', 64)
+        FROM selected_source
+        JOIN inserted_run ON inserted_run.source_id = selected_source.id;
+        INSERT INTO worker_heartbeats (
+          worker_instance, last_loop_at, worker_version
+        ) VALUES ('semantic-proof-worker', '2026-01-01T00:00:00Z', 'test-v1');
+      `);
+      await runSemanticProof(server, "contract", contractPath, beforePath, afterPath);
+      await runSemanticProof(server, "before", contractPath, beforePath, afterPath);
+      const rawBefore = await rawDumpSha256(server);
+
+      // repeat the unchanged production bootstrap entrypoint
+      await executeFile(process.execPath, ["deploy/scripts/migrate.mjs"], {
+        cwd: repoRoot,
+        env: environment,
+        timeout: 120_000,
+      });
+      const rawAfter = await rawDumpSha256(server);
+      assert.notEqual(rawAfter, rawBefore);
+      await runSemanticProof(server, "after", contractPath, beforePath, afterPath);
+      await runSemanticProof(server, "verify", contractPath, beforePath, afterPath);
+
+      // reject a changed metric despite valid revision bookkeeping
+      await pool.query(`
+        UPDATE weather_records
+        SET temperature_c = 8.5,
+          content_hash = repeat('b', 64),
+          revision_count = revision_count + 1
+        WHERE content_hash = repeat('a', 64)
+      `);
+      await runSemanticProof(server, "after", contractPath, beforePath, afterPath);
+      await assert.rejects(
+        runSemanticProof(server, "verify", contractPath, beforePath, afterPath),
+      );
+      await runSemanticProof(server, "before", contractPath, beforePath, afterPath);
+
+      // reject semantic source configuration drift while ignoring only updated_at
+      await pool.query(`
+        UPDATE sources
+        SET cadence_seconds = CASE cadence_seconds WHEN 60 THEN 120 ELSE 60 END
+        WHERE id = (SELECT min(id) FROM sources)
+      `);
+      await runSemanticProof(server, "after", contractPath, beforePath, afterPath);
+      await assert.rejects(
+        runSemanticProof(server, "verify", contractPath, beforePath, afterPath),
+      );
+      await runSemanticProof(server, "before", contractPath, beforePath, afterPath);
+
+      // reject deletion of an otherwise independent application row
+      await pool.query("DELETE FROM worker_heartbeats WHERE worker_instance = $1", [
+        "semantic-proof-worker",
+      ]);
+      await runSemanticProof(server, "after", contractPath, beforePath, afterPath);
+      await assert.rejects(
+        runSemanticProof(server, "verify", contractPath, beforePath, afterPath),
+      );
+      await runSemanticProof(server, "before", contractPath, beforePath, afterPath);
+
+      // reject a reset of one reviewed bootstrap identity sequence
+      await pool.query("ALTER SEQUENCE sources_id_seq RESTART WITH 1");
+      await runSemanticProof(server, "after", contractPath, beforePath, afterPath);
+      await assert.rejects(
+        runSemanticProof(server, "verify", contractPath, beforePath, afterPath),
+      );
+    } finally {
+      await pool?.end().catch(() => undefined);
+      await stopPostgres(server ?? { name: "missing" });
+      await rm(directory, { force: true, recursive: true });
+    }
+  },
+);
 
 // read stable bootstrap identities and counts
 async function readBootstrapSnapshot(pool) {

@@ -154,8 +154,31 @@ export interface ForecastObservationPoint {
   readonly partial?: boolean;
 }
 
+// retain only the recorded fields consumed by observation and solar projections
+export type ForecastObservationInputRecord = Pick<
+  WeatherRecord,
+  "id" | "receivedAt" | "validAt"
+> & Readonly<{
+  metrics: Pick<WeatherRecord["metrics"],
+    | "apparentTemperatureC"
+    | "cloudCoverPercent"
+    | "pm25MicrogramsPerCubicMeter"
+    | "precipitationRateMmPerHour"
+    | "pressureHpa"
+    | "relativeHumidityPercent"
+    | "solarRadiationWm2"
+    | "temperatureC"
+    | "uvIndex"
+    | "windDirectionDegrees"
+    | "windGustMps"
+    | "windSpeedMps">;
+  provenance: Pick<WeatherRecord["provenance"],
+    "providerKey" | "sourceId" | "sourceKey" | "sourceKind" | "stationSlug">;
+}>;
+
 // limit history to the scalar families shown by the weather charts
-const FORECAST_OBSERVATION_METRICS: readonly WeatherMetricKey[] = [
+type ForecastObservationMetricKey = keyof ForecastObservationInputRecord["metrics"];
+const FORECAST_OBSERVATION_METRICS: readonly ForecastObservationMetricKey[] = [
   "temperatureC", "apparentTemperatureC", "windSpeedMps", "windGustMps", "windDirectionDegrees",
   "precipitationRateMmPerHour", "cloudCoverPercent", "relativeHumidityPercent",
   "pm25MicrogramsPerCubicMeter", "uvIndex", "pressureHpa",
@@ -165,14 +188,14 @@ const FORECAST_OBSERVATION_PROVIDERS = new Set([
 ]);
 
 // reduce complete paged recordings before selecting an independent tier for every metric
-export function buildForecastObservationPoints(records: readonly WeatherRecord[], from: string, through: string): readonly ForecastObservationPoint[] {
+export function buildForecastObservationPoints(records: readonly ForecastObservationInputRecord[], from: string, through: string): readonly ForecastObservationPoint[] {
   const first = Date.parse(from);
   const cutoff = Date.parse(through);
   // refuse unbounded or unaligned projection geometry
   if (!Number.isFinite(first) || !Number.isFinite(cutoff) || first % 3_600_000 !== 0 || cutoff < first || cutoff - first > 25 * 3_600_000) {
     throw new RangeError("Forecast observation window is invalid");
   }
-  const revisions = new Map<string, WeatherRecord>();
+  const revisions = new Map<string, ForecastObservationInputRecord>();
   // retain the newest revision once without treating historical age as a sensor outage
   for (const record of records) {
     const valid = Date.parse(record.validAt);
@@ -193,7 +216,7 @@ export function buildForecastObservationPoints(records: readonly WeatherRecord[]
       revisions.set(key, record);
     }
   }
-  const bins = new Map<string, WeatherRecord[]>();
+  const bins = new Map<string, ForecastObservationInputRecord[]>();
   // retain separate source-local hourly bins for pressure datums and sampling cadence
   for (const record of revisions.values()) {
     const key = `${record.provenance.sourceId}/${Math.floor(Date.parse(record.validAt) / 3_600_000) * 3_600_000}`;
@@ -207,7 +230,7 @@ export function buildForecastObservationPoints(records: readonly WeatherRecord[]
     const metrics: { -readonly [Key in WeatherMetricKey]?: number | null } = {};
     const sources: ForecastObservationPoint["sources"] = {};
     const counts: NonNullable<ForecastObservationPoint["counts"]> = {};
-    const candidates = new Map<WeatherMetricKey | "pressureChange3hHpa", { value: number; samples: number; record: WeatherRecord }[]>();
+    const candidates = new Map<ForecastObservationMetricKey | "pressureChange3hHpa", { value: number; samples: number; record: ForecastObservationInputRecord }[]>();
     // aggregate each exact source before choosing one source per station
     for (const [key, rows] of bins) {
       const binHour = Number(key.slice(key.lastIndexOf("/") + 1));
@@ -333,7 +356,7 @@ export function parseForecastObservationResponse(value: unknown): readonly Forec
     // validate each scalar with the same normalized domains used for current recordings
     for (const [metric, reading] of Object.entries(metrics)) {
       // reject unsupported metrics nonnumbers and absent provenance
-      if (!FORECAST_OBSERVATION_METRICS.includes(metric as WeatherMetricKey) || (reading !== null && (typeof reading !== "number" || usableCurrentMetric(reading, metric as WeatherMetricKey) === null || !Object.hasOwn(sources, metric)))) {
+      if (!FORECAST_OBSERVATION_METRICS.includes(metric as ForecastObservationMetricKey) || (reading !== null && (typeof reading !== "number" || usableCurrentMetric(reading, metric as WeatherMetricKey) === null || !Object.hasOwn(sources, metric)))) {
         throw new RangeError("Forecast observation metric is invalid");
       }
     }
@@ -5859,7 +5882,10 @@ function currentWeatherReadings(
 }
 
 // identify the farm gateway without promoting another ecowitt station
-function isFarmCurrentRecord(record: WeatherRecord): boolean {
+function isFarmCurrentRecord(record: Readonly<{ provenance: Pick<
+  WeatherRecord["provenance"],
+  "providerKey" | "stationSlug"
+> }>): boolean {
   return record.provenance.providerKey === "ecowitt-local" && record.provenance.stationSlug === "ballydidean-ecowitt";
 }
 

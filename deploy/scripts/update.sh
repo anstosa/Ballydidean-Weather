@@ -9,22 +9,21 @@ usage() {
   cat <<'EOF'
 Usage:
   update.sh v14-compatibility-bridge RELEASE
+  update.sh historical-v14-18-21-rehearsal RELEASE
   update.sh dashboard-release TARGET_RELEASE EXPECTED_CORE_RELEASE EXPECTED_WEB_SOURCE_RELEASE
   update.sh dashboard-rollback
   update.sh dashboard-rollback-core
-  update.sh yolo RELEASE [--from ENV_FILE]
-  update.sh stage RELEASE [--from ENV_FILE]
+  update.sh stage RELEASE
   update.sh activate RELEASE
   update.sh rollback
   update.sh recover
   update.sh adjustment-family-release TARGET_RELEASE COMPENSATING_RELEASE EXPECTED_CURRENT_RELEASE EXPECTED_SOURCE_RELEASE EXPECTED_SETTINGS_SHA256 FAMILY ACTION_SHA256 REPORT_SHA256 FENCE
   update.sh status
 
-yolo resolves the exact ARM64 images, enforces the local pull floor, applies
-migrations, and starts the release directly without the full coexistence gate,
-compatibility clone, or deployment-time backup.
 v14-compatibility-bridge performs only the fixed source-compatible image handoff
 on the unchanged reviewed 0018 ledger before the full v14 transition.
+historical-v14-18-21-rehearsal proves the exact atomic 0018-to-0021 migration
+on an invocation-owned full-size clone without changing the active database.
 stage resolves and persists four exact ARM64 image digests without changing
 running services or the active database. Upgrade staging uses only a disposable
 compatibility database. activate backs up before migration and records success
@@ -36,7 +35,7 @@ releases_dir="$deploy_dir/releases"
 state_dir="$deploy_dir/state"
 capacity_evidence=/var/lib/weather/preflight-latest.json
 v13_resource_evidence=/var/lib/weather/preflight-v13-resource.json
-control_plane_version=14
+control_plane_version=15
 recurring_previous_release=2026.10.09-1
 recurring_previous_control_plane_sha256=603eb8f488ba78be3d7ecf76b0d587346d1c36432255d390d86d2b768c8fecba
 v14_compatibility_bridge_release=2026.10.09-2
@@ -47,6 +46,9 @@ full_v14_source_server_image=ghcr.io/anstosa/weather-server@sha256:587dd0d34ed19
 full_v14_source_web_image=ghcr.io/anstosa/weather-web@sha256:34d824b03c5f84289b8f38028e751f183a953565fc929260c09b07c9e64f15ba
 v14_compatibility_bridge_state="$state_dir/v14-compatibility-bridge-v1"
 v14_compatibility_bridge_pending="$state_dir/.v14-compatibility-bridge-v1.pending"
+historical_v14_rehearsal_receipt="$state_dir/historical-v14-18-21-rehearsal-v1.json"
+historical_v14_rehearsal_samples="$state_dir/historical-v14-18-21-rehearsal-samples-v1.json"
+normal_activation_journal="$state_dir/normal-activation-v1.env"
 maintenance_previous_release=2026.10.07-3
 legacy_control_plane_version=6
 legacy_control_plane_sha256=c4d74581b84505e065fdec63447dfdded1d14221e459777a88e37729275f33b5
@@ -137,6 +139,27 @@ retained_maintenance_source_env() {
 require_retained_maintenance_source() {
   [[ "$1" == "$(retained_maintenance_source_env)" ]] ||
     die "v13 deployment source must be the exact active release environment"
+}
+
+# select only the exact active v15 core and schema environment
+normal_release_source_env() {
+  local current schema source expected_link installed_digest
+  current=$(read_release_state "$state_dir/current-release")
+  schema=$(read_release_state "$state_dir/schema-release")
+  [[ "$current" == "$schema" ]] ||
+    die "normal release requires matching active core and schema releases"
+  expected_link="../releases/$current.env"
+  [[ -L "$state_dir/active.env" &&
+    "$(readlink "$state_dir/active.env")" == "$expected_link" ]] ||
+    die "normal release active environment differs from committed state"
+  source=$(release_env "$current")
+  validate_release_env "$source" "$current"
+  require_control_plane_compatibility "$source"
+  installed_digest=$(control_plane_digest)
+  [[ "$(env_value "$source" WEATHER_CONTROL_PLANE_VERSION)" == "$control_plane_version" &&
+    "$(env_value "$source" WEATHER_CONTROL_PLANE_SHA256)" == "$installed_digest" ]] ||
+    die "normal release source is not the exact installed v15 contract"
+  printf '%s\n' "$source"
 }
 
 # locate one schema-release authorization
@@ -234,6 +257,404 @@ migration_history_sha256() {
       --tuples-only --no-align --field-separator=: \
       --command "SELECT name, checksum FROM schema_migrations ORDER BY name" |
     sha256sum | awk '{print $1}'
+}
+
+# write one frozen source-data contract without reading application rows into memory
+write_preexisting_data_contract() {
+  local env_file=$1
+  local database_name=$2
+  local output=$3
+  local table all_columns semantic_columns metadata_sha256 pk_details pk_columns pk_index
+  local sequence sequence_structure_sha256 bootstrap_sequence table_count=0 sequence_count=0
+  local table_output column_output sequence_output
+  local -a tables sequences columns semantic
+  validate_database_name "$database_name"
+  [[ -f "$output" && ! -L "$output" ]] ||
+    die "preexisting data contract output is invalid"
+  printf 'preexisting-data/v1\n' >"$output"
+
+  # freeze every source application table in deterministic relation order
+  if ! table_output=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+    psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+      --dbname "$database_name" --tuples-only --no-align --command \
+      "SELECT relation.relname FROM pg_class relation JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace WHERE namespace.nspname = 'public' AND relation.relkind IN ('r','p') AND relation.relname <> 'schema_migrations' ORDER BY relation.relname"); then
+    die "preexisting data table discovery failed"
+  fi
+  tables=()
+  # parse only a successfully completed producer result
+  if [[ -n "$table_output" ]]; then
+    mapfile -t tables <<<"$table_output"
+  fi
+  ((${#tables[@]} > 0 && ${#tables[@]} <= 512)) ||
+    die "preexisting data contract table count is invalid"
+  for table in "${tables[@]}"; do
+    [[ "$table" =~ ^[a-z][a-z0-9_]*$ ]] ||
+      die "preexisting data table name is invalid"
+    if ! column_output=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+      psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+        --dbname "$database_name" --tuples-only --no-align --command \
+        "SELECT attribute.attname FROM pg_attribute attribute WHERE attribute.attrelid = 'public.\"$table\"'::regclass AND attribute.attnum > 0 AND NOT attribute.attisdropped ORDER BY attribute.attnum"); then
+      die "preexisting data column discovery failed: $table"
+    fi
+    columns=()
+    # parse only a successfully completed producer result
+    if [[ -n "$column_output" ]]; then
+      mapfile -t columns <<<"$column_output"
+    fi
+    ((${#columns[@]} > 0 && ${#columns[@]} <= 256)) ||
+      die "preexisting data table column count is invalid"
+    # reject names that cannot be quoted by this fixed proof implementation
+    for all_columns in "${columns[@]}"; do
+      [[ "$all_columns" =~ ^[a-z][a-z0-9_]*$ ]] ||
+        die "preexisting data column name is invalid"
+    done
+    all_columns=$(IFS=,; printf '%s' "${columns[*]}")
+    semantic=("${columns[@]}")
+    case "$table" in
+      sites|providers|stations|sources)
+        # normalize only the bootstrap-owned volatile timestamp
+        semantic=()
+        for semantic_columns in "${columns[@]}"; do
+          [[ "$semantic_columns" == updated_at ]] || semantic+=("$semantic_columns")
+        done
+        ((${#semantic[@]} + 1 == ${#columns[@]})) ||
+          die "bootstrap configuration timestamp contract differs"
+        ;;
+    esac
+    ((${#semantic[@]} > 0)) || die "preexisting data semantic column set is empty"
+    semantic_columns=$(IFS=,; printf '%s' "${semantic[*]}")
+    if ! metadata_sha256=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+      psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+        --dbname "$database_name" --tuples-only --no-align --field-separator='|' \
+        --command "SELECT attribute.attnum, attribute.attname, format_type(attribute.atttypid, attribute.atttypmod), attribute.attnotnull, attribute.attidentity, attribute.attgenerated, COALESCE(pg_get_expr(default_value.adbin, default_value.adrelid), ''), COALESCE(collation_entry.collname, '') FROM pg_attribute attribute LEFT JOIN pg_attrdef default_value ON default_value.adrelid = attribute.attrelid AND default_value.adnum = attribute.attnum LEFT JOIN pg_collation collation_entry ON collation_entry.oid = attribute.attcollation WHERE attribute.attrelid = 'public.\"$table\"'::regclass AND attribute.attnum > 0 AND NOT attribute.attisdropped ORDER BY attribute.attnum" |
+      sha256sum | awk '{print $1}'); then
+      die "preexisting data column metadata failed: $table"
+    fi
+    if ! pk_details=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+      psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+        --dbname "$database_name" --tuples-only --no-align --field-separator=$'\t' \
+        --command "SELECT string_agg(attribute.attname, ',' ORDER BY key.ordinality), index_relation.relname FROM pg_index primary_index JOIN pg_class index_relation ON index_relation.oid = primary_index.indexrelid CROSS JOIN LATERAL unnest(primary_index.indkey) WITH ORDINALITY key(attnum, ordinality) JOIN pg_attribute attribute ON attribute.attrelid = primary_index.indrelid AND attribute.attnum = key.attnum WHERE primary_index.indrelid = 'public.\"$table\"'::regclass AND primary_index.indisprimary AND key.ordinality <= primary_index.indnkeyatts GROUP BY index_relation.relname"); then
+      die "preexisting data primary-key discovery failed: $table"
+    fi
+    IFS=$'\t' read -r pk_columns pk_index <<<"$pk_details"
+    [[ "$metadata_sha256" =~ ^[a-f0-9]{64}$ &&
+      "$pk_columns" =~ ^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$ &&
+      "$pk_index" =~ ^[a-z][a-z0-9_]*$ ]] ||
+      die "preexisting data table lacks one valid primary-key proof"
+    printf 'T\t%s\t%s\t%s\t%s\t%s\t%s\n' "$table" "$all_columns" \
+      "$semantic_columns" "$metadata_sha256" "$pk_columns" "$pk_index" >>"$output"
+    table_count=$((table_count + 1))
+  done
+
+  # freeze every source sequence and its structural definition
+  if ! sequence_output=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+    psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+      --dbname "$database_name" --tuples-only --no-align --command \
+      "SELECT relation.relname FROM pg_class relation JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace WHERE namespace.nspname = 'public' AND relation.relkind = 'S' ORDER BY relation.relname"); then
+    die "preexisting data sequence discovery failed"
+  fi
+  sequences=()
+  # retain a legitimate empty sequence set only after producer success
+  if [[ -n "$sequence_output" ]]; then
+    mapfile -t sequences <<<"$sequence_output"
+  fi
+  ((${#sequences[@]} <= 512)) || die "preexisting data sequence count is invalid"
+  for sequence in "${sequences[@]}"; do
+    [[ "$sequence" =~ ^[a-z][a-z0-9_]*$ ]] ||
+      die "preexisting data sequence name is invalid"
+    if ! sequence_structure_sha256=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+      psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+        --dbname "$database_name" --tuples-only --no-align --field-separator='|' \
+        --command "SELECT format_type(sequence.seqtypid, NULL), sequence.seqstart, sequence.seqincrement, sequence.seqmax, sequence.seqmin, sequence.seqcache, sequence.seqcycle FROM pg_sequence sequence WHERE sequence.seqrelid = 'public.\"$sequence\"'::regclass" |
+      sha256sum | awk '{print $1}'); then
+      die "preexisting data sequence metadata failed: $sequence"
+    fi
+    bootstrap_sequence=false
+    case "$sequence" in
+      sites_id_seq|providers_id_seq|stations_id_seq|sources_id_seq)
+        bootstrap_sequence=true
+        ;;
+    esac
+    [[ "$sequence_structure_sha256" =~ ^[a-f0-9]{64}$ ]] ||
+      die "preexisting data sequence structure is invalid"
+    printf 'S\t%s\t%s\t%s\n' "$sequence" "$sequence_structure_sha256" \
+      "$bootstrap_sequence" >>"$output"
+    sequence_count=$((sequence_count + 1))
+  done
+  ((table_count > 0 && table_count + sequence_count <= 1024)) ||
+    die "preexisting data contract boundary is invalid"
+  [[ $(stat -c '%s' "$output") -le 262144 ]] ||
+    die "preexisting data contract exceeds its byte bound"
+}
+
+# write one bounded-memory ordered semantic snapshot for a frozen source contract
+write_preexisting_data_snapshot() {
+  local env_file=$1
+  local database_name=$2
+  local contract=$3
+  local output=$4
+  local kind name all_columns semantic_columns expected_metadata pk_columns pk_index extra
+  local actual_metadata actual_pk_details actual_pk_columns actual_pk_index select_columns order_columns
+  local plan row_proof sequence_structure last_value is_called bootstrap_sequence line_count=0
+  local sequence_state
+  validate_database_name "$database_name"
+  [[ -f "$contract" && ! -L "$contract" && -f "$output" && ! -L "$output" &&
+    $(stat -c '%s' "$contract") -le 262144 ]] ||
+    die "preexisting data snapshot boundary is invalid"
+  [[ $(head -n 1 "$contract") == preexisting-data/v1 ]] ||
+    die "preexisting data contract version is invalid"
+  printf 'preexisting-data-snapshot/v1\n' >"$output"
+
+  # validate and stream each frozen table by its primary-key order
+  while IFS=$'\t' read -r kind name all_columns semantic_columns expected_metadata \
+    pk_columns pk_index extra; do
+    ((line_count += 1))
+    ((line_count <= 1024)) || die "preexisting data contract line count is invalid"
+    [[ "$kind" == T || "$kind" == S ]] || die "preexisting data contract record is invalid"
+    [[ "$name" =~ ^[a-z][a-z0-9_]*$ ]] || die "preexisting data object name is invalid"
+    if [[ "$kind" == T ]]; then
+      [[ -z "$extra" && "$all_columns" =~ ^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$ &&
+        "$semantic_columns" =~ ^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$ &&
+        "$expected_metadata" =~ ^[a-f0-9]{64}$ &&
+        "$pk_columns" =~ ^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$ &&
+        "$pk_index" =~ ^[a-z][a-z0-9_]*$ ]] ||
+        die "preexisting data table contract is malformed"
+      if ! actual_metadata=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+        psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+          --dbname "$database_name" --tuples-only --no-align --field-separator='|' \
+          --command "SELECT attribute.attnum, attribute.attname, format_type(attribute.atttypid, attribute.atttypmod), attribute.attnotnull, attribute.attidentity, attribute.attgenerated, COALESCE(pg_get_expr(default_value.adbin, default_value.adrelid), ''), COALESCE(collation_entry.collname, '') FROM pg_attribute attribute LEFT JOIN pg_attrdef default_value ON default_value.adrelid = attribute.attrelid AND default_value.adnum = attribute.attnum LEFT JOIN pg_collation collation_entry ON collation_entry.oid = attribute.attcollation WHERE attribute.attrelid = 'public.\"$name\"'::regclass AND attribute.attnum > 0 AND NOT attribute.attisdropped AND attribute.attname = ANY(string_to_array('$all_columns', ',')) ORDER BY attribute.attnum" |
+        sha256sum | awk '{print $1}'); then
+        die "preexisting data table metadata snapshot failed: $name"
+      fi
+      [[ "$actual_metadata" == "$expected_metadata" ]] ||
+        die "preexisting data table columns changed: $name"
+      if ! actual_pk_details=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+        psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+          --dbname "$database_name" --tuples-only --no-align --field-separator=$'\t' \
+          --command "SELECT string_agg(attribute.attname, ',' ORDER BY key.ordinality), index_relation.relname FROM pg_index primary_index JOIN pg_class index_relation ON index_relation.oid = primary_index.indexrelid CROSS JOIN LATERAL unnest(primary_index.indkey) WITH ORDINALITY key(attnum, ordinality) JOIN pg_attribute attribute ON attribute.attrelid = primary_index.indrelid AND attribute.attnum = key.attnum WHERE primary_index.indrelid = 'public.\"$name\"'::regclass AND primary_index.indisprimary AND key.ordinality <= primary_index.indnkeyatts GROUP BY index_relation.relname"); then
+        die "preexisting data primary-key snapshot failed: $name"
+      fi
+      IFS=$'\t' read -r actual_pk_columns actual_pk_index <<<"$actual_pk_details"
+      [[ "$actual_pk_columns" == "$pk_columns" && "$actual_pk_index" == "$pk_index" ]] ||
+        die "preexisting data primary key changed: $name"
+      select_columns=$(printf '%s' "$semantic_columns" | sed 's/^/"/; s/$/"/; s/,/","/g')
+      order_columns=$(printf '%s' "$pk_columns" | sed 's/^/"/; s/$/"/; s/,/","/g')
+      if ! plan=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+        psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+          --dbname "$database_name" --tuples-only --no-align --command \
+          "BEGIN READ ONLY; SET LOCAL enable_seqscan = off; EXPLAIN (COSTS OFF) SELECT jsonb_build_array($select_columns)::text FROM public.\"$name\" ORDER BY $order_columns; ROLLBACK"); then
+        die "preexisting data table plan snapshot failed: $name"
+      fi
+      [[ ( "$plan" == *"Index Scan"* || "$plan" == *"Index Only Scan"* ) &&
+        "$plan" != *"Seq Scan"* && "$plan" != *"Sort"* ]] ||
+        die "preexisting data table lacks its bounded primary-key scan: $name: $plan"
+      # hash the stream in Node without shell interpolation
+      # shellcheck disable=SC2016
+      if ! row_proof=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+        psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+          --dbname "$database_name" --command \
+          "BEGIN READ ONLY; SET LOCAL enable_seqscan = off; COPY (SELECT jsonb_build_array($select_columns)::text FROM public.\"$name\" ORDER BY $order_columns) TO STDOUT; COMMIT" |
+        node --input-type=module -e '
+          import { createHash } from "node:crypto";
+          const hash = createHash("sha256");
+          let rows = 0;
+          process.stdin.on("data", (chunk) => {
+            hash.update(chunk);
+            for (const byte of chunk) if (byte === 10) rows += 1;
+          });
+          process.stdin.on("end", () => process.stdout.write(`${rows}\t${hash.digest("hex")}\n`));
+        '); then
+        die "preexisting data table row stream failed: $name"
+      fi
+      [[ "$row_proof" =~ ^[0-9]+$'\t'[a-f0-9]{64}$ ]] ||
+        die "preexisting data row stream is invalid: $name"
+      printf 'T\t%s\t%s\n' "$name" "$row_proof" >>"$output"
+    else
+      sequence_structure=$all_columns
+      bootstrap_sequence=$semantic_columns
+      [[ -z "$expected_metadata" && -z "$pk_columns" && -z "$pk_index" && -z "$extra" &&
+        "$sequence_structure" =~ ^[a-f0-9]{64}$ &&
+        ( "$bootstrap_sequence" == true || "$bootstrap_sequence" == false ) ]] ||
+        die "preexisting data sequence contract is malformed"
+      if ! actual_metadata=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+        psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+          --dbname "$database_name" --tuples-only --no-align --field-separator='|' \
+          --command "SELECT format_type(sequence.seqtypid, NULL), sequence.seqstart, sequence.seqincrement, sequence.seqmax, sequence.seqmin, sequence.seqcache, sequence.seqcycle FROM pg_sequence sequence WHERE sequence.seqrelid = 'public.\"$name\"'::regclass" |
+        sha256sum | awk '{print $1}'); then
+        die "preexisting data sequence metadata snapshot failed: $name"
+      fi
+      [[ "$actual_metadata" == "$sequence_structure" ]] ||
+        die "preexisting data sequence structure changed: $name"
+      if ! sequence_state=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+        psql --no-psqlrc --quiet --set=ON_ERROR_STOP=1 --username postgres \
+          --dbname "$database_name" --tuples-only --no-align --field-separator=$'\t' \
+          --command "SELECT last_value, is_called FROM public.\"$name\""); then
+        die "preexisting data sequence state snapshot failed: $name"
+      fi
+      IFS=$'\t' read -r last_value is_called <<<"$sequence_state"
+      [[ "$last_value" =~ ^-?[0-9]+$ && ( "$is_called" == t || "$is_called" == f ) ]] ||
+        die "preexisting data sequence state is invalid: $name"
+      printf 'S\t%s\t%s\t%s\t%s\t%s\n' "$name" "$sequence_structure" \
+        "$bootstrap_sequence" "$last_value" "$is_called" >>"$output"
+    fi
+  done < <(tail -n +2 "$contract")
+  ((line_count > 0)) || die "preexisting data contract is empty"
+  [[ $(stat -c '%s' "$output") -le 262144 ]] ||
+    die "preexisting data snapshot exceeds its byte bound"
+}
+
+# compare two source-bound snapshots with only reviewed bootstrap sequence drift
+verify_preexisting_data_snapshots() {
+  local contract=$1
+  local before=$2
+  local after=$3
+  node --input-type=module - "$contract" "$before" "$after" <<'NODE'
+import { readFileSync } from "node:fs";
+
+const [contractPath, beforePath, afterPath] = process.argv.slice(2);
+const readBoundedLines = (path, header) => {
+  const bytes = readFileSync(path);
+  if (bytes.length < 1 || bytes.length > 262_144) throw new Error("semantic proof exceeds its byte bound");
+  const lines = bytes.toString("utf8").trimEnd().split("\n");
+  if (lines[0] !== header || lines.length < 2 || lines.length > 1_025) {
+    throw new Error("semantic proof boundary is invalid");
+  }
+  return lines.slice(1);
+};
+const contract = new Map();
+for (const line of readBoundedLines(contractPath, "preexisting-data/v1")) {
+  const fields = line.split("\t");
+  const key = `${fields[0]}:${fields[1]}`;
+  const validTable = fields[0] === "T" && fields.length === 7 &&
+    /^[a-z][a-z0-9_]*$/u.test(fields[1]) &&
+    /^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$/u.test(fields[2]) &&
+    /^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$/u.test(fields[3]) &&
+    /^[a-f0-9]{64}$/u.test(fields[4]) &&
+    /^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$/u.test(fields[5]) &&
+    /^[a-z][a-z0-9_]*$/u.test(fields[6]);
+  const validSequence = fields[0] === "S" && fields.length === 4 &&
+    /^[a-z][a-z0-9_]*$/u.test(fields[1]) && /^[a-f0-9]{64}$/u.test(fields[2]) &&
+    (fields[3] === "true" || fields[3] === "false");
+  if ((!validTable && !validSequence) || contract.has(key)) {
+    throw new Error("semantic contract contains a duplicate or invalid record");
+  }
+  contract.set(key, fields);
+}
+const parseSnapshot = (path) => {
+  const records = new Map();
+  for (const line of readBoundedLines(path, "preexisting-data-snapshot/v1")) {
+    const fields = line.split("\t");
+    const key = `${fields[0]}:${fields[1]}`;
+    if (!contract.has(key) || records.has(key)) throw new Error("semantic snapshot record is invalid");
+    if ((fields[0] === "T" && (fields.length !== 4 || !/^\d+$/u.test(fields[2]) || !/^[a-f0-9]{64}$/u.test(fields[3]))) ||
+      (fields[0] === "S" && (fields.length !== 6 || fields[2] !== contract.get(key)[2] ||
+        fields[3] !== contract.get(key)[3] || !/^-?\d+$/u.test(fields[4]) || !/^[tf]$/u.test(fields[5])))) {
+      throw new Error("semantic snapshot value is invalid");
+    }
+    records.set(key, fields);
+  }
+  if (records.size !== contract.size) throw new Error("semantic snapshot is incomplete");
+  return records;
+};
+const beforeRecords = parseSnapshot(beforePath);
+const afterRecords = parseSnapshot(afterPath);
+for (const [key, definition] of contract) {
+  const left = beforeRecords.get(key);
+  const right = afterRecords.get(key);
+  if (definition[0] === "T" || definition[3] === "false") {
+    if (left.join("\t") !== right.join("\t")) throw new Error(`preexisting application data changed: ${definition[1]}`);
+    continue;
+  }
+  if (left[2] !== right[2] || left[3] !== right[3] || BigInt(right[4]) < BigInt(left[4]) ||
+    (left[5] === "t" && right[5] !== "t")) {
+    throw new Error(`bootstrap sequence did not advance monotonically: ${definition[1]}`);
+  }
+}
+NODE
+}
+
+# retain one bounded private failure packet before invocation-owned cleanup
+retain_release_failure_evidence() {
+  local label=$1
+  local failure_status=$2
+  shift 2
+  local temporary final source name size total_size=0
+  local manifest
+  case "$label" in
+    normal-stage|historical-v14-rehearsal) ;;
+    *) return 1 ;;
+  esac
+  [[ "$failure_status" =~ ^[1-9][0-9]{0,2}$ && -d "$state_dir" && ! -L "$state_dir" ]] ||
+    return 1
+  umask 077
+  temporary=$(mktemp -d "$state_dir/.${label}-failure.XXXXXX") || return 1
+  chmod 700 "$temporary" || {
+    rm -rf -- "$temporary"
+    return 1
+  }
+  manifest="$temporary/manifest"
+  printf 'contractVersion=release-qualification-failure/v1\nlabel=%s\nstatus=%s\n' \
+    "$label" "$failure_status" >"$manifest" || {
+    rm -rf -- "$temporary"
+    return 1
+  }
+  # copy only the caller's bounded regular evidence members
+  for source in "$@"; do
+    [[ -n "$source" && -f "$source" && ! -L "$source" ]] || continue
+    size=$(stat -c '%s' "$source") || {
+      rm -rf -- "$temporary"
+      return 1
+    }
+    [[ "$size" =~ ^[0-9]+$ && "$size" -le 1048576 ]] || {
+      rm -rf -- "$temporary"
+      return 1
+    }
+    total_size=$((total_size + size))
+    ((total_size <= 4194304)) || {
+      rm -rf -- "$temporary"
+      return 1
+    }
+    name=$(basename -- "$source")
+    [[ "$name" =~ ^[.a-zA-Z0-9_-]+$ && ! -e "$temporary/$name" ]] || {
+      rm -rf -- "$temporary"
+      return 1
+    }
+    install -m 600 -- "$source" "$temporary/$name" || {
+      rm -rf -- "$temporary"
+      return 1
+    }
+    printf 'member=%s:%s:%s\n' "$name" "$size" \
+      "$(sha256sum "$temporary/$name" | awk '{print $1}')" >>"$manifest" || {
+      rm -rf -- "$temporary"
+      return 1
+    }
+  done
+  chmod 600 "$manifest" || {
+    rm -rf -- "$temporary"
+    return 1
+  }
+  # publish only after every member and digest is complete
+  for source in "$temporary"/*; do
+    sync -f "$source" || {
+      rm -rf -- "$temporary"
+      return 1
+    }
+  done
+  sync -f "$temporary" || {
+    rm -rf -- "$temporary"
+    return 1
+  }
+  final="$state_dir/${label}-failure-${temporary##*.}"
+  [[ ! -e "$final" && ! -L "$final" ]] || {
+    rm -rf -- "$temporary"
+    return 1
+  }
+  mv -- "$temporary" "$final" || {
+    rm -rf -- "$temporary"
+    return 1
+  }
+  sync -f "$state_dir" || return 1
+  printf 'Retained release qualification failure evidence: %s\n' "$final" >&2
 }
 
 # remove a mutable tag or digest
@@ -351,7 +772,7 @@ require_literal_inert_v14_release_capacity() (
 
   # this gate is intentionally limited to the reviewed inactive v13-to-v14 inert bridge
   [[ "$source_release" == "$recurring_previous_release" &&
-    "$target_version" == 14 ]] ||
+    "$target_version" == 15 ]] ||
     die "literal adjustment release capacity is unsupported outside the fixed inert v14 bridge"
 
   # keep the direct bridge on the exact retained database and tunnel infrastructure
@@ -419,7 +840,7 @@ require_literal_full_v14_release_capacity() (
 
   # admit only the reviewed bridge-to-full transition
   [[ "$source_release" == "$v14_compatibility_bridge_release" &&
-    "$target_version" == 14 ]] ||
+    "$target_version" == 15 ]] ||
     die "literal full v14 capacity is unsupported outside the fixed bridge handoff"
 
   # retain the exact database and tunnel infrastructure across the handoff
@@ -1281,6 +1702,736 @@ if (!fullyPassing && !reviewedStorageFailure) {
 NODE
 }
 
+# require fresh non-storage proof for a normal v15 release
+require_normal_release_resource_gate() {
+  require_file "$v13_resource_evidence"
+  node --input-type=module - "$v13_resource_evidence" <<'NODE'
+import { lstatSync, readFileSync } from "node:fs";
+
+const path = process.argv[2];
+const details = lstatSync(path);
+
+// require one bounded private regular evidence file
+if (!details.isFile() || details.isSymbolicLink() || details.size < 1 ||
+  details.size > 65_536 || (details.mode & 0o077) !== 0) {
+  throw new Error("normal release resource evidence file is invalid");
+}
+const evidence = JSON.parse(readFileSync(path, "utf8"));
+const exactKeys = (value, keys) => value !== null && typeof value === "object" &&
+  !Array.isArray(value) &&
+  JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
+const integer = (value) => Number.isSafeInteger(value) && value >= 0;
+const finite = (value) => Number.isFinite(value) && value >= 0;
+
+// reject schema drift before evaluating individual resources
+if (!exactKeys(evidence, [
+  "architecture", "capturedAt", "cpu", "docker", "load15",
+  "memoryAvailableBytes", "pass", "sampleSeconds", "swapBytesPerMinute",
+  "varLib",
+]) ||
+  !exactKeys(evidence.architecture, ["docker", "expected", "host"]) ||
+  !exactKeys(evidence.cpu, ["actual", "minimum"]) ||
+  !exactKeys(evidence.load15, ["actual", "maximum"]) ||
+  !exactKeys(evidence.memoryAvailableBytes, ["minimumObserved", "minimumRequired"]) ||
+  !exactKeys(evidence.swapBytesPerMinute, ["actual", "maximum"]) ||
+  !exactKeys(evidence.varLib, [
+    "databaseBytes", "freeBytes", "inodeFreePercent", "minimumFreeBytes",
+  ]) ||
+  !exactKeys(evidence.docker, [
+    "freeBytes", "inodeFreePercent", "minimumFreeBytes", "root",
+  ])) {
+  throw new Error("normal release resource evidence schema is invalid");
+}
+const capturedAt = Date.parse(evidence.capturedAt);
+const ageMilliseconds = Date.now() - capturedAt;
+const expectedVarLibMinimum = Math.max(
+  10 * 1_024 * 1_024 * 1_024,
+  3 * evidence.varLib.databaseBytes + 5 * 1_024 * 1_024 * 1_024,
+);
+const expectedLoadMaximum = Number((evidence.cpu.actual * 0.5).toFixed(3));
+
+// preserve every fresh architecture, CPU, load, memory, swap and inode gate
+if (evidence.sampleSeconds < 900 || !integer(evidence.sampleSeconds) ||
+  !Number.isFinite(capturedAt) || ageMilliseconds < -300_000 ||
+  ageMilliseconds > 3_600_000 ||
+  evidence.architecture.host !== "aarch64" ||
+  evidence.architecture.docker !== "aarch64" ||
+  evidence.architecture.expected !== "aarch64" ||
+  evidence.cpu.minimum !== 4 || !integer(evidence.cpu.actual) ||
+  evidence.cpu.actual < evidence.cpu.minimum ||
+  !finite(evidence.load15.actual) || !finite(evidence.load15.maximum) ||
+  evidence.load15.maximum !== expectedLoadMaximum ||
+  evidence.load15.actual > evidence.load15.maximum ||
+  evidence.memoryAvailableBytes.minimumRequired !== 1_792 * 1_024 * 1_024 ||
+  !integer(evidence.memoryAvailableBytes.minimumObserved) ||
+  evidence.memoryAvailableBytes.minimumObserved <
+    evidence.memoryAvailableBytes.minimumRequired ||
+  evidence.swapBytesPerMinute.maximum !== 1_024 * 1_024 ||
+  !integer(evidence.swapBytesPerMinute.actual) ||
+  evidence.swapBytesPerMinute.actual > evidence.swapBytesPerMinute.maximum ||
+  !integer(evidence.varLib.databaseBytes) || !integer(evidence.varLib.freeBytes) ||
+  !integer(evidence.varLib.minimumFreeBytes) ||
+  evidence.varLib.minimumFreeBytes !== expectedVarLibMinimum ||
+  !integer(evidence.varLib.inodeFreePercent) ||
+  evidence.varLib.inodeFreePercent < 10 ||
+  evidence.varLib.inodeFreePercent > 100 ||
+  evidence.docker.root !== "/var/lib/docker" ||
+  !integer(evidence.docker.freeBytes) ||
+  evidence.docker.minimumFreeBytes !== 4 * 1_024 * 1_024 * 1_024 ||
+  !integer(evidence.docker.inodeFreePercent) ||
+  evidence.docker.inodeFreePercent < 10 ||
+  evidence.docker.inodeFreePercent > 100) {
+  throw new Error("normal release non-storage resource evidence is absent, stale, or failed");
+}
+const failedBuckets = [];
+
+// identify only the obsolete storage formulas in the reviewed sample
+if (evidence.varLib.freeBytes < evidence.varLib.minimumFreeBytes) {
+  failedBuckets.push("varLib.storage");
+}
+if (evidence.docker.freeBytes < evidence.docker.minimumFreeBytes) {
+  failedBuckets.push("docker.storage");
+}
+const fullyPassing = evidence.pass === true && failedBuckets.length === 0;
+const reviewedStorageFailure = evidence.pass === false &&
+  JSON.stringify(failedBuckets) === JSON.stringify(["varLib.storage"]);
+
+// admit either a full pass or only the exact reviewed obsolete varLib storage failure
+if (!fullyPassing && !reviewedStorageFailure) {
+  throw new Error("normal release resource evidence does not contain only the reviewed storage failures");
+}
+NODE
+}
+
+# render one canonical measured normal-stage capacity request
+write_normal_stage_capacity_input() {
+  local source_env=$1
+  local target_env=$2
+  local phase=$3
+  local output=$4
+  local database_name postgres_dir source_release target_release source_history
+  local system_identifier database_oid database_bytes largest_index_bytes max_wal_bytes
+  local postgres_container_id source_database_file_count source_env_sha256 target_env_sha256
+  database_name=$(env_value "$source_env" WEATHER_DATABASE_NAME)
+  postgres_dir=$(env_value "$source_env" WEATHER_POSTGRES_DIR)
+  source_release=$(env_value "$source_env" WEATHER_RELEASE)
+  target_release=$(env_value "$target_env" WEATHER_RELEASE)
+  source_history=$(migration_history_sha256 "$source_env" "$database_name")
+  [[ "$source_history" == adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93 ]] ||
+    die "normal capacity source is not the exact schema-21 ledger"
+  read -r system_identifier database_oid database_bytes largest_index_bytes max_wal_bytes < <(
+    WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+      psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
+        --tuples-only --no-align --field-separator=' ' --command \
+        "SELECT (SELECT system_identifier FROM pg_control_system()), (SELECT oid FROM pg_database WHERE datname = current_database()), pg_database_size(current_database()), COALESCE((SELECT max(pg_relation_size(indexrelid)) FROM pg_index JOIN pg_class ON pg_class.oid = pg_index.indrelid WHERE pg_class.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)), 0), pg_size_bytes(current_setting('max_wal_size'))")
+  postgres_container_id=$(WEATHER_ENV_FILE=$source_env compose ps -q postgres)
+  [[ "$postgres_container_id" =~ ^[a-f0-9]{64}$ ]] ||
+    die "normal capacity PostgreSQL container identity is invalid"
+  [[ -d "$postgres_dir/base/$database_oid" && ! -L "$postgres_dir/base/$database_oid" ]] ||
+    die "normal capacity database file root is unavailable"
+  source_database_file_count=$(find -P "$postgres_dir/base/$database_oid" -type f -printf . | wc -c)
+  [[ "$source_database_file_count" =~ ^[1-9][0-9]*$ ]] ||
+    die "normal capacity database file count is invalid"
+  source_env_sha256=$(sha256sum "$source_env" | awk '{print $1}')
+  target_env_sha256=$(sha256sum "$target_env" | awk '{print $1}')
+  node --input-type=module - "$output" "$phase" \
+    "normal-${source_release//./-}-to-${target_release//./-}" \
+    "$source_release" "$target_release" "$source_env_sha256" "$target_env_sha256" \
+    "$system_identifier" "$database_oid" "$database_bytes" "$largest_index_bytes" \
+    "$max_wal_bytes" "$source_database_file_count" "$postgres_dir" \
+    "${WEATHER_COMPOSE_PROJECT_NAME:-weather}" "$postgres_container_id" \
+    "$(env_value "$source_env" WEATHER_SERVER_IMAGE)" \
+    "$(env_value "$source_env" WEATHER_WEB_IMAGE)" \
+    "$(env_value "$target_env" WEATHER_SERVER_IMAGE)" \
+    "$(env_value "$target_env" WEATHER_WEB_IMAGE)" <<'NODE'
+import { writeFileSync } from "node:fs";
+
+const [output, phase, operationId, sourceRelease, targetRelease, sourceEnvSha256,
+  targetEnvSha256, systemIdentifier, sourceDatabaseOid, activeDatabaseBytes,
+  largestSourceIndexBytes, maxWalBytes, sourceDatabaseFileCount, weatherPostgresDir,
+  postgresComposeProject, postgresContainerId, sourceServer, sourceWeb, targetServer,
+  targetWeb] = process.argv.slice(2);
+const input = {
+  activeDatabaseBytes: Number(activeDatabaseBytes),
+  captureReserveBytes: 4_112_384,
+  capturedAt: new Date().toISOString(),
+  fixtureInodes: 4_096,
+  imageReferences: [
+    { reference: sourceServer, role: "source", runtime: "server" },
+    { reference: sourceWeb, role: "source", runtime: "web" },
+    { reference: targetServer, role: "target", runtime: "server" },
+    { reference: targetWeb, role: "target", runtime: "web" },
+  ],
+  inodeFloor: 32_768,
+  largestSourceIndexBytes: Number(largestSourceIndexBytes),
+  maxWalBytes: Number(maxWalBytes),
+  operationId,
+  phase,
+  postgresComposeProject,
+  postgresContainerId,
+  protectedFloorBytes: 2_030_043_136,
+  retirementCreditBytes: 0,
+  scratchBytes: 268_435_456,
+  sourceDatabaseFileCount: Number(sourceDatabaseFileCount),
+  sourceDatabaseOid: Number(sourceDatabaseOid),
+  sourceEnvSha256,
+  sourceLedgerSha256: "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
+  sourceRelease,
+  sourceSchemaVersion: 21,
+  systemIdentifier,
+  targetEnvSha256,
+  targetLedgerSha256: "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
+  targetRelease,
+  targetSchemaVersion: 22,
+  weatherPostgresDir,
+};
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+writeFileSync(output, canonical(input), { mode: 0o600 });
+NODE
+  chmod 600 "$output"
+}
+
+# revalidate one ready receipt against its exact caller input and trusted current time
+require_normal_capacity_receipt_binding() {
+  local input=$1
+  local receipt=$2
+  local operation=$3
+  local phase=$4
+  [[ -f "$receipt" && ! -L "$receipt" && "$(stat -c '%u:%a' "$receipt")" == "$EUID:600" &&
+    "$(stat -c '%s' "$receipt")" -ge 2 && "$(stat -c '%s' "$receipt")" -le 16384 ]] ||
+    die "normal capacity receipt metadata is invalid"
+  node --input-type=module - "$deploy_dir/scripts/adjustment-evaluation-package.mjs" \
+    "$input" "$receipt" "$operation" "$phase" <<'NODE'
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const [modulePath, inputPath, receiptPath, operation, phase] = process.argv.slice(2);
+const { validateNormalCapacityReceipt } = await import(pathToFileURL(modulePath));
+const inputBytes = readFileSync(inputPath);
+const receiptBytes = readFileSync(receiptPath);
+const input = JSON.parse(inputBytes);
+const receipt = JSON.parse(receiptBytes);
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+
+// bind the immutable helper output to every exact request fact
+if (!inputBytes.equals(Buffer.from(canonical(input))) ||
+  !receiptBytes.equals(Buffer.from(canonical(receipt))) ||
+  receipt.operation !== operation || receipt.phase !== phase ||
+  receipt.state !== "capacity_ready" || receipt.reasons?.length !== 0 ||
+  Object.keys(input).some((name) => canonical(receipt[name]) !== canonical(input[name]))) {
+  throw new Error("normal capacity receipt binding differs");
+}
+validateNormalCapacityReceipt(receipt, new Date());
+NODE
+}
+
+# collect and require one authoritative normal-stage capacity receipt
+require_normal_stage_capacity() {
+  local source_env=$1
+  local target_env=$2
+  local phase=$3
+  local input=$4
+  local receipt=$5
+  write_normal_stage_capacity_input "$source_env" "$target_env" "$phase" "$input"
+  if ! normal_release_capacity_receipt normal-stage-capacity "$input" >"$receipt"; then
+    cat "$receipt" >&2
+    die "normal stage capacity is blocked"
+  fi
+  chmod 600 "$receipt"
+  require_normal_capacity_receipt_binding "$input" "$receipt" stage "$phase"
+}
+
+# seal the completed full-copy qualification for later activation
+write_normal_stage_qualification_receipt() {
+  local source_env=$1
+  local target_env=$2
+  local pre_pull_receipt=$3
+  local post_pull_receipt=$4
+  local peak_output=$5
+  local output=$6
+  node --input-type=module - "$deploy_dir/scripts/adjustment-evaluation-package.mjs" \
+    "$pre_pull_receipt" "$post_pull_receipt" "$peak_output" \
+    "$output" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const [modulePath, prePath, postPath, samplesPath, output] = process.argv.slice(2);
+const { validateNormalCapacityReceipt } = await import(pathToFileURL(modulePath));
+const pre = JSON.parse(readFileSync(prePath, "utf8"));
+const post = JSON.parse(readFileSync(postPath, "utf8"));
+const samplesBytes = readFileSync(samplesPath);
+const samples = JSON.parse(samplesBytes);
+const trustedNow = new Date();
+validateNormalCapacityReceipt(pre, trustedNow);
+validateNormalCapacityReceipt(post, trustedNow);
+const bound = ["operationId", "sourceRelease", "targetRelease", "sourceEnvSha256",
+  "targetEnvSha256", "systemIdentifier", "sourceDatabaseOid", "sourceLedgerSha256",
+  "targetLedgerSha256", "sourceSchemaVersion", "targetSchemaVersion",
+  "postgresContainerId", "postgresContainerImageId", "postgresContainerImageReference",
+  "weatherPostgresDir", "postgresDataDirectory"];
+
+// require the post-pull receipt to retain every immutable pre-pull binding
+if (pre.operation !== "stage" || post.operation !== "stage" ||
+  pre.phase !== "pre_pull" || post.phase !== "post_pull" ||
+  pre.state !== "capacity_ready" || post.state !== "capacity_ready" ||
+  bound.some((name) => pre[name] !== post[name])) {
+  throw new Error("normal stage capacity receipts are not one transaction");
+}
+const sampleKeys = ["contractVersion", "initialFreeBytes", "initialFreeInodes",
+  "minimumFreeBytes", "minimumFreeInodes", "peakGrowthBytes", "peakGrowthInodes",
+  "migrationDurationMilliseconds", "migrationMinimumFreeBytes",
+  "migrationMinimumFreeInodes", "migrationPeakGrowthBytes", "migrationPeakGrowthInodes",
+  "migrationPhaseEndIndex", "migrationPhaseEndTimestamp", "migrationPhaseStartIndex",
+  "migrationPhaseStartTimestamp", "receiptSha256", "samples"];
+const sampleBody = { ...samples };
+delete sampleBody.receiptSha256;
+const integer = (value) => Number.isSafeInteger(value) && value >= 0;
+const sampleDigest = createHash("sha256").update(canonical(sampleBody)).digest("hex");
+const byteHeadroom = post.freeBytes - post.protectedFloorBytes - post.captureReserveBytes;
+const inodeHeadroom = post.freeInodes - post.inodeFloor;
+const imagePullConsumedBytes = Math.max(0, pre.freeBytes - post.freeBytes);
+const imagePullConsumedInodes = Math.max(0, pre.freeInodes - post.freeInodes);
+let sampleSeriesValid = Array.isArray(samples.samples) && samples.samples.length >= 2 &&
+  samples.samples.length <= 4_096;
+// reject missing or reordered samples even when the outer digest was recomputed
+if (sampleSeriesValid) {
+  for (let index = 0; index < samples.samples.length; index += 1) {
+    const sample = samples.samples[index];
+    if (Object.keys(sample).sort().join("\n") !==
+      ["capturedAtMilliseconds", "freeBytes", "freeInodes", "sequence"].sort().join("\n") ||
+      sample.sequence !== index || !integer(sample.capturedAtMilliseconds) ||
+      !integer(sample.freeBytes) || !integer(sample.freeInodes) ||
+      (index > 0 && sample.capturedAtMilliseconds <
+        samples.samples[index - 1].capturedAtMilliseconds)) {
+      sampleSeriesValid = false;
+      break;
+    }
+  }
+}
+const observedMinimumBytes = sampleSeriesValid
+  ? Math.min(...samples.samples.map((sample) => sample.freeBytes)) : -1;
+const observedMinimumInodes = sampleSeriesValid
+  ? Math.min(...samples.samples.map((sample) => sample.freeInodes)) : -1;
+const phaseIndicesValid = integer(samples.migrationPhaseStartIndex) &&
+  integer(samples.migrationPhaseEndIndex) &&
+  samples.migrationPhaseStartIndex < samples.migrationPhaseEndIndex &&
+  samples.migrationPhaseEndIndex < samples.samples.length;
+const migrationSamples = phaseIndicesValid
+  ? samples.samples.slice(samples.migrationPhaseStartIndex,
+    samples.migrationPhaseEndIndex + 1) : [];
+const observedMigrationMinimumBytes = phaseIndicesValid
+  ? Math.min(...migrationSamples.map((sample) => sample.freeBytes)) : -1;
+const observedMigrationMinimumInodes = phaseIndicesValid
+  ? Math.min(...migrationSamples.map((sample) => sample.freeInodes)) : -1;
+const wholeStagePeakBytes = sampleSeriesValid
+  ? Math.max(post.freeBytes, samples.initialFreeBytes) - observedMinimumBytes : -1;
+const wholeStagePeakInodes = sampleSeriesValid
+  ? Math.max(post.freeInodes, samples.initialFreeInodes) - observedMinimumInodes : -1;
+
+// close the measured full-copy peak inside the admitted post-pull envelope
+if (Object.keys(samples).sort().join("\n") !== sampleKeys.sort().join("\n") ||
+  samples.contractVersion !== "normal-stage-capacity-samples/v1" ||
+  !sampleSeriesValid || samples.receiptSha256 !== sampleDigest ||
+  ![samples.initialFreeBytes, samples.initialFreeInodes, samples.minimumFreeBytes,
+    samples.minimumFreeInodes, samples.peakGrowthBytes,
+    samples.peakGrowthInodes, samples.migrationDurationMilliseconds,
+    samples.migrationMinimumFreeBytes, samples.migrationMinimumFreeInodes,
+    samples.migrationPeakGrowthBytes, samples.migrationPeakGrowthInodes,
+    samples.migrationPhaseStartTimestamp, samples.migrationPhaseEndTimestamp].every(integer) ||
+  !phaseIndicesValid ||
+  samples.migrationDurationMilliseconds > 60_000 ||
+  samples.minimumFreeBytes < post.protectedFloorBytes + post.captureReserveBytes ||
+  samples.minimumFreeInodes < post.inodeFloor || byteHeadroom < 0 || inodeHeadroom < 0 ||
+  samples.minimumFreeBytes !== observedMinimumBytes ||
+  samples.minimumFreeInodes !== observedMinimumInodes ||
+  samples.initialFreeBytes !== samples.samples[0]?.freeBytes ||
+  samples.initialFreeInodes !== samples.samples[0]?.freeInodes ||
+  samples.peakGrowthBytes !== samples.initialFreeBytes - observedMinimumBytes ||
+  samples.peakGrowthInodes !== samples.initialFreeInodes - observedMinimumInodes ||
+  samples.migrationPhaseStartTimestamp !==
+    samples.samples[samples.migrationPhaseStartIndex]?.capturedAtMilliseconds ||
+  samples.migrationPhaseEndTimestamp !==
+    samples.samples[samples.migrationPhaseEndIndex]?.capturedAtMilliseconds ||
+  samples.migrationMinimumFreeBytes !== observedMigrationMinimumBytes ||
+  samples.migrationMinimumFreeInodes !== observedMigrationMinimumInodes ||
+  samples.migrationPeakGrowthBytes !==
+    samples.samples[samples.migrationPhaseStartIndex]?.freeBytes - observedMigrationMinimumBytes ||
+  samples.migrationPeakGrowthInodes !==
+    samples.samples[samples.migrationPhaseStartIndex]?.freeInodes - observedMigrationMinimumInodes ||
+  imagePullConsumedBytes > pre.imagePullPeakBytes ||
+  imagePullConsumedInodes > pre.newImageInodes ||
+  wholeStagePeakBytes > byteHeadroom || wholeStagePeakInodes > inodeHeadroom) {
+  throw new Error("normal compatibility peak exceeds its post-pull capacity envelope");
+}
+const body = {
+  capacitySamplesSha256: createHash("sha256").update(samplesBytes).digest("hex"),
+  capacitySamplesReceiptSha256: samples.receiptSha256,
+  capacitySampleCount: samples.samples.length,
+  cleanupConfirmed: true,
+  contractVersion: "normal-stage-qualification/v1",
+  createdAt: new Date().toISOString(),
+  imagePullConsumedBytes,
+  imagePullConsumedInodes,
+  measuredMigrationPeakBytes: samples.migrationPeakGrowthBytes,
+  measuredMigrationPeakInodes: samples.migrationPeakGrowthInodes,
+  migrationMinimumFreeBytesObserved: samples.migrationMinimumFreeBytes,
+  migrationMinimumFreeInodesObserved: samples.migrationMinimumFreeInodes,
+  migrationPhaseEndIndex: samples.migrationPhaseEndIndex,
+  migrationPhaseEndTimestamp: samples.migrationPhaseEndTimestamp,
+  migrationPhaseStartIndex: samples.migrationPhaseStartIndex,
+  migrationPhaseStartTimestamp: samples.migrationPhaseStartTimestamp,
+  migrationDurationMilliseconds: samples.migrationDurationMilliseconds,
+  minimumFreeBytesObserved: samples.minimumFreeBytes,
+  minimumFreeInodesObserved: samples.minimumFreeInodes,
+  operationId: post.operationId,
+  postPullReceiptSha256: post.receiptSha256,
+  postPullFreeBytes: post.freeBytes,
+  postPullFreeInodes: post.freeInodes,
+  prePullReceiptSha256: pre.receiptSha256,
+  sourceDatabaseOid: post.sourceDatabaseOid,
+  sourceEnvSha256: post.sourceEnvSha256,
+  sourceLedgerSha256: post.sourceLedgerSha256,
+  sourceRelease: post.sourceRelease,
+  sourceSchemaVersion: post.sourceSchemaVersion,
+  systemIdentifier: post.systemIdentifier,
+  targetEnvSha256: post.targetEnvSha256,
+  targetLedgerSha256: post.targetLedgerSha256,
+  targetRelease: post.targetRelease,
+  targetSchemaVersion: post.targetSchemaVersion,
+  wholeStagePeakBytes,
+  wholeStagePeakInodes,
+};
+function canonical(value) {
+  return Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+}
+const receipt = { ...body,
+  receiptSha256: createHash("sha256").update(canonical(body)).digest("hex") };
+writeFileSync(output, canonical(receipt), { mode: 0o600 });
+NODE
+  chmod 600 "$output"
+}
+
+# validate one immutable cleanup-confirmed stage qualification against live source identity
+read_normal_stage_qualification() {
+  local source_env=$1
+  local target_env=$2
+  local receipt=$3
+  local database_name source_env_sha256 target_env_sha256 system_identifier database_oid
+  local capacity_samples
+  database_name=$(env_value "$source_env" WEATHER_DATABASE_NAME)
+  require_canonical_descendant "$receipt" "$releases_dir" "normal stage qualification"
+  require_file "$receipt"
+  [[ ! -L "$receipt" && "$(stat -c '%u:%a' "$receipt")" == "$EUID:600" &&
+    "$(stat -c '%s' "$receipt")" -le 16384 ]] ||
+    die "normal stage qualification metadata is invalid"
+  source_env_sha256=$(sha256sum "$source_env" | awk '{print $1}')
+  target_env_sha256=$(sha256sum "$target_env" | awk '{print $1}')
+  capacity_samples="$releases_dir/$(env_value "$target_env" WEATHER_RELEASE).normal-stage-samples.json"
+  require_canonical_descendant "$capacity_samples" "$releases_dir" \
+    "normal stage capacity samples"
+  require_file "$capacity_samples"
+  [[ ! -L "$capacity_samples" && "$(stat -c '%u:%a' "$capacity_samples")" == "$EUID:600" &&
+    "$(stat -c '%s' "$capacity_samples")" -le 1048576 ]] ||
+    die "normal stage capacity sample artifact is invalid"
+  read -r system_identifier database_oid < <(
+    WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+      psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
+        --tuples-only --no-align --field-separator=' ' --command \
+        "SELECT (SELECT system_identifier FROM pg_control_system()), (SELECT oid FROM pg_database WHERE datname = current_database())")
+  node --input-type=module - "$receipt" "$capacity_samples" \
+    "$source_env_sha256" "$target_env_sha256" \
+    "$system_identifier" "$database_oid" \
+    "$(env_value "$source_env" WEATHER_RELEASE)" \
+    "$(env_value "$target_env" WEATHER_RELEASE)" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+const [path, samplesPath, sourceEnvSha256, targetEnvSha256, systemIdentifier, databaseOid,
+  sourceRelease, targetRelease] = process.argv.slice(2);
+const receipt = JSON.parse(readFileSync(path, "utf8"));
+const samplesBytes = readFileSync(samplesPath);
+const samples = JSON.parse(samplesBytes);
+const keys = ["capacitySampleCount", "capacitySamplesReceiptSha256",
+  "capacitySamplesSha256", "cleanupConfirmed", "contractVersion", "createdAt",
+  "imagePullConsumedBytes", "imagePullConsumedInodes",
+  "measuredMigrationPeakBytes", "measuredMigrationPeakInodes", "operationId",
+  "migrationDurationMilliseconds", "migrationMinimumFreeBytesObserved",
+  "migrationMinimumFreeInodesObserved", "migrationPhaseEndIndex",
+  "migrationPhaseEndTimestamp", "migrationPhaseStartIndex",
+  "migrationPhaseStartTimestamp",
+  "minimumFreeBytesObserved", "minimumFreeInodesObserved",
+  "postPullFreeBytes", "postPullFreeInodes", "postPullReceiptSha256",
+  "prePullReceiptSha256", "receiptSha256",
+  "sourceDatabaseOid", "sourceEnvSha256", "sourceLedgerSha256", "sourceRelease",
+  "sourceSchemaVersion", "systemIdentifier", "targetEnvSha256", "targetLedgerSha256",
+  "targetRelease", "targetSchemaVersion", "wholeStagePeakBytes", "wholeStagePeakInodes"];
+const body = { ...receipt };
+delete body.receiptSha256;
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+const digest = createHash("sha256").update(canonical(body)).digest("hex");
+const integer = (value) => Number.isSafeInteger(value) && value >= 0;
+const sampleBody = { ...samples };
+delete sampleBody.receiptSha256;
+const sampleDigest = createHash("sha256").update(canonical(sampleBody)).digest("hex");
+const sampleKeys = ["contractVersion", "initialFreeBytes", "initialFreeInodes",
+  "minimumFreeBytes", "minimumFreeInodes", "migrationDurationMilliseconds",
+  "migrationMinimumFreeBytes", "migrationMinimumFreeInodes", "migrationPeakGrowthBytes",
+  "migrationPeakGrowthInodes", "migrationPhaseEndIndex", "migrationPhaseEndTimestamp",
+  "migrationPhaseStartIndex", "migrationPhaseStartTimestamp", "peakGrowthBytes",
+  "peakGrowthInodes", "receiptSha256", "samples"];
+let sampleSeriesValid = Object.keys(samples).sort().join("\n") ===
+  sampleKeys.sort().join("\n") && Array.isArray(samples.samples) &&
+  samples.samples.length >= 2 && samples.samples.length <= 4_096;
+// rederive every phase boundary and peak from the retained complete series
+if (sampleSeriesValid) {
+  for (let index = 0; index < samples.samples.length; index += 1) {
+    const sample = samples.samples[index];
+    if (Object.keys(sample).sort().join("\n") !==
+      ["capturedAtMilliseconds", "freeBytes", "freeInodes", "sequence"].sort().join("\n") ||
+      sample.sequence !== index || !integer(sample.capturedAtMilliseconds) ||
+      !integer(sample.freeBytes) || !integer(sample.freeInodes) ||
+      (index > 0 && sample.capturedAtMilliseconds <
+        samples.samples[index - 1].capturedAtMilliseconds)) {
+      sampleSeriesValid = false;
+      break;
+    }
+  }
+}
+const phaseIndicesValid = sampleSeriesValid && integer(samples.migrationPhaseStartIndex) &&
+  integer(samples.migrationPhaseEndIndex) &&
+  samples.migrationPhaseStartIndex < samples.migrationPhaseEndIndex &&
+  samples.migrationPhaseEndIndex < samples.samples.length;
+const migrationSamples = phaseIndicesValid
+  ? samples.samples.slice(samples.migrationPhaseStartIndex,
+    samples.migrationPhaseEndIndex + 1) : [];
+const migrationMinimumFreeBytes = phaseIndicesValid
+  ? Math.min(...migrationSamples.map((sample) => sample.freeBytes)) : -1;
+const migrationMinimumFreeInodes = phaseIndicesValid
+  ? Math.min(...migrationSamples.map((sample) => sample.freeInodes)) : -1;
+const wholeMinimumFreeBytes = sampleSeriesValid
+  ? Math.min(...samples.samples.map((sample) => sample.freeBytes)) : -1;
+const wholeMinimumFreeInodes = sampleSeriesValid
+  ? Math.min(...samples.samples.map((sample) => sample.freeInodes)) : -1;
+if (Object.keys(receipt).sort().join("\n") !== keys.sort().join("\n") ||
+  receipt.contractVersion !== "normal-stage-qualification/v1" ||
+  receipt.cleanupConfirmed !== true || receipt.sourceEnvSha256 !== sourceEnvSha256 ||
+  receipt.targetEnvSha256 !== targetEnvSha256 ||
+  receipt.systemIdentifier !== systemIdentifier ||
+  receipt.sourceDatabaseOid !== Number(databaseOid) ||
+  receipt.sourceRelease !== sourceRelease || receipt.targetRelease !== targetRelease ||
+  receipt.sourceLedgerSha256 !== "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424" ||
+  receipt.targetLedgerSha256 !== "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e" ||
+  receipt.sourceSchemaVersion !== 21 || receipt.targetSchemaVersion !== 22 ||
+  !integer(receipt.measuredMigrationPeakBytes) ||
+  !integer(receipt.measuredMigrationPeakInodes) ||
+  !integer(receipt.migrationDurationMilliseconds) ||
+  receipt.migrationDurationMilliseconds > 60_000 ||
+  !integer(receipt.imagePullConsumedBytes) ||
+  !integer(receipt.imagePullConsumedInodes) ||
+  !integer(receipt.postPullFreeBytes) ||
+  !integer(receipt.postPullFreeInodes) ||
+  !integer(receipt.minimumFreeBytesObserved) ||
+  !integer(receipt.minimumFreeInodesObserved) ||
+  !integer(receipt.capacitySampleCount) ||
+  !sampleSeriesValid || !phaseIndicesValid ||
+  receipt.capacitySampleCount !== samples.samples?.length ||
+  receipt.capacitySamplesSha256 !== createHash("sha256").update(samplesBytes).digest("hex") ||
+  receipt.capacitySamplesReceiptSha256 !== samples.receiptSha256 ||
+  samples.receiptSha256 !== sampleDigest ||
+  receipt.measuredMigrationPeakBytes !== samples.migrationPeakGrowthBytes ||
+  receipt.measuredMigrationPeakInodes !== samples.migrationPeakGrowthInodes ||
+  receipt.migrationMinimumFreeBytesObserved !== migrationMinimumFreeBytes ||
+  receipt.migrationMinimumFreeInodesObserved !== migrationMinimumFreeInodes ||
+  receipt.migrationPhaseStartIndex !== samples.migrationPhaseStartIndex ||
+  receipt.migrationPhaseEndIndex !== samples.migrationPhaseEndIndex ||
+  receipt.migrationPhaseStartTimestamp !==
+    samples.samples[samples.migrationPhaseStartIndex]?.capturedAtMilliseconds ||
+  receipt.migrationPhaseEndTimestamp !==
+    samples.samples[samples.migrationPhaseEndIndex]?.capturedAtMilliseconds ||
+  samples.migrationPhaseStartTimestamp !== receipt.migrationPhaseStartTimestamp ||
+  samples.migrationPhaseEndTimestamp !== receipt.migrationPhaseEndTimestamp ||
+  samples.migrationMinimumFreeBytes !== migrationMinimumFreeBytes ||
+  samples.migrationMinimumFreeInodes !== migrationMinimumFreeInodes ||
+  samples.migrationPeakGrowthBytes !==
+    samples.samples[samples.migrationPhaseStartIndex]?.freeBytes - migrationMinimumFreeBytes ||
+  samples.migrationPeakGrowthInodes !==
+    samples.samples[samples.migrationPhaseStartIndex]?.freeInodes - migrationMinimumFreeInodes ||
+  receipt.wholeStagePeakBytes !==
+    Math.max(receipt.postPullFreeBytes, samples.initialFreeBytes) - wholeMinimumFreeBytes ||
+  receipt.wholeStagePeakInodes !==
+    Math.max(receipt.postPullFreeInodes, samples.initialFreeInodes) - wholeMinimumFreeInodes ||
+  samples.minimumFreeBytes !== wholeMinimumFreeBytes ||
+  samples.minimumFreeInodes !== wholeMinimumFreeInodes ||
+  samples.peakGrowthBytes !== samples.initialFreeBytes - wholeMinimumFreeBytes ||
+  samples.peakGrowthInodes !== samples.initialFreeInodes - wholeMinimumFreeInodes ||
+  receipt.migrationDurationMilliseconds !== samples.migrationDurationMilliseconds ||
+  receipt.minimumFreeBytesObserved !== samples.minimumFreeBytes ||
+  receipt.minimumFreeInodesObserved !== samples.minimumFreeInodes ||
+  receipt.receiptSha256 !== digest) {
+  throw new Error("normal stage qualification differs from the live source");
+}
+process.stdout.write(`${receipt.measuredMigrationPeakBytes} ${receipt.measuredMigrationPeakInodes} ${receipt.receiptSha256}\n`);
+NODE
+}
+
+# render one canonical measured activation-capacity request
+write_normal_activation_capacity_input() {
+  local source_env=$1
+  local target_env=$2
+  local stage_receipt=$3
+  local phase=$4
+  local actual_backup_bytes=$5
+  local output=$6
+  local database_name source_release target_release source_history
+  local system_identifier database_oid live_database_bytes postgres_container_id
+  local source_env_sha256 target_env_sha256 peak_bytes peak_inodes stage_receipt_sha256
+  database_name=$(env_value "$source_env" WEATHER_DATABASE_NAME)
+  source_release=$(env_value "$source_env" WEATHER_RELEASE)
+  target_release=$(env_value "$target_env" WEATHER_RELEASE)
+  source_history=$(migration_history_sha256 "$source_env" "$database_name")
+  [[ "$source_history" == adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93 ]] ||
+    die "normal activation source is not the exact schema-21 ledger"
+  read -r peak_bytes peak_inodes stage_receipt_sha256 < <(
+    read_normal_stage_qualification "$source_env" "$target_env" "$stage_receipt")
+  read -r system_identifier database_oid live_database_bytes < <(
+    WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+      psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
+        --tuples-only --no-align --field-separator=' ' --command \
+        "SELECT (SELECT system_identifier FROM pg_control_system()), (SELECT oid FROM pg_database WHERE datname = current_database()), pg_database_size(current_database())")
+  postgres_container_id=$(WEATHER_ENV_FILE=$source_env compose ps -q postgres)
+  [[ "$postgres_container_id" =~ ^[a-f0-9]{64}$ ]] ||
+    die "normal activation PostgreSQL container identity is invalid"
+  source_env_sha256=$(sha256sum "$source_env" | awk '{print $1}')
+  target_env_sha256=$(sha256sum "$target_env" | awk '{print $1}')
+  node --input-type=module - "$output" "$phase" \
+    "normal-${source_release//./-}-to-${target_release//./-}" "$source_release" \
+    "$target_release" "$source_env_sha256" "$target_env_sha256" "$system_identifier" \
+    "$database_oid" "$live_database_bytes" "$peak_bytes" "$peak_inodes" \
+    "$stage_receipt_sha256" "$actual_backup_bytes" \
+    "$(env_value "$source_env" WEATHER_POSTGRES_DIR)" \
+    "${WEATHER_COMPOSE_PROJECT_NAME:-weather}" "$postgres_container_id" <<'NODE'
+import { writeFileSync } from "node:fs";
+
+const [output, phase, operationId, sourceRelease, targetRelease, sourceEnvSha256,
+  targetEnvSha256, systemIdentifier, sourceDatabaseOid, liveDatabaseBytes,
+  measuredMigrationPeakBytes, measuredMigrationPeakInodes, stageReceiptSha256,
+  actualBackupBytes, weatherPostgresDir, postgresComposeProject,
+  postgresContainerId] = process.argv.slice(2);
+const backupHeadroomBytes = 1_073_741_824;
+const input = {
+  actualBackupBytes: Number(actualBackupBytes),
+  backupHeadroomBytes,
+  boundedBackupCeilingBytes: Number(liveDatabaseBytes) + backupHeadroomBytes,
+  captureReserveBytes: 4_112_384,
+  capturedAt: new Date().toISOString(),
+  fixtureInodes: 4_096,
+  inodeFloor: 32_768,
+  liveDatabaseBytes: Number(liveDatabaseBytes),
+  measuredMigrationPeakBytes: Number(measuredMigrationPeakBytes),
+  measuredMigrationPeakInodes: Number(measuredMigrationPeakInodes),
+  operationId,
+  phase,
+  postgresComposeProject,
+  postgresContainerId,
+  protectedFloorBytes: 2_030_043_136,
+  retirementCreditBytes: 0,
+  sourceDatabaseOid: Number(sourceDatabaseOid),
+  sourceEnvSha256,
+  sourceLedgerSha256: "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
+  sourceRelease,
+  sourceSchemaVersion: 21,
+  stageReceiptSha256,
+  systemIdentifier,
+  targetEnvSha256,
+  targetLedgerSha256: "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
+  targetRelease,
+  targetSchemaVersion: 22,
+  weatherPostgresDir,
+};
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+writeFileSync(output, canonical(input), { mode: 0o600 });
+NODE
+  chmod 600 "$output"
+}
+
+# collect and require one authoritative normal-activation capacity receipt
+require_normal_activation_capacity() {
+  local source_env=$1
+  local target_env=$2
+  local stage_receipt=$3
+  local phase=$4
+  local actual_backup_bytes=$5
+  local input=$6
+  local receipt=$7
+  write_normal_activation_capacity_input "$source_env" "$target_env" "$stage_receipt" \
+    "$phase" "$actual_backup_bytes" "$input"
+  if ! normal_release_capacity_receipt normal-activation-capacity "$input" >"$receipt"; then
+    cat "$receipt" >&2
+    die "normal activation capacity is blocked"
+  fi
+  chmod 600 "$receipt"
+  require_normal_capacity_receipt_binding "$input" "$receipt" activation "$phase"
+}
+
+# bind pre/post backup capacity to only the two invocation-owned publication files
+require_normal_activation_capacity_pair() {
+  local pre_receipt=$1
+  local post_receipt=$2
+  local archive=$3
+  local checksum=$4
+  local allocated_bytes
+  allocated_bytes=$((( $(stat -c '%b' "$archive") + $(stat -c '%b' "$checksum") ) * 512))
+  node --input-type=module - "$deploy_dir/scripts/adjustment-evaluation-package.mjs" \
+    "$pre_receipt" "$post_receipt" "$allocated_bytes" <<'NODE'
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const [modulePath, prePath, postPath, allocatedBytes] = process.argv.slice(2);
+const { validateNormalCapacityReceipt } = await import(pathToFileURL(modulePath));
+const trustedNow = new Date();
+const pre = JSON.parse(readFileSync(prePath, "utf8"));
+const post = JSON.parse(readFileSync(postPath, "utf8"));
+validateNormalCapacityReceipt(pre, trustedNow);
+validateNormalCapacityReceipt(post, trustedNow);
+const bound = ["operationId", "sourceRelease", "targetRelease", "sourceEnvSha256",
+  "targetEnvSha256", "sourceLedgerSha256", "targetLedgerSha256", "systemIdentifier",
+  "sourceDatabaseOid", "stageReceiptSha256", "postgresContainerId",
+  "postgresContainerImageId", "postgresContainerImageReference", "weatherPostgresDir",
+  "postgresDataDirectory"];
+const consumedBytes = Math.max(0, pre.freeBytes - post.freeBytes);
+const consumedInodes = Math.max(0, pre.freeInodes - post.freeInodes);
+
+// refuse identity drift or unrelated storage consumption across backup publication
+if (pre.phase !== "pre_backup" || post.phase !== "post_backup" ||
+  pre.state !== "capacity_ready" || post.state !== "capacity_ready" ||
+  bound.some((name) => pre[name] !== post[name]) ||
+  consumedBytes > Number(allocatedBytes) + 8_192 || consumedInodes > 2) {
+  throw new Error("normal activation capacity changed outside the bounded backup");
+}
+NODE
+}
+
 # require host-owned per-consumer secrets
 require_secret_source() {
   local path=$1
@@ -1400,7 +2551,7 @@ require_v14_compatibility_bridge_source_identity() {
     die "fixed v14 source server image identity differs"
   [[ "$source_web" == "ghcr.io/anstosa/weather-web@sha256:fdcb2d10da4c9ed5ec8651bafa96c9d2b240b66b85db85619b909d6e144e2d7b" ]] ||
     die "fixed v14 source web image identity differs"
-  [[ "$target_version" == 14 && "$target_release" == "$v14_compatibility_bridge_release" ]] ||
+  [[ "$target_version" == 15 && "$target_release" == "$v14_compatibility_bridge_release" ]] ||
     die "v14 compatibility bridge target identity differs"
 }
 
@@ -1449,13 +2600,13 @@ require_fixed_v14_source_identity() {
   validate_image_reference "$full_v14_source_web_image"
   [[ "$source_release" == "$v14_compatibility_bridge_release" ]] ||
     die "full v14 source release differs"
-  [[ "$source_control_version" == 14 && "$source_control" == "$installed_control" ]] ||
+  [[ "$source_control_version" == 15 && "$source_control" == "$installed_control" ]] ||
     die "full v14 source control-plane identity differs"
   [[ "$source_server" == "$full_v14_source_server_image" ]] ||
     die "full v14 source server image identity differs"
   [[ "$source_web" == "$full_v14_source_web_image" ]] ||
     die "full v14 source web image identity differs"
-  [[ "$target_version" == 14 && "$target_release" == "$full_v14_release" ]] ||
+  [[ "$target_version" == 15 && "$target_release" == "$full_v14_release" ]] ||
     die "full v14 target identity differs"
 }
 
@@ -1839,8 +2990,8 @@ initialize_adjustment_rain_fixed_gauge_target_sources_v1() (
   [[ "$EUID" == 0 ]] || die "rain target source initialization requires root"
   validate_release_env "$environment" "$(env_value "$environment" WEATHER_RELEASE)"
   require_control_plane_compatibility "$environment"
-  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 14 ]] ||
-    die "rain target source initialization requires v14"
+  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 15 ]] ||
+    die "rain target source initialization requires v15"
   require_deployment_secrets
   database=$(env_value "$environment" WEATHER_DATABASE_NAME)
   validate_database_name "$database"
@@ -1879,7 +3030,7 @@ initialize_adjustment_registration_schedule_v3() (
   environment=$(release_env "$current")
   validate_release_env "$environment" "$current"
   require_control_plane_compatibility "$environment"
-  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 14 ]] ||
+  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 15 ]] ||
     die "registration schedule requires the current v14 control plane"
   require_deployment_secrets
   database=$(env_value "$environment" WEATHER_DATABASE_NAME)
@@ -1911,8 +3062,8 @@ read_adjustment_registration_lifecycle_status_v4() (
   environment=$(release_env "$current")
   validate_release_env "$environment" "$current"
   require_control_plane_compatibility "$environment"
-  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 14 ]] ||
-    die "registration lifecycle status requires v14"
+  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 15 ]] ||
+    die "registration lifecycle status requires v15"
   require_deployment_secrets
   database=$(env_value "$environment" WEATHER_DATABASE_NAME)
   validate_database_name "$database"
@@ -1945,7 +3096,7 @@ run_adjustment_owner_operation_v3() (
   environment=$(release_env "$current")
   validate_release_env "$environment" "$current"
   require_control_plane_compatibility "$environment"
-  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 14 ]] || die "adjustment owner operation requires v14"
+  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 15 ]] || die "adjustment owner operation requires v15"
   require_deployment_secrets
   database=$(env_value "$environment" WEATHER_DATABASE_NAME)
   validate_database_name "$database"
@@ -1972,8 +3123,8 @@ finalize_adjustment_shadow_metadata_custody_v1() (
   environment=$(release_env "$current")
   validate_release_env "$environment" "$current"
   require_control_plane_compatibility "$environment"
-  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 14 ]] ||
-    die "shadow metadata custody finalization requires v14"
+  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 15 ]] ||
+    die "shadow metadata custody finalization requires v15"
   require_deployment_secrets
   database=$(env_value "$environment" WEATHER_DATABASE_NAME)
   validate_database_name "$database"
@@ -2377,7 +3528,13 @@ verify_previous_image_compatibility() (
   local target_env=$1
   local previous_env=$2
   local authorization_path=$3
-  local candidate api_container unproven_api_container provider_container provider_image
+  local compatibility_mode=${4:-legacy}
+  local peak_output_path=${5:-}
+  local candidate api_container target_api_container unproven_api_container provider_container provider_image
+  local candidate_oid existing_candidate_oid api_container_id target_api_container_id
+  local unproven_api_container_id provider_container_id
+  local transient_container_id transient_container_name transient_container_started=false
+  local transient_container_env transient_container_service
   local active_database provider_network previous_release target_release history_sha256
   local previous_history_sha256
   local invalid_history_sha256 unproven_status
@@ -2388,46 +3545,398 @@ verify_previous_image_compatibility() (
   local migrations_changed=false
   local candidate_created=false
   local api_started=false
+  local target_api_started=false
   local unproven_api_started=false
   local provider_started=false
   local before_successes after_successes
+  local preexisting_data_contract preexisting_data_before preexisting_data_after
+  local previous_api_snapshot target_api_snapshot catalog_consistent
+  local capacity_samples capacity_monitor_completion capacity_monitor_pid postgres_dir
+  local initial_free_bytes initial_free_inodes
+  local capacity_last_sample_index capacity_last_sample_timestamp capacity_monitor_next_sequence
+  local migration_phase_start_index=-1 migration_phase_start_timestamp=0
+  local migration_phase_end_index=-1 migration_phase_end_timestamp=0
   local before_v4_records=0 after_v4_records=0
+  local migration_started_milliseconds migration_duration_milliseconds=0
   candidate="weather_compat_$(date -u +%Y%m%d%H%M%S)_$$"
   api_container="${candidate}_api"
+  target_api_container="${candidate}_target_api"
   unproven_api_container="${candidate}_api_unproven"
   provider_container="${candidate}_provider"
   provider_image=$(env_value "$target_env" WEATHER_SERVER_IMAGE)
   active_database=$(env_value "$previous_env" WEATHER_DATABASE_NAME)
   previous_release=$(env_value "$previous_env" WEATHER_RELEASE)
   target_release=$(env_value "$target_env" WEATHER_RELEASE)
+  [[ "$compatibility_mode" == legacy || "$compatibility_mode" == normal-21-22 ]] ||
+    die "unknown compatibility mode"
+  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+    require_canonical_descendant "$peak_output_path" "$releases_dir" \
+      "normal compatibility peak output"
+    [[ -f "$peak_output_path" && ! -L "$peak_output_path" ]] ||
+      die "normal compatibility peak output is invalid"
+  fi
   invalid_history_sha256=$(printf '%064d' 0)
   provider_network="${WEATHER_COMPOSE_PROJECT_NAME:-weather}_provider_egress"
+  candidate_oid=
+  api_container_id=
+  target_api_container_id=
+  unproven_api_container_id=
+  provider_container_id=
+  transient_container_id=
+  transient_container_name=
+  transient_container_env=
+  transient_container_service=
+  capacity_monitor_pid=
+  capacity_monitor_next_sequence=
+  capacity_samples=
+  capacity_monitor_completion=
+  preexisting_data_contract=
+  preexisting_data_before=
+  preexisting_data_after=
+
+  # append one exact foreground filesystem sample after the background writer stops
+  append_compatibility_capacity_sample() {
+    local free_bytes free_inodes captured_at
+    read -r free_bytes _ free_inodes < <(
+      stat --file-system --format='%a %S %d' "$postgres_dir" |
+        awk '{ printf "%.0f %s %s\n", $1 * $2, $2, $3 }') || return 1
+    captured_at=$(date -u +%s%3N) || return 1
+    printf '%s %s %s %s\n' "$capacity_monitor_next_sequence" "$captured_at" \
+      "$free_bytes" "$free_inodes" >>"$capacity_samples" || return 1
+    capacity_last_sample_index=$capacity_monitor_next_sequence
+    capacity_last_sample_timestamp=$captured_at
+    capacity_monitor_next_sequence=$((capacity_monitor_next_sequence + 1))
+  }
+
+  # start one bounded sampler segment at the next exact sequence ordinal
+  start_compatibility_capacity_monitor() {
+    local start_sequence=$capacity_monitor_next_sequence
+    [[ -z "$capacity_monitor_pid" && "$start_sequence" =~ ^[1-9][0-9]*$ ]] || return 1
+    rm -f -- "$capacity_monitor_completion" || return 1
+    (
+      _next_sequence=$start_sequence
+      # publish one exact completion handshake only on an intentional stop
+      # shellcheck disable=SC2329
+      complete_capacity_monitor() {
+        _completion_temporary="$capacity_monitor_completion.$BASHPID"
+        printf '%s %s\n' "$BASHPID" "$_next_sequence" >"$_completion_temporary" || exit 1
+        chmod 600 "$_completion_temporary" || exit 1
+        mv -f -- "$_completion_temporary" "$capacity_monitor_completion" || exit 1
+        exit 0
+      }
+      trap complete_capacity_monitor TERM
+      # retain every observed free-byte and inode low-water sample
+      for ((_sample = 0; _sample < 4093; _sample += 1)); do
+        read -r _free_bytes _ _free_inodes < <(
+          stat --file-system --format='%a %S %d' "$postgres_dir" |
+            awk '{ printf "%.0f %s %s\n", $1 * $2, $2, $3 }') || exit 1
+        # append each sample with one writer and one complete printf
+        printf '%s %s %s %s\n' "$_next_sequence" "$(date -u +%s%3N)" \
+          "$_free_bytes" "$_free_inodes" || exit 1
+        _next_sequence=$((_next_sequence + 1))
+        sleep 1
+      done
+      exit 1
+    ) >>"$capacity_samples" &
+    capacity_monitor_pid=$!
+  }
+
+  # stop one live sampler segment and retain its exact next ordinal
+  stop_compatibility_capacity_monitor() {
+    [[ -n "$capacity_monitor_pid" ]] || return 1
+    stop_owned_capacity_monitor "$capacity_monitor_pid" \
+      "$capacity_monitor_completion" "$capacity_samples" || return 1
+    capacity_monitor_pid=
+  }
+
+  # remove one invocation-owned container only while its immutable identity matches
+  remove_owned_compatibility_container() {
+    local container_id=$1
+    local container_name=$2
+    local details
+    [[ "$container_id" =~ ^[a-f0-9]{64}$ ]] || return 1
+    details=$(docker container inspect --format '{{.Id}} {{.Name}}' "$container_id") || return 1
+    [[ "$details" == "$container_id /$container_name" ]] || return 1
+    docker container stop --time 10 "$container_id" >/dev/null || return 1
+    details=$(docker container inspect --format '{{.Id}} {{.Name}}' "$container_id") || return 1
+    [[ "$details" == "$container_id /$container_name" ]] || return 1
+    docker container rm "$container_id" >/dev/null || return 1
+    ! docker container inspect "$container_id" >/dev/null 2>&1
+  }
+
+  # prove one Compose task retains its exact generated identity
+  require_owned_compatibility_task_container() {
+    local container_id=$1
+    local container_name=$2
+    local environment=$3
+    local service=$4
+    local project=${WEATHER_COMPOSE_PROJECT_NAME:-weather}
+    local expected_reference expected_image_id details
+    [[ "$container_id" =~ ^[a-f0-9]{64}$ &&
+      ( "$service" == migration || "$service" == worker ) ]] || return 1
+    expected_reference=$(env_value "$environment" WEATHER_SERVER_IMAGE) || return 1
+    expected_image_id=$(docker image inspect --format '{{.Id}}' "$expected_reference") || return 1
+    details=$(docker container inspect --format \
+      '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+      "$container_id") || return 1
+    [[ "$details" == "$container_id|/$container_name|$project|$service|$expected_reference|$expected_image_id" ]]
+  }
+
+  # remove one proven Compose task without touching a reused name or ID
+  remove_owned_compatibility_task_container() {
+    local container_id=$1
+    local container_name=$2
+    local environment=$3
+    local service=$4
+    require_owned_compatibility_task_container \
+      "$container_id" "$container_name" "$environment" "$service" || return 1
+    docker container stop --time 10 "$container_id" >/dev/null || return 1
+    require_owned_compatibility_task_container \
+      "$container_id" "$container_name" "$environment" "$service" || return 1
+    docker container rm "$container_id" >/dev/null || return 1
+    ! docker container inspect "$container_id" >/dev/null 2>&1
+  }
+
+  # run and remove one foreground-equivalent Compose task by exact container identity
+  run_owned_compatibility_container() {
+    local environment=$1
+    local name=$2
+    local service=$3
+    local exit_status launched_id
+    shift 3
+    [[ "$service" == migration || "$service" == worker ]] ||
+      die "compatibility task service is invalid"
+    # reject any preexisting object at the invocation-owned name
+    ! docker container inspect "$name" >/dev/null 2>&1 ||
+      die "compatibility task name already exists"
+    transient_container_name=$name
+    transient_container_env=$environment
+    transient_container_service=$service
+    # recover an exact created ID even when Compose reports a launch failure
+    if transient_container_id=$(WEATHER_ENV_FILE=$environment compose run --detach \
+      --name "$name" "$@"); then
+      :
+    else
+      launched_id=$(docker container inspect --format '{{.Id}}' "$name" 2>/dev/null) ||
+        die "compatibility task launch failed before creation"
+      transient_container_id=$launched_id
+      transient_container_started=true
+      require_owned_compatibility_task_container "$transient_container_id" \
+        "$transient_container_name" "$transient_container_env" \
+        "$transient_container_service" || die "failed compatibility task identity differs"
+      remove_owned_compatibility_task_container "$transient_container_id" \
+        "$transient_container_name" "$transient_container_env" \
+        "$transient_container_service" || die "failed compatibility task cleanup failed"
+      transient_container_started=false
+      transient_container_id=
+      die "compatibility task launch failed"
+    fi
+    # bind successful creation to the returned immutable ID before waiting
+    if [[ ! "$transient_container_id" =~ ^[a-f0-9]{64}$ ]]; then
+      launched_id=$(docker container inspect --format '{{.Id}}' "$name" 2>/dev/null) ||
+        die "compatibility task returned an invalid identity"
+      transient_container_id=$launched_id
+    fi
+    transient_container_started=true
+    require_owned_compatibility_task_container "$transient_container_id" \
+      "$transient_container_name" "$transient_container_env" \
+      "$transient_container_service" || die "compatibility task identity differs"
+    exit_status=$(docker container wait "$transient_container_id") ||
+      die "compatibility task wait failed"
+    # preserve bounded application diagnostics for a proven nonzero task
+    if [[ "$exit_status" != 0 ]]; then
+      docker container logs "$transient_container_id" >&2 || true
+    fi
+    remove_owned_compatibility_task_container "$transient_container_id" \
+      "$transient_container_name" "$transient_container_env" \
+      "$transient_container_service" || die "compatibility task cleanup failed"
+    transient_container_started=false
+    transient_container_id=
+    transient_container_name=
+    transient_container_env=
+    transient_container_service=
+    [[ "$exit_status" == 0 ]]
+  }
 
   # clean every disposable compatibility resource
   # shellcheck disable=SC2317,SC2329
   cleanup_compatibility() {
     local status=$?
+    local current_candidate_oid remaining_candidate_oid
+    current_candidate_oid=
+    remaining_candidate_oid=
 
     # remove a started API probe
     if [[ "$api_started" == true ]]; then
-      docker rm --force "$api_container" >/dev/null 2>&1 || status=1
+      remove_owned_compatibility_container "$api_container_id" "$api_container" || status=1
+    fi
+
+    # remove an interrupted foreground-equivalent task
+    if [[ "$transient_container_started" == true ]]; then
+      remove_owned_compatibility_task_container "$transient_container_id" \
+        "$transient_container_name" "$transient_container_env" \
+        "$transient_container_service" || status=1
+    fi
+
+    # remove a started target API probe
+    if [[ "$target_api_started" == true ]]; then
+      remove_owned_compatibility_container \
+        "$target_api_container_id" "$target_api_container" || status=1
     fi
 
     # remove a started rejection probe
     if [[ "$unproven_api_started" == true ]]; then
-      docker rm --force "$unproven_api_container" >/dev/null 2>&1 || status=1
+      remove_owned_compatibility_container \
+        "$unproven_api_container_id" "$unproven_api_container" || status=1
     fi
 
     # remove a started provider stub
     if [[ "$provider_started" == true ]]; then
-      docker rm --force "$provider_container" >/dev/null 2>&1 || status=1
+      remove_owned_compatibility_container \
+        "$provider_container_id" "$provider_container" || status=1
     fi
 
     # drop a created candidate last
     if [[ "$candidate_created" == true ]]; then
-      WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
-        dropdb --username postgres --if-exists "$candidate" >/dev/null || status=1
+      current_candidate_oid=$(WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
+        psql --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+          --tuples-only --no-align --command \
+          "SELECT oid FROM pg_database WHERE datname = '$candidate'") || status=1
+      # recover the exact OID after a successful create whose first identity read failed
+      if [[ ! "$candidate_oid" =~ ^[1-9][0-9]*$ &&
+        "$current_candidate_oid" =~ ^[1-9][0-9]*$ ]]; then
+        candidate_oid=$current_candidate_oid
+      fi
+      if [[ "$candidate_oid" =~ ^[1-9][0-9]*$ &&
+        "$current_candidate_oid" == "$candidate_oid" ]]; then
+        WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
+          dropdb --username postgres "$candidate" >/dev/null || status=1
+        remaining_candidate_oid=$(WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
+          psql --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+            --tuples-only --no-align --command \
+            "SELECT oid FROM pg_database WHERE datname = '$candidate'") || status=1
+        [[ -z "$remaining_candidate_oid" ]] || status=1
+      else
+        status=1
+      fi
     fi
+
+    # stop and seal the invocation-owned filesystem monitor after owned cleanup
+    if [[ -n "$capacity_monitor_pid" ]]; then
+      local monitor_failed=false
+      # reject nonzero, early or incomplete sampler termination
+      if ! stop_compatibility_capacity_monitor; then
+        monitor_failed=true
+      fi
+      # append one final complete sample only after the background writer is gone
+      if [[ "$monitor_failed" == false ]]; then
+        append_compatibility_capacity_sample || monitor_failed=true
+      fi
+      if [[ "$monitor_failed" == true ]]; then
+        status=1
+      fi
+      if [[ "$status" == 0 ]]; then
+        if ! node --input-type=module - "$capacity_samples" "$peak_output_path" \
+          "$migration_duration_milliseconds" "$migration_phase_start_index" \
+          "$migration_phase_start_timestamp" "$migration_phase_end_index" \
+          "$migration_phase_end_timestamp" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+
+const [input, output, migrationDurationMilliseconds, migrationPhaseStartIndex,
+  migrationPhaseStartTimestamp, migrationPhaseEndIndex,
+  migrationPhaseEndTimestamp] = process.argv.slice(2);
+const bytes = readFileSync(input);
+if (bytes.length < 1 || bytes.length > 1_048_576) {
+  throw new Error("normal compatibility capacity samples exceed their byte bound");
+}
+const lines = bytes.toString("utf8").trimEnd().split("\n");
+if (lines.length < 2 || lines.length > 4_096) {
+  throw new Error("normal compatibility capacity sample count is invalid");
+}
+const samples = lines.map((line) => {
+  const fields = line.split(" ");
+  if (fields.length !== 4 || fields.some((field) => !/^(?:0|[1-9]\d*)$/u.test(field))) {
+    throw new Error("normal compatibility capacity sample is invalid");
+  }
+  const [sequence, capturedAtMilliseconds, freeBytes, freeInodes] = fields.map(Number);
+  if (![sequence, capturedAtMilliseconds, freeBytes, freeInodes].every(Number.isSafeInteger)) {
+    throw new Error("normal compatibility capacity sample exceeds exact integer bounds");
+  }
+  return { capturedAtMilliseconds, freeBytes, freeInodes, sequence };
+});
+
+// retain one ordered complete series
+for (let index = 1; index < samples.length; index += 1) {
+  if (samples[index].sequence !== index ||
+    samples[index].capturedAtMilliseconds < samples[index - 1].capturedAtMilliseconds) {
+    throw new Error("normal compatibility capacity sample clocks are unordered");
+  }
+}
+if (samples[0].sequence !== 0) throw new Error("normal compatibility sample sequence is invalid");
+const minimumFreeBytes = Math.min(...samples.map((sample) => sample.freeBytes));
+const minimumFreeInodes = Math.min(...samples.map((sample) => sample.freeInodes));
+const phaseStartIndex = Number(migrationPhaseStartIndex);
+const phaseEndIndex = Number(migrationPhaseEndIndex);
+if (!Number.isSafeInteger(phaseStartIndex) || !Number.isSafeInteger(phaseEndIndex) ||
+  phaseStartIndex < 0 || phaseEndIndex <= phaseStartIndex || phaseEndIndex >= samples.length ||
+  samples[phaseStartIndex].capturedAtMilliseconds !== Number(migrationPhaseStartTimestamp) ||
+  samples[phaseEndIndex].capturedAtMilliseconds !== Number(migrationPhaseEndTimestamp)) {
+  throw new Error("normal migration phase boundaries are invalid");
+}
+const migrationSamples = samples.slice(phaseStartIndex, phaseEndIndex + 1);
+const migrationMinimumFreeBytes = Math.min(...migrationSamples.map((sample) => sample.freeBytes));
+const migrationMinimumFreeInodes = Math.min(...migrationSamples.map((sample) => sample.freeInodes));
+const body = {
+  contractVersion: "normal-stage-capacity-samples/v1",
+  initialFreeBytes: samples[0].freeBytes,
+  initialFreeInodes: samples[0].freeInodes,
+  minimumFreeBytes,
+  minimumFreeInodes,
+  migrationMinimumFreeBytes,
+  migrationMinimumFreeInodes,
+  migrationDurationMilliseconds: Number(migrationDurationMilliseconds),
+  migrationPeakGrowthBytes: samples[phaseStartIndex].freeBytes - migrationMinimumFreeBytes,
+  migrationPeakGrowthInodes: samples[phaseStartIndex].freeInodes - migrationMinimumFreeInodes,
+  migrationPhaseEndIndex: phaseEndIndex,
+  migrationPhaseEndTimestamp: Number(migrationPhaseEndTimestamp),
+  migrationPhaseStartIndex: phaseStartIndex,
+  migrationPhaseStartTimestamp: Number(migrationPhaseStartTimestamp),
+  peakGrowthBytes: samples[0].freeBytes - minimumFreeBytes,
+  peakGrowthInodes: samples[0].freeInodes - minimumFreeInodes,
+  samples,
+};
+if (body.peakGrowthBytes < 0 || body.peakGrowthInodes < 0 ||
+  body.migrationPeakGrowthBytes < 0 || body.migrationPeakGrowthInodes < 0) {
+  throw new Error("normal compatibility capacity peak is invalid");
+}
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+const receipt = { ...body,
+  receiptSha256: createHash("sha256").update(canonical(body)).digest("hex") };
+writeFileSync(output, canonical(receipt), { mode: 0o600 });
+NODE
+        then
+          status=1
+        fi
+      fi
+    fi
+    # retain a stopped complete or partial normal series before unlinking evidence
+    if [[ "$compatibility_mode" == normal-21-22 ]]; then
+      if [[ "$status" != 0 ]]; then
+        retain_release_failure_evidence normal-stage "$status" \
+          "$capacity_samples" "$peak_output_path" "$preexisting_data_contract" \
+          "$preexisting_data_before" "$preexisting_data_after" || status=1
+      fi
+      if [[ -n "$capacity_samples" ]]; then
+        rm -f -- "$capacity_samples" "$capacity_monitor_completion"
+      fi
+    fi
+    rm -f -- "$preexisting_data_contract" "$preexisting_data_before" \
+      "$preexisting_data_after"
 
     trap - EXIT
     exit "$status"
@@ -2435,10 +3944,52 @@ verify_previous_image_compatibility() (
   trap cleanup_compatibility EXIT
   trap 'exit 130' HUP INT TERM
 
+  # monitor the database filesystem through copy, migration and owned cleanup
+  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+    postgres_dir=$(env_value "$previous_env" WEATHER_POSTGRES_DIR)
+    capacity_samples=$(mktemp "$releases_dir/.normal-capacity-samples.XXXXXX")
+    capacity_monitor_completion="$capacity_samples.complete"
+    chmod 600 "$capacity_samples"
+    read -r initial_free_bytes _ initial_free_inodes < <(
+      stat --file-system --format='%a %S %d' "$postgres_dir" |
+        awk '{ printf "%.0f %s %s\n", $1 * $2, $2, $3 }')
+    printf '0 %s %s %s\n' "$(date -u +%s%3N)" \
+      "$initial_free_bytes" "$initial_free_inodes" >"$capacity_samples"
+    capacity_monitor_next_sequence=1
+    preexisting_data_contract=$(mktemp "$releases_dir/.normal-data-contract.XXXXXX")
+    preexisting_data_before=$(mktemp "$releases_dir/.normal-data-before.XXXXXX")
+    preexisting_data_after=$(mktemp "$releases_dir/.normal-data-after.XXXXXX")
+    chmod 600 "$preexisting_data_contract" "$preexisting_data_before" \
+      "$preexisting_data_after"
+    start_compatibility_capacity_monitor ||
+      die "normal compatibility capacity monitor could not start"
+  fi
+
   printf 'Creating disposable compatibility database %s...\n' "$candidate"
-  WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
-    createdb --username postgres --owner weather_owner "$candidate"
+  existing_candidate_oid=$(WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
+    psql --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      --tuples-only --no-align --command \
+      "SELECT oid FROM pg_database WHERE datname = '$candidate'") ||
+    die "compatibility database absence check failed"
+  [[ -z "$existing_candidate_oid" ]] ||
+    die "compatibility database name already exists"
+  # capture a partial create before rejecting its failed command status
+  if ! WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
+    createdb --username postgres --owner weather_owner "$candidate"; then
+    candidate_oid=$(WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
+      psql --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+        --tuples-only --no-align --command \
+        "SELECT oid FROM pg_database WHERE datname = '$candidate'" 2>/dev/null || true)
+    [[ "$candidate_oid" =~ ^[1-9][0-9]*$ ]] && candidate_created=true
+    die "compatibility database creation failed"
+  fi
   candidate_created=true
+  candidate_oid=$(WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
+    psql --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      --tuples-only --no-align --command \
+      "SELECT oid FROM pg_database WHERE datname = '$candidate'")
+  [[ "$candidate_oid" =~ ^[1-9][0-9]*$ ]] ||
+    die "compatibility database identity is invalid"
 
   WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
     pg_dump --username weather_owner --dbname "$active_database" \
@@ -2447,8 +3998,18 @@ verify_previous_image_compatibility() (
       pg_restore --username postgres --dbname "$candidate" \
         --no-owner --role weather_owner --exit-on-error
 
-  # restore the exact migration boundary shipped by the previous Git image
-  WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
+  # preserve exact schema 21 for the normal successor rehearsal
+  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+    previous_history_sha256=$(migration_history_sha256 "$previous_env" "$candidate")
+    [[ "$previous_history_sha256" == adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93 ]] ||
+      die "normal compatibility source is not the exact schema-21 ledger"
+    write_preexisting_data_contract "$previous_env" "$candidate" \
+      "$preexisting_data_contract"
+    write_preexisting_data_snapshot "$previous_env" "$candidate" \
+      "$preexisting_data_contract" "$preexisting_data_before"
+  else
+    # restore the historical eight-migration boundary only for legacy staging
+    WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
     psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$candidate" \
       --command "CREATE OR REPLACE FUNCTION weather_source_is_current(candidate_id bigint) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS \$function\$ SELECT NOT EXISTS (SELECT 1 FROM public.sources candidate JOIN public.sources successor ON successor.station_id = candidate.station_id AND successor.active AND successor.material_provider_config->>'supersedesSourceKey' = candidate.source_key WHERE candidate.id = candidate_id); \$function\$; DROP TABLE IF EXISTS adjustment_shadow_registration_windows_v3, adjustment_registration_horizons_v3, adjustment_registration_schedule_v3; DROP FUNCTION IF EXISTS adjustment_shadow_registration_slot_v3(text); DROP FUNCTION IF EXISTS weather_register_adjustment_shadow_v3(jsonb); DROP FUNCTION IF EXISTS weather_initialize_adjustment_registration_schedule_v3(jsonb); DROP FUNCTION IF EXISTS weather_guard_adjustment_registration_v3(); DROP FUNCTION IF EXISTS weather_reject_adjustment_registration_v3_mutation(); DROP TRIGGER IF EXISTS weather_records_clear_adjustment_revision_pointer_v1 ON weather_records; DROP TRIGGER IF EXISTS forecast_anchor_records_clear_adjustment_revision_pointer_v1 ON forecast_anchor_records; DROP TRIGGER IF EXISTS rain_adjustment_runs_immutable ON rain_adjustment_runs; DROP FUNCTION IF EXISTS weather_append_adjustment_shadow_v4(jsonb,text); DROP FUNCTION IF EXISTS adjustment_revision_frontier_v1(); DROP FUNCTION IF EXISTS adjustment_shadow_revision_admission_v1(text,text,text,integer); DROP FUNCTION IF EXISTS weather_clear_adjustment_revision_pointer_v1(); DROP FUNCTION IF EXISTS weather_issue_adjustment_revision_receipt_v1(text,text,text,text); DROP FUNCTION IF EXISTS weather_bind_weather_record_revisions_v1(jsonb); DROP FUNCTION IF EXISTS weather_bind_forecast_anchor_revisions_v1(jsonb); DROP FUNCTION IF EXISTS weather_guard_rain_adjustment_revision_v1(); DROP FUNCTION IF EXISTS weather_bind_rain_gate_revision_v1(jsonb); DROP FUNCTION IF EXISTS weather_bind_ecmwf_temperature_revision_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_revision_serving_snapshot_v1(timestamptz,bigint); DROP FUNCTION IF EXISTS adjustment_weather_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_forecast_anchor_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_rain_gate_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS adjustment_ecmwf_temperature_revision_admission_v1(jsonb); DROP FUNCTION IF EXISTS weather_mark_adjustment_revision_gap_v1(text,jsonb,jsonb); ALTER TABLE weather_records DROP COLUMN IF EXISTS adjustment_revision_receipt; ALTER TABLE forecast_anchor_records DROP COLUMN IF EXISTS adjustment_revision_receipt; ALTER TABLE rain_adjustment_runs DROP COLUMN IF EXISTS adjustment_revision_receipt; ALTER TABLE ecmwf_temperature_canary_runs DROP COLUMN IF EXISTS adjustment_revision_receipt; DROP FUNCTION IF EXISTS weather_adjustment_revision_receipt_valid_v1(jsonb); DROP TABLE IF EXISTS adjustment_revision_frontier_v1; DROP SEQUENCE IF EXISTS adjustment_revision_ordinal_v1; DROP TABLE IF EXISTS adjustment_shadow_terminal_results_v2; DROP FUNCTION IF EXISTS weather_guard_adjustment_shadow_terminal_result_v2(); DROP FUNCTION IF EXISTS weather_record_adjustment_shadow_terminal_result_v2(jsonb); DROP FUNCTION IF EXISTS weather_retire_adjustment_shadow_registration_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_shadow_v3(jsonb,text); DROP TABLE IF EXISTS adjustment_shadow_predictions_v2, adjustment_confirmation_accesses_v2, adjustment_shadow_registrations_v2; DROP FUNCTION IF EXISTS weather_guard_adjustment_shadow_registration_v2(); DROP FUNCTION IF EXISTS weather_guard_adjustment_shadow_prediction_v2(); DROP FUNCTION IF EXISTS weather_guard_adjustment_confirmation_access_v2(); DROP FUNCTION IF EXISTS weather_reject_adjustment_maintenance_mutation(); DROP FUNCTION IF EXISTS weather_register_adjustment_shadow_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_temperature_shadow_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_wind_shadow_v2(jsonb); DROP FUNCTION IF EXISTS weather_append_adjustment_rain_shadow_v2(jsonb); DROP FUNCTION IF EXISTS adjustment_shadow_body_admission_v2(text,text,text,integer); DROP FUNCTION IF EXISTS weather_finalize_adjustment_shadow_metadata_v2(jsonb); DROP FUNCTION IF EXISTS weather_record_adjustment_confirmation_access_v2(jsonb); DROP FUNCTION IF EXISTS adjustment_confirmation_availability_v2(text); DROP FUNCTION IF EXISTS adjustment_confirmation_export_v2(text,text,smallint); DROP VIEW IF EXISTS adjustment_evaluation_export_manifest_v1; DROP VIEW IF EXISTS adjustment_evaluation_export_rows_v1; DROP VIEW IF EXISTS rain_collection_status_v1; DROP TABLE IF EXISTS rain_adjustment_runs; DROP FUNCTION IF EXISTS weather_guard_rain_adjustment_run(); DROP TABLE IF EXISTS rain_capture_receipts; DROP TABLE IF EXISTS rain_capture_claims; DROP FUNCTION IF EXISTS weather_guard_rain_capture_claim(); DROP FUNCTION IF EXISTS weather_guard_rain_capture_receipt(); DROP FUNCTION IF EXISTS weather_reject_rain_capture_mutation(); DROP VIEW IF EXISTS forecast_runtime_provenance_v1; DROP VIEW IF EXISTS forecast_training_export_manifest_v1; DROP VIEW IF EXISTS forecast_training_export_rows_v1; DROP TABLE IF EXISTS ecmwf_temperature_canary_hours; DROP TABLE IF EXISTS ecmwf_temperature_canary_runs; DROP FUNCTION IF EXISTS weather_guard_ecmwf_temperature_canary_run_update(); DROP FUNCTION IF EXISTS weather_require_ecmwf_temperature_canary_hour_identity(); DROP FUNCTION IF EXISTS weather_reject_ecmwf_temperature_canary_hour_mutation(); DROP TABLE IF EXISTS forecast_anchor_records; DROP FUNCTION IF EXISTS weather_require_historical_forecast_anchor_source(); DROP FUNCTION IF EXISTS weather_guard_forecast_anchor_record_update(); GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO PUBLIC; ALTER DEFAULT PRIVILEGES FOR ROLE weather_owner IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO PUBLIC; REVOKE SELECT (capabilities) ON sources FROM weather_api; DELETE FROM schema_migrations WHERE name IN ('0009_forecast_anchor_records.sql', '0010_forecast_training_export.sql', '0011_forecast_runtime_provenance.sql', '0012_hide_archive_only_forecasts_from_live_reads.sql', '0013_ecmwf_temperature_canary.sql', '0014_rain_collection.sql', '0015_rain_station_access.sql', '0016_rain_adjustment.sql', '0017_adjustment_evaluation_export.sql', '0018_adjustment_maintenance_v2.sql', '0019_adjustment_maintenance_recurring.sql', '0020_adjustment_revision_frontier.sql', '0021_adjustment_rolling_registration.sql')"
   baseline_schema_state=$(WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
@@ -2456,11 +4017,40 @@ verify_previous_image_compatibility() (
       --command "SELECT count(*)::text || ':' || COALESCE(to_regclass('forecast_anchor_records')::text, '') || ':' || COALESCE(to_regclass('forecast_training_export_rows_v1')::text, '') || ':' || COALESCE(to_regclass('ecmwf_temperature_canary_runs')::text, '') || ':' || COALESCE(to_regclass('ecmwf_temperature_canary_hours')::text, '') || ':' || COALESCE(to_regclass('rain_capture_claims')::text, '') || ':' || COALESCE(to_regclass('rain_capture_receipts')::text, '') || ':' || COALESCE(to_regclass('rain_collection_status_v1')::text, '') FROM schema_migrations")
   [[ "$baseline_schema_state" == "8:::::::" ]] ||
     die "previous compatibility database does not match the eight-migration Git baseline"
+    previous_history_sha256=$(migration_history_sha256 "$previous_env" "$candidate")
+  fi
 
-  previous_history_sha256=$(migration_history_sha256 "$previous_env" "$candidate")
-  WEATHER_ENV_FILE=$target_env compose run --rm --no-deps \
+  # start the activation-equivalent phase only after the full clone is allocated
+  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+    stop_compatibility_capacity_monitor ||
+      die "normal compatibility capacity monitor ended before migration"
+    append_compatibility_capacity_sample ||
+      die "normal compatibility migration baseline sample failed"
+    migration_phase_start_index=$capacity_last_sample_index
+    migration_phase_start_timestamp=$capacity_last_sample_timestamp
+    start_compatibility_capacity_monitor ||
+      die "normal compatibility migration phase monitor could not start"
+  fi
+  migration_started_milliseconds=$(date -u +%s%3N)
+  run_owned_compatibility_container "$target_env" "${candidate}_migration" migration --no-deps \
     --env WEATHER_DATABASE_NAME="$candidate" migration
+  migration_duration_milliseconds=$(($(date -u +%s%3N) - migration_started_milliseconds))
+  if [[ "$compatibility_mode" == normal-21-22 ]] &&
+    ((migration_duration_milliseconds > 60000)); then
+    die "normal schema-22 compatibility migration exceeded 60000ms"
+  fi
   history_sha256=$(migration_history_sha256 "$previous_env" "$candidate")
+
+  # require the exact additive schema-22 successor and unchanged preexisting data
+  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+    [[ "$history_sha256" == 3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51 ]] ||
+      die "normal compatibility target is not the exact schema-22 ledger"
+    write_preexisting_data_snapshot "$previous_env" "$candidate" \
+      "$preexisting_data_contract" "$preexisting_data_after"
+    verify_preexisting_data_snapshots "$preexisting_data_contract" \
+      "$preexisting_data_before" "$preexisting_data_after" ||
+      die "normal compatibility migration changed preexisting application data"
+  fi
 
   # identify a real trailing migration compatibility run
   if [[ "$history_sha256" != "$previous_history_sha256" ]]; then
@@ -2548,6 +4138,17 @@ verify_previous_image_compatibility() (
     [[ "$baseline_acl_verified" == t ]] ||
       die "previous runtime ACL verification failed"
   fi
+  # end the activation-equivalent phase before compatibility workers add fixture data
+  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+    stop_compatibility_capacity_monitor ||
+      die "normal compatibility capacity monitor ended during migration"
+    append_compatibility_capacity_sample ||
+      die "normal compatibility migration final sample failed"
+    migration_phase_end_index=$capacity_last_sample_index
+    migration_phase_end_timestamp=$capacity_last_sample_timestamp
+    start_compatibility_capacity_monitor ||
+      die "normal compatibility post-migration monitor could not start"
+  fi
   WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
     psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$candidate" \
       --command "UPDATE ingestion_checkpoints SET last_committed_at = TIMESTAMPTZ '1970-01-01 00:00:00+00'; UPDATE sources SET cadence_seconds = 60 WHERE active"
@@ -2559,11 +4160,13 @@ verify_previous_image_compatibility() (
         --command "UPDATE sources SET active = false WHERE id IN ($non_compatibility_source_ids)"
   fi
 
-  docker run --detach --rm --name "$provider_container" \
+  provider_container_id=$(docker run --detach --name "$provider_container" \
     --network "$provider_network" --network-alias "$provider_container" \
     --env WEATHER_COMPATIBILITY_DYNAMIC_FORECAST=1 \
-    "$provider_image" node deploy/scripts/compatibility-provider.mjs >/dev/null
+    "$provider_image" node deploy/scripts/compatibility-provider.mjs)
   provider_started=true
+  [[ "$provider_container_id" =~ ^[a-f0-9]{64}$ ]] ||
+    die "compatibility provider identity is invalid"
 
   # wait for the deterministic provider
   for ((_attempt = 0; _attempt < 30; _attempt += 1)); do
@@ -2587,7 +4190,7 @@ verify_previous_image_compatibility() (
         --command "SELECT count(*) FROM weather_records wr JOIN sources s ON s.id = wr.source_id WHERE s.source_key = 'open-meteo-forecast-v4'")
   fi
 
-  WEATHER_ENV_FILE=$previous_env compose run --rm --no-deps \
+  run_owned_compatibility_container "$previous_env" "${candidate}_worker" worker --no-deps \
     --env WEATHER_DATABASE_NAME="$candidate" \
     --env WEATHER_MIGRATION_AUTHORIZATION_RELEASE="$previous_release" \
     --env WEATHER_MIGRATION_AUTHORIZATION_HISTORY_SHA256="$history_sha256" \
@@ -2611,6 +4214,15 @@ verify_previous_image_compatibility() (
     fi
   fi
 
+  # prove the old worker maintained the complete exact forecast catalog
+  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+    catalog_consistent=$(WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
+      psql --username postgres --dbname "$candidate" --tuples-only --no-align \
+        --command "SELECT NOT EXISTS ((SELECT DISTINCT wr.source_id, wr.product_run_at FROM weather_records wr WHERE wr.source_kind = 'forecast' EXCEPT SELECT fp.source_id, fp.product_run_at FROM forecast_products fp) UNION ALL (SELECT fp.source_id, fp.product_run_at FROM forecast_products fp EXCEPT SELECT DISTINCT wr.source_id, wr.product_run_at FROM weather_records wr WHERE wr.source_kind = 'forecast'))")
+    [[ "$catalog_consistent" == t ]] ||
+      die "previous worker left the schema-22 forecast catalog inconsistent"
+  fi
+
   # expose only the bounded persisted failure diagnosis
   if (( after_successes <= before_successes )); then
     WEATHER_ENV_FILE=$previous_env compose exec -T postgres \
@@ -2629,19 +4241,22 @@ verify_previous_image_compatibility() (
   # prove authorization only for trailing history
   if [[ "$migrations_changed" == true ]]; then
     # reuse the refreshed worker heartbeat
-    if WEATHER_ENV_FILE=$previous_env compose run --rm --no-deps \
+    if run_owned_compatibility_container \
+      "$previous_env" "${candidate}_worker_unproven" worker --no-deps \
       --env WEATHER_DATABASE_NAME="$candidate" \
       worker node apps/worker/dist/health.js >/dev/null 2>&1; then
       die "previous worker accepted unproven migration history"
     fi
 
-    WEATHER_ENV_FILE=$previous_env compose run --detach \
+    unproven_api_container_id=$(WEATHER_ENV_FILE=$previous_env compose run --detach \
       --name "$unproven_api_container" --no-deps \
       --env WEATHER_DATABASE_NAME="$candidate" \
       --env WEATHER_MIGRATION_AUTHORIZATION_RELEASE="$previous_release" \
       --env WEATHER_MIGRATION_AUTHORIZATION_HISTORY_SHA256="$invalid_history_sha256" \
-      api node apps/api/dist/main.js >/dev/null
+      api node apps/api/dist/main.js)
     unproven_api_started=true
+    [[ "$unproven_api_container_id" =~ ^[a-f0-9]{64}$ ]] ||
+      die "unproven compatibility API identity is invalid"
 
     # require the previous API to reject a wrong digest
     for ((_attempt = 0; _attempt < 30; _attempt += 1)); do
@@ -2655,16 +4270,21 @@ verify_previous_image_compatibility() (
       sleep 1
     done
     ((_attempt < 30)) || die "previous API did not reject invalid migration authorization"
-    docker rm --force "$unproven_api_container" >/dev/null
+    remove_owned_compatibility_container \
+      "$unproven_api_container_id" "$unproven_api_container" ||
+      die "unproven compatibility API cleanup failed"
     unproven_api_started=false
   fi
 
-  WEATHER_ENV_FILE=$previous_env compose run --detach --name "$api_container" --no-deps \
+  api_container_id=$(WEATHER_ENV_FILE=$previous_env compose run --detach \
+    --name "$api_container" --no-deps \
     --env WEATHER_DATABASE_NAME="$candidate" \
     --env WEATHER_MIGRATION_AUTHORIZATION_RELEASE="$previous_release" \
     --env WEATHER_MIGRATION_AUTHORIZATION_HISTORY_SHA256="$history_sha256" \
-    api node apps/api/dist/main.js >/dev/null
+    api node apps/api/dist/main.js)
   api_started=true
+  [[ "$api_container_id" =~ ^[a-f0-9]{64}$ ]] ||
+    die "compatibility API identity is invalid"
 
   # wait for every previous API read contract
   for ((_attempt = 0; _attempt < 30; _attempt += 1)); do
@@ -2679,6 +4299,31 @@ verify_previous_image_compatibility() (
 
   ((_attempt < 30)) || die "previous API compatibility failed"
 
+  # compare the new API's user-visible reads against the old API in one frozen clone
+  if [[ "$compatibility_mode" == normal-21-22 ]]; then
+    target_api_container_id=$(WEATHER_ENV_FILE=$target_env compose run --detach \
+      --name "$target_api_container" \
+      --no-deps --env WEATHER_DATABASE_NAME="$candidate" \
+      api node apps/api/dist/main.js)
+    target_api_started=true
+    [[ "$target_api_container_id" =~ ^[a-f0-9]{64}$ ]] ||
+      die "target compatibility API identity is invalid"
+    for ((_attempt = 0; _attempt < 30; _attempt += 1)); do
+      if docker exec "$target_api_container" node -e \
+        "fetch('http://127.0.0.1:3001/api/v1/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then
+        break
+      fi
+      sleep 1
+    done
+    ((_attempt < 30)) || die "target API compatibility failed"
+    previous_api_snapshot=$(docker exec "$api_container" node -e \
+      "const o='http://127.0.0.1:3001';fetch(o+'/api/v1/sites').then(async r=>{if(!r.ok)throw Error();const sites=await r.json();const s=sites.data?.[0]?.slug;if(typeof s!=='string')throw Error();const p=o+'/api/v1/sites/'+encodeURIComponent(s);const rs=await Promise.all(['/current','/history?limit=1','/forecast'].map(x=>fetch(p+x)));if(rs.some(x=>!x.ok))throw Error();console.log(JSON.stringify([sites,...await Promise.all(rs.map(x=>x.json()))]))}).catch(()=>process.exit(1))")
+    target_api_snapshot=$(docker exec "$target_api_container" node -e \
+      "const o='http://127.0.0.1:3001';fetch(o+'/api/v1/sites').then(async r=>{if(!r.ok)throw Error();const sites=await r.json();const s=sites.data?.[0]?.slug;if(typeof s!=='string')throw Error();const p=o+'/api/v1/sites/'+encodeURIComponent(s);const rs=await Promise.all(['/current','/history?limit=1','/forecast'].map(x=>fetch(p+x)));if(rs.some(x=>!x.ok))throw Error();console.log(JSON.stringify([sites,...await Promise.all(rs.map(x=>x.json()))]))}).catch(()=>process.exit(1))")
+    [[ "$previous_api_snapshot" == "$target_api_snapshot" ]] ||
+      die "schema-21 and schema-22 API reads differ"
+  fi
+
   # publish only after every real compatibility check
   write_migration_authorization \
     "$authorization_path" "$previous_release" "$target_release" "$history_sha256"
@@ -2689,6 +4334,260 @@ start_postgres() {
   local env_file=$1
   WEATHER_ENV_FILE=$env_file compose up -d --no-deps --force-recreate --wait postgres ||
     return 1
+}
+
+# capture one running supported writer by immutable Compose and image identity
+capture_supported_writer_container() {
+  local env_file=$1
+  local service=$2
+  local project=${WEATHER_COMPOSE_PROJECT_NAME:-weather}
+  local container_id expected_reference expected_image_id details
+  [[ "$service" == api || "$service" == worker ]] ||
+    die "unsupported writer service identity"
+  container_id=$(WEATHER_ENV_FILE=$env_file compose ps -q "$service")
+  [[ "$container_id" =~ ^[a-f0-9]{64}$ ]] ||
+    die "supported writer container identity is invalid: $service"
+  expected_reference=$(env_value "$env_file" WEATHER_SERVER_IMAGE)
+  expected_image_id=$(docker image inspect --format '{{.Id}}' "$expected_reference")
+  details=$(docker container inspect --format \
+    '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}|{{.State.Running}}' \
+    "$container_id")
+  [[ "$details" == "$container_id|/$project-$service-1|$project|$service|$expected_reference|$expected_image_id|true" ]] ||
+    die "supported writer container differs from active release: $service"
+  printf '%s\n' "$container_id"
+}
+
+# stop one previously captured supported writer without replacing its identity
+stop_supported_writer_container() {
+  local env_file=$1
+  local service=$2
+  local container_id=$3
+  local project=${WEATHER_COMPOSE_PROJECT_NAME:-weather}
+  local expected_reference expected_image_id details
+  expected_reference=$(env_value "$env_file" WEATHER_SERVER_IMAGE)
+  expected_image_id=$(docker image inspect --format '{{.Id}}' "$expected_reference")
+  details=$(docker container inspect --format \
+    '{{.Id}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+    "$container_id") || return 1
+  [[ "$details" == "$container_id|$project|$service|$expected_reference|$expected_image_id" ]] ||
+    return 1
+  docker container stop --time 30 "$container_id" >/dev/null || return 1
+  details=$(docker container inspect --format \
+    '{{.Id}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.State.Running}}' \
+    "$container_id") || return 1
+  [[ "$details" == "$container_id|$project|$service|false" ]]
+}
+
+# require no supported application writer or one-off migration remains active
+require_supported_writers_quiesced() {
+  local env_file=$1
+  local project=${WEATHER_COMPOSE_PROJECT_NAME:-weather}
+  local database_name service running activity_count
+  database_name=$(env_value "$env_file" WEATHER_DATABASE_NAME)
+  # reject daemon and one-off containers for every supported write service
+  for service in api worker migration; do
+    running=$(docker ps --quiet \
+      --filter "label=com.docker.compose.project=$project" \
+      --filter "label=com.docker.compose.service=$service")
+    [[ -z "$running" ]] || die "supported writer remains active: $service"
+  done
+  activity_count=$(WEATHER_ENV_FILE=$env_file compose exec -T postgres \
+    psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
+      --tuples-only --no-align --command \
+      "SELECT count(*) FROM pg_stat_activity WHERE usename IN ('weather_api', 'weather_ingest')")
+  [[ "$activity_count" == 0 ]] ||
+    die "supported database writer sessions remain active"
+}
+
+# publish one exact normal-activation migration ownership journal
+write_normal_activation_journal() {
+  local source_release=$1
+  local target_release=$2
+  local container_name=$3
+  local container_id=$4
+  local state=$5
+  local temporary
+  validate_release "$source_release"
+  validate_release "$target_release"
+  [[ "$source_release" != "$target_release" &&
+    "$container_name" =~ ^weather_normal_migration_[0-9_]+-[1-9][0-9]?_[1-9][0-9]*$ &&
+    ( "$container_id" == absent || "$container_id" =~ ^[a-f0-9]{64}$ ) &&
+    ( "$state" == prepared || "$state" == running || "$state" == removed ) &&
+    ( "$state" != prepared || "$container_id" == absent ) &&
+    ( "$state" == prepared || "$container_id" != absent ) ]] ||
+    die "normal activation migration journal identity is invalid"
+  temporary=$(mktemp "$state_dir/.normal-activation-v1.XXXXXX")
+  chmod 600 "$temporary"
+  printf '%s\n' \
+    "WEATHER_NORMAL_ACTIVATION_SOURCE_RELEASE=$source_release" \
+    "WEATHER_NORMAL_ACTIVATION_TARGET_RELEASE=$target_release" \
+    "WEATHER_NORMAL_ACTIVATION_CONTAINER_NAME=$container_name" \
+    "WEATHER_NORMAL_ACTIVATION_CONTAINER_ID=$container_id" \
+    "WEATHER_NORMAL_ACTIVATION_STATE=$state" >"$temporary"
+  sync -f "$temporary"
+  mv -f -- "$temporary" "$normal_activation_journal"
+  chmod 600 "$normal_activation_journal"
+  sync -f "$state_dir"
+}
+
+# validate and print one exact normal-activation migration journal
+read_normal_activation_journal() {
+  local source_release target_release container_name container_id state
+  require_file "$normal_activation_journal"
+  [[ ! -L "$normal_activation_journal" &&
+    "$(stat -c '%u:%a' "$normal_activation_journal")" == "$EUID:600" &&
+    "$(grep -cE '^[A-Z][A-Z0-9_]*=' "$normal_activation_journal")" == 5 ]] ||
+    die "normal activation migration journal metadata is invalid"
+  grep -qEv '^(WEATHER_NORMAL_ACTIVATION_SOURCE_RELEASE|WEATHER_NORMAL_ACTIVATION_TARGET_RELEASE|WEATHER_NORMAL_ACTIVATION_CONTAINER_NAME|WEATHER_NORMAL_ACTIVATION_CONTAINER_ID|WEATHER_NORMAL_ACTIVATION_STATE)=' \
+    "$normal_activation_journal" &&
+    die "normal activation migration journal contains an unknown field"
+  source_release=$(env_value "$normal_activation_journal" \
+    WEATHER_NORMAL_ACTIVATION_SOURCE_RELEASE)
+  target_release=$(env_value "$normal_activation_journal" \
+    WEATHER_NORMAL_ACTIVATION_TARGET_RELEASE)
+  container_name=$(env_value "$normal_activation_journal" \
+    WEATHER_NORMAL_ACTIVATION_CONTAINER_NAME)
+  container_id=$(env_value "$normal_activation_journal" \
+    WEATHER_NORMAL_ACTIVATION_CONTAINER_ID)
+  state=$(env_value "$normal_activation_journal" WEATHER_NORMAL_ACTIVATION_STATE)
+  validate_release "$source_release"
+  validate_release "$target_release"
+  [[ "$source_release" != "$target_release" &&
+    "$container_name" =~ ^weather_normal_migration_[0-9_]+-[1-9][0-9]?_[1-9][0-9]*$ &&
+    ( "$container_id" == absent || "$container_id" =~ ^[a-f0-9]{64}$ ) &&
+    ( "$state" == prepared || "$state" == running || "$state" == removed ) &&
+    ( "$state" != prepared || "$container_id" == absent ) &&
+    ( "$state" == prepared || "$container_id" != absent ) ]] ||
+    die "normal activation migration journal contents are invalid"
+  printf '%s %s %s %s %s\n' "$source_release" "$target_release" \
+    "$container_name" "$container_id" "$state"
+}
+
+# stop and remove only the migration container bound by the activation journal
+quiesce_normal_activation_migration() {
+  local activation_env=$1
+  local source_release target_release container_name container_id state
+  local inspected_id details project expected_reference expected_image_id running
+  read -r source_release target_release container_name container_id state < <(
+    read_normal_activation_journal)
+  project=${WEATHER_COMPOSE_PROJECT_NAME:-weather}
+  expected_reference=$(env_value "$activation_env" WEATHER_SERVER_IMAGE)
+  expected_image_id=$(docker image inspect --format '{{.Id}}' "$expected_reference")
+  # a prepared journal may precede Docker container creation
+  if [[ "$state" == prepared ]]; then
+    inspected_id=$(docker container inspect --format '{{.Id}}' "$container_name" 2>/dev/null || true)
+    if [[ -z "$inspected_id" ]]; then
+      return 0
+    fi
+    container_id=$inspected_id
+  fi
+  # a removed journal must name an already absent container
+  if [[ "$state" == removed ]]; then
+    ! docker container inspect "$container_id" >/dev/null 2>&1 || return 1
+    ! docker container inspect "$container_name" >/dev/null 2>&1 || return 1
+    return 0
+  fi
+  details=$(docker container inspect --format \
+    '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+    "$container_id") || return 1
+  [[ "$details" == "$container_id|/$container_name|$project|migration|$expected_reference|$expected_image_id" ]] ||
+    return 1
+  running=$(docker container inspect --format '{{.State.Running}}' "$container_id") || return 1
+  # stop a live migration before reading the final database ledger
+  if [[ "$running" == true ]]; then
+    docker container stop --time 30 "$container_id" >/dev/null || return 1
+  fi
+  [[ "$(docker container inspect --format '{{.State.Running}}' "$container_id")" == false ]] ||
+    return 1
+  docker container rm "$container_id" >/dev/null || return 1
+  ! docker container inspect "$container_id" >/dev/null 2>&1 || return 1
+  ! docker container inspect "$container_name" >/dev/null 2>&1 || return 1
+  write_normal_activation_journal "$source_release" "$target_release" \
+    "$container_name" "$container_id" removed
+}
+
+# stop one owned sampler only through its exact successful completion handshake
+stop_owned_capacity_monitor() {
+  local monitor_pid=$1
+  local completion_path=$2
+  local samples_path=$3
+  local completion_pid completion_sequence sample_line_count
+  capacity_monitor_next_sequence=
+  kill -TERM "$monitor_pid" >/dev/null 2>&1 || return 1
+  wait "$monitor_pid" >/dev/null 2>&1 || return 1
+  [[ -f "$completion_path" && ! -L "$completion_path" ]] || return 1
+  read -r completion_pid completion_sequence <"$completion_path" || return 1
+  sample_line_count=$(wc -l <"$samples_path") || return 1
+  [[ "$completion_pid" == "$monitor_pid" &&
+    "$completion_sequence" =~ ^[1-9][0-9]*$ &&
+    "$sample_line_count" == "$completion_sequence" ]] || return 1
+  # reject missing, repeated or reordered sequence ordinals before receipt parsing
+  awk '($1 != NR - 1) { exit 1 } END { if (NR == 0) exit 1 }' "$samples_path" ||
+    return 1
+  capacity_monitor_next_sequence=$completion_sequence
+}
+
+# restore normal runtime authority from one already-quiesced exact live ledger
+restore_normal_activation_after_quiescence() {
+  local current_env=$1
+  local runtime_release=$2
+  local source_release=$3
+  local target_release=$4
+  local actual_history authorization_path
+  actual_history=$(migration_history_sha256 \
+    "$current_env" "$(env_value "$current_env" WEATHER_DATABASE_NAME)") || return 1
+  # repair a pre-SQL or transactionally rolled-back failure to source authority
+  if [[ "$actual_history" == adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93 &&
+    "$runtime_release" == "$source_release" ]]; then
+    write_private_state "$state_dir/schema-release" "$source_release" || return 1
+    restore_images "$current_env" "$source_release" "$source_release" || return 1
+    return 0
+  fi
+  # retain target authority after a committed migration or later bootstrap/ACL failure
+  if [[ "$actual_history" == 3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51 ]]; then
+    authorization_path=$(migration_authorization "$target_release") || return 1
+    validate_migration_authorization "$authorization_path" \
+      "$source_release" "$target_release" || return 1
+    write_private_state "$state_dir/schema-release" "$target_release" || return 1
+    restore_images "$current_env" "$runtime_release" "$target_release" || return 1
+    return 0
+  fi
+  return 1
+}
+
+# recover one committed normal schema using its exact staged authority
+recover_committed_normal_release() {
+  local runtime_release=$1
+  local schema_release=$2
+  local runtime_env target_env source_release source_env authorization_path stage_receipt
+  local actual_history
+  authorization_path=$(migration_authorization "$schema_release")
+  validate_migration_authorization "$authorization_path" \
+    "$(env_value "$authorization_path" WEATHER_MIGRATION_AUTHORIZATION_RELEASE)" \
+    "$schema_release"
+  source_release=$(env_value "$authorization_path" WEATHER_MIGRATION_AUTHORIZATION_RELEASE)
+  [[ ( "$runtime_release" == "$source_release" || "$runtime_release" == "$schema_release" ) &&
+    "$source_release" != "$schema_release" ]] ||
+    die "normal recovery runtime differs from staged authority"
+  source_env=$(release_env "$source_release")
+  target_env=$(release_env "$schema_release")
+  runtime_env=$(release_env "$runtime_release")
+  validate_release_env "$source_env" "$source_release"
+  validate_release_env "$target_env" "$schema_release"
+  validate_release_env "$runtime_env" "$runtime_release"
+  require_control_plane_compatibility "$source_env"
+  require_control_plane_compatibility "$target_env"
+  require_control_plane_compatibility "$runtime_env"
+  stage_receipt="$releases_dir/$schema_release.normal-stage-receipt.json"
+  require_file "$stage_receipt"
+  start_postgres "$runtime_env" || die "normal recovery PostgreSQL restart failed"
+  actual_history=$(migration_history_sha256 \
+    "$runtime_env" "$(env_value "$runtime_env" WEATHER_DATABASE_NAME)")
+  [[ "$actual_history" == 3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51 ]] ||
+    die "normal recovery requires the exact complete schema-22 ledger"
+  read_normal_stage_qualification "$source_env" "$target_env" "$stage_receipt" >/dev/null
+  restore_images "$runtime_env" "$runtime_release" "$schema_release"
+  write_active_symlink "$runtime_release"
 }
 
 # provision the persistent Xweather usage ledger
@@ -3860,6 +5759,7 @@ yolo_release() (
     previous_before=$(read_release_state "$state_dir/previous-release")
     previous_existed=true
   fi
+  # shellcheck disable=SC2030
   current_env=$(release_env "$current")
   validate_release_env "$current_env" "$current"
   validate_release_env "$source_env" "$current"
@@ -3980,7 +5880,7 @@ prepare_v14_compatibility_bridge_release() {
     require_v14_compatibility_bridge_release_pair "$target" "$source_env"
     cleanup_obsolete_weather_images "$source_env" "$target"
     require_image_pull_capacity_floor
-    require_v13_resource_gate
+    require_normal_release_resource_gate
     require_literal_inert_v14_release_capacity "$source_env" "$target"
     WEATHER_ENV_FILE=$target compose pull >&2
     require_literal_inert_v14_release_capacity "$source_env" "$target"
@@ -4012,7 +5912,7 @@ prepare_v14_compatibility_bridge_release() {
 
   cleanup_obsolete_weather_images "$source_env" "$temporary"
   require_image_pull_capacity_floor
-  require_v13_resource_gate
+  require_normal_release_resource_gate
   require_literal_inert_v14_release_capacity "$source_env" "$temporary"
   WEATHER_ENV_FILE=$temporary compose pull >&2
   require_literal_inert_v14_release_capacity "$source_env" "$temporary"
@@ -4122,7 +6022,7 @@ process.stdout.write(proof.targetCommit);
 
   # remeasure every admission gate immediately before mutation
   require_image_pull_capacity_floor
-  require_v13_resource_gate
+  require_normal_release_resource_gate
   require_literal_inert_v14_release_capacity "$source_env" "$target"
   publish_v14_compatibility_bridge_state "$source_env" "$target" "$source_history" \
     "$bridge_settings_inode" "$bridge_settings_sha256" "$previous_before"
@@ -4145,7 +6045,7 @@ process.stdout.write(proof.targetCommit);
     "$(read_release_state "$state_dir/schema-release")" == "$recurring_previous_release" ]] ||
     die "v14 compatibility bridge source markers changed before commit"
   require_image_pull_capacity_floor
-  require_v13_resource_gate
+  require_normal_release_resource_gate
   require_literal_inert_v14_release_capacity "$source_env" "$target"
 
   # publish every reversible marker before the final current-release commit
@@ -4172,7 +6072,7 @@ prepare_inert_v14_release() {
     require_fixed_v14_source_identity "$target" "$source_env"
     cleanup_obsolete_weather_images "$source_env" "$target"
     require_image_pull_capacity_floor
-    require_v13_resource_gate
+    require_normal_release_resource_gate
     require_literal_full_v14_release_capacity "$source_env" "$target"
     WEATHER_ENV_FILE=$target compose pull >&2
     require_literal_full_v14_release_capacity "$source_env" "$target"
@@ -4204,13 +6104,640 @@ prepare_inert_v14_release() {
 
   cleanup_obsolete_weather_images "$source_env" "$temporary"
   require_image_pull_capacity_floor
-  require_v13_resource_gate
+  require_normal_release_resource_gate
   require_literal_full_v14_release_capacity "$source_env" "$temporary"
   WEATHER_ENV_FILE=$temporary compose pull >&2
   require_literal_full_v14_release_capacity "$source_env" "$temporary"
   mv "$temporary" "$target"
   trap - EXIT
   printf '%s\n' "$target"
+}
+
+# produce one measured full-size ARM64 proof on an invocation-owned clone
+historical_v14_18_21_rehearsal() (
+  local source_env=$1
+  local target_env=$2
+  local database_name postgres_dir postgres_container_id postgres_identity architecture
+  local candidate candidate_oid existing_candidate_oid migration_container migration_container_id migration_started=false
+  local migration_image_reference migration_image_id compose_project
+  local candidate_created=false samples monitor_completion monitor_pid
+  local samples_json_temporary receipt_temporary source_history target_history
+  local system_identifier database_oid database_bytes weather_rows weather_bytes
+  local candidate_scan_rows candidate_scan_heap_bytes
+  local largest_index_bytes max_wal_bytes source_database_file_count
+  local free_bytes_before free_inodes_before start_wal_lsn peak_wal_bytes
+  local before_data_sha256 started_at finished_at duration_milliseconds
+  local preexisting_data_contract preexisting_data_before preexisting_data_after
+  local required_historical_bytes required_historical_inodes details migration_status
+  local sample_free_bytes sample_free_inodes sample_temp_bytes _sample
+  local cleanup_failed=false
+  candidate="weather_historical_v14_$(date -u +%Y%m%d%H%M%S)_$$"
+  migration_container="${candidate}_migration"
+  candidate_oid=
+  migration_container_id=
+  monitor_pid=
+  capacity_monitor_next_sequence=
+  database_name=$(env_value "$source_env" WEATHER_DATABASE_NAME)
+  postgres_dir=$(env_value "$source_env" WEATHER_POSTGRES_DIR)
+  samples=$(mktemp "$state_dir/.historical-v14-samples.XXXXXX")
+  monitor_completion="$samples.complete"
+  samples_json_temporary=$(mktemp "$state_dir/.historical-v14-samples-json.XXXXXX")
+  receipt_temporary=$(mktemp "$state_dir/.historical-v14-receipt.XXXXXX")
+  preexisting_data_contract=$(mktemp "$state_dir/.historical-v14-data-contract.XXXXXX")
+  preexisting_data_before=$(mktemp "$state_dir/.historical-v14-data-before.XXXXXX")
+  preexisting_data_after=$(mktemp "$state_dir/.historical-v14-data-after.XXXXXX")
+  chmod 600 "$samples" "$samples_json_temporary" "$receipt_temporary" \
+    "$preexisting_data_contract" "$preexisting_data_before" \
+    "$preexisting_data_after"
+
+  # remove every invocation-owned object without trusting a generated name alone
+  # shellcheck disable=SC2317,SC2329
+  cleanup_historical_rehearsal() {
+    local status=$?
+    local current_oid details
+    trap - EXIT
+    set +e
+    if [[ -n "$monitor_pid" ]]; then
+      kill "$monitor_pid" >/dev/null 2>&1
+      wait "$monitor_pid" >/dev/null 2>&1
+      monitor_pid=
+    fi
+    if [[ "$migration_started" == true ]]; then
+      details=$(docker container inspect --format \
+        '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+        "$migration_container_id" 2>/dev/null)
+      if [[ "$details" == "$migration_container_id|/$migration_container|$compose_project|migration|$migration_image_reference|$migration_image_id" ]]; then
+        docker container stop --time 10 "$migration_container_id" >/dev/null 2>&1
+        details=$(docker container inspect --format \
+          '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+          "$migration_container_id" 2>/dev/null)
+        [[ "$details" == "$migration_container_id|/$migration_container|$compose_project|migration|$migration_image_reference|$migration_image_id" ]] &&
+          docker container rm "$migration_container_id" >/dev/null 2>&1 || cleanup_failed=true
+        docker container inspect "$migration_container_id" >/dev/null 2>&1 &&
+          cleanup_failed=true
+      else
+        cleanup_failed=true
+      fi
+    fi
+    if [[ "$candidate_created" == true ]]; then
+      current_oid=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+        psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+          --tuples-only --no-align --command \
+          "SELECT oid FROM pg_database WHERE datname = '$candidate'" 2>/dev/null)
+      # recover the exact OID after a successful create whose first identity read failed
+      if [[ ! "$candidate_oid" =~ ^[1-9][0-9]*$ &&
+        "$current_oid" =~ ^[1-9][0-9]*$ ]]; then
+        candidate_oid=$current_oid
+      fi
+      if [[ "$candidate_oid" =~ ^[1-9][0-9]*$ &&
+        "$current_oid" == "$candidate_oid" ]]; then
+        WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+          dropdb --username postgres "$candidate" >/dev/null 2>&1 || cleanup_failed=true
+        current_oid=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+          psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+            --tuples-only --no-align --command \
+            "SELECT oid FROM pg_database WHERE datname = '$candidate'" 2>/dev/null) ||
+          cleanup_failed=true
+        [[ -z "$current_oid" ]] || cleanup_failed=true
+      else
+        cleanup_failed=true
+      fi
+    fi
+    # preserve bounded diagnostics after every owned process has stopped
+    if [[ "$status" != 0 || "$cleanup_failed" == true ]]; then
+      if [[ "$status" == 0 ]]; then
+        status=1
+      fi
+      retain_release_failure_evidence historical-v14-rehearsal "$status" \
+        "$samples" "$samples_json_temporary" "$receipt_temporary" \
+        "$preexisting_data_contract" "$preexisting_data_before" \
+        "$preexisting_data_after" || cleanup_failed=true
+    fi
+    rm -f -- "$samples" "$monitor_completion" "$samples_json_temporary" \
+      "$receipt_temporary" "$preexisting_data_contract" \
+      "$preexisting_data_before" "$preexisting_data_after"
+    if [[ "$cleanup_failed" == true ]]; then
+      exit 1
+    fi
+    exit "$status"
+  }
+  trap cleanup_historical_rehearsal EXIT
+  trap 'exit 130' HUP INT TERM
+
+  require_fixed_v14_source_identity "$target_env" "$source_env"
+  require_normal_release_resource_gate
+  require_literal_full_v14_release_capacity "$source_env" "$target_env"
+  source_history=$(migration_history_sha256 "$source_env" "$database_name")
+  [[ "$source_history" == e4a73765078fba8235bf94753c799c209d59f737dde6f38d1a1a458e3164a82e ]] ||
+    die "historical rehearsal source is not the exact schema-18 ledger"
+  postgres_container_id=$(WEATHER_ENV_FILE=$source_env compose ps -q postgres)
+  [[ "$postgres_container_id" =~ ^[a-f0-9]{64}$ ]] ||
+    die "historical rehearsal PostgreSQL identity is invalid"
+  postgres_identity=$(docker container inspect --format \
+    '{{.Id}}|{{.Config.Labels.com.docker.compose.service}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.Image}}' \
+    "$postgres_container_id")
+  [[ "$postgres_identity" == "$postgres_container_id|postgres|1000000000|536870912|sha256:"* ]] ||
+    die "historical rehearsal PostgreSQL quotas differ"
+  architecture=$(docker image inspect --format '{{.Architecture}}' \
+    "$(env_value "$source_env" POSTGRES_IMAGE)")
+  [[ "$architecture" == arm64 && "$(uname -m)" == aarch64 ]] ||
+    die "historical rehearsal requires the production ARM64 host"
+
+  read -r system_identifier database_oid database_bytes weather_rows weather_bytes \
+    largest_index_bytes max_wal_bytes < <(
+    WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+      psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
+        --tuples-only --no-align --field-separator=' ' --command \
+        "SELECT (SELECT system_identifier FROM pg_control_system()), (SELECT oid FROM pg_database WHERE datname = current_database()), pg_database_size(current_database()), (SELECT count(*) FROM weather_records), pg_total_relation_size('weather_records'), COALESCE((SELECT max(pg_relation_size(indexrelid)) FROM pg_index JOIN pg_class ON pg_class.oid = pg_index.indrelid WHERE pg_class.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)), 0), pg_size_bytes(current_setting('max_wal_size'))")
+  [[ -d "$postgres_dir/base/$database_oid" && ! -L "$postgres_dir/base/$database_oid" ]] ||
+    die "historical rehearsal source file root is invalid"
+  source_database_file_count=$(find -P "$postgres_dir/base/$database_oid" -type f -printf . | wc -c)
+  read -r free_bytes_before _ free_inodes_before < <(
+    stat --file-system --format='%a %S %d' "$postgres_dir" |
+      awk '{ printf "%.0f %s %s\n", $1 * $2, $2, $3 }')
+  required_historical_bytes=$((image_pull_required_free_bytes + database_bytes +
+    largest_index_bytes + 2 * max_wal_bytes + 268435456))
+  required_historical_inodes=$((image_pull_required_free_inodes +
+    source_database_file_count + 4096))
+  ((free_bytes_before >= required_historical_bytes &&
+    free_inodes_before >= required_historical_inodes)) ||
+    die "historical rehearsal lacks its full-copy capacity envelope"
+
+  printf '0 %s %s %s 0\n' "$(date -u +%s%3N)" \
+    "$free_bytes_before" "$free_inodes_before" >"$samples"
+  (
+    _next_sequence=1
+    # publish one exact completion handshake only on an intentional stop
+    # shellcheck disable=SC2329
+    complete_historical_monitor() {
+      _completion_temporary="$monitor_completion.$BASHPID"
+      printf '%s %s\n' "$BASHPID" "$_next_sequence" >"$_completion_temporary" || exit 1
+      chmod 600 "$_completion_temporary" || exit 1
+      mv -f -- "$_completion_temporary" "$monitor_completion" || exit 1
+      exit 0
+    }
+    trap complete_historical_monitor TERM
+    # retain the complete bounded free-space and PostgreSQL-temp series
+    for ((_sample = 0; _sample < 4093; _sample += 1)); do
+      read -r sample_free_bytes _ sample_free_inodes < <(
+        stat --file-system --format='%a %S %d' "$postgres_dir" |
+          awk '{ printf "%.0f %s %s\n", $1 * $2, $2, $3 }')
+      sample_temp_bytes=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+        psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+          --tuples-only --no-align --command \
+          "SELECT COALESCE(sum(size), 0) FROM pg_ls_tmpdir()")
+      # append each sample with one writer and one complete printf
+      printf '%s %s %s %s %s\n' "$_next_sequence" "$(date -u +%s%3N)" \
+        "$sample_free_bytes" "$sample_free_inodes" "$sample_temp_bytes" || exit 1
+      _next_sequence=$((_next_sequence + 1))
+      sleep 1
+    done
+    exit 1
+  ) >>"$samples" &
+  monitor_pid=$!
+  start_wal_lsn=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+    psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
+      --tuples-only --no-align --command 'SELECT pg_current_wal_lsn()')
+
+  existing_candidate_oid=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+    psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      --tuples-only --no-align --command \
+      "SELECT oid FROM pg_database WHERE datname = '$candidate'") ||
+    die "historical rehearsal clone absence check failed"
+  [[ -z "$existing_candidate_oid" ]] ||
+    die "historical rehearsal clone name already exists"
+  # capture a partial create before rejecting its failed command status
+  if ! WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+    createdb --username postgres --owner weather_owner --template template0 "$candidate"; then
+    candidate_oid=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+      psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+        --tuples-only --no-align --command \
+        "SELECT oid FROM pg_database WHERE datname = '$candidate'" 2>/dev/null || true)
+    [[ "$candidate_oid" =~ ^[1-9][0-9]*$ ]] && candidate_created=true
+    die "historical rehearsal clone creation failed"
+  fi
+  candidate_created=true
+  candidate_oid=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+    psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      --tuples-only --no-align --command \
+      "SELECT oid FROM pg_database WHERE datname = '$candidate'")
+  [[ "$candidate_oid" =~ ^[1-9][0-9]*$ ]] ||
+    die "historical rehearsal clone identity is invalid"
+  WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+    pg_dump --username weather_owner --dbname "$database_name" --format=custom --no-owner |
+    WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+      pg_restore --username postgres --dbname "$candidate" --no-owner \
+        --role weather_owner --exit-on-error
+  [[ "$(migration_history_sha256 "$source_env" "$candidate")" == "$source_history" ]] ||
+    die "historical rehearsal clone ledger differs from its source"
+
+  write_preexisting_data_contract "$source_env" "$candidate" \
+    "$preexisting_data_contract"
+  write_preexisting_data_snapshot "$source_env" "$candidate" \
+    "$preexisting_data_contract" "$preexisting_data_before"
+  before_data_sha256=$(cat "$preexisting_data_contract" "$preexisting_data_before" |
+    sha256sum | awk '{print $1}')
+  read -r candidate_scan_rows candidate_scan_heap_bytes < <(
+    WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+      psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname "$candidate" \
+        --tuples-only --no-align --field-separator=' ' --command \
+        "SELECT (SELECT count(*) FROM weather_records) + (SELECT count(*) FROM forecast_anchor_records) + (SELECT count(*) FROM rain_adjustment_runs) + (SELECT count(*) FROM ecmwf_temperature_canary_runs), pg_relation_size('weather_records') + pg_relation_size('forecast_anchor_records') + pg_relation_size('rain_adjustment_runs') + pg_relation_size('ecmwf_temperature_canary_runs')")
+  [[ "$candidate_scan_rows" =~ ^[1-9][0-9]*$ &&
+    "$candidate_scan_heap_bytes" =~ ^[1-9][0-9]*$ ]] ||
+    die "historical rehearsal scan workload envelope is empty or invalid"
+
+  compose_project=${WEATHER_COMPOSE_PROJECT_NAME:-weather}
+  migration_image_reference=$(env_value "$target_env" WEATHER_SERVER_IMAGE)
+  migration_image_id=$(docker image inspect --format '{{.Id}}' "$migration_image_reference")
+  ! docker container inspect "$migration_container" >/dev/null 2>&1 ||
+    die "historical rehearsal migration name already exists"
+  started_at=$(date -u +%s%3N)
+  # capture and clean an exact task even when Compose reports launch failure
+  if migration_container_id=$(WEATHER_ENV_FILE=$target_env compose run --detach \
+    --name "$migration_container" --no-deps --env WEATHER_DATABASE_NAME="$candidate" \
+    --env WEATHER_DATABASE_STATEMENT_TIMEOUT_MS=300000 \
+    --env WEATHER_DATABASE_LOCK_TIMEOUT_MS=10000 migration \
+    node deploy/scripts/migrate.mjs --atomic-maintenance-v14); then
+    :
+  else
+    migration_container_id=$(docker container inspect --format '{{.Id}}' \
+      "$migration_container" 2>/dev/null) ||
+      die "historical rehearsal migration failed before creation"
+    migration_started=true
+    die "historical rehearsal migration launch failed"
+  fi
+  # bind the successful create to its exact ID, labels and image before waiting
+  if [[ ! "$migration_container_id" =~ ^[a-f0-9]{64}$ ]]; then
+    migration_container_id=$(docker container inspect --format '{{.Id}}' \
+      "$migration_container" 2>/dev/null) ||
+      die "historical rehearsal migration container identity is invalid"
+  fi
+  migration_started=true
+  details=$(docker container inspect --format \
+    '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+    "$migration_container_id")
+  [[ "$details" == "$migration_container_id|/$migration_container|$compose_project|migration|$migration_image_reference|$migration_image_id" ]] ||
+    die "historical rehearsal migration container identity differs"
+  migration_status=$(docker container wait "$migration_container_id")
+  if [[ "$migration_status" != 0 ]]; then
+    docker container logs "$migration_container_id" >&2 || true
+    die "historical rehearsal atomic migration failed"
+  fi
+  finished_at=$(date -u +%s%3N)
+  duration_milliseconds=$((finished_at - started_at))
+  ((duration_milliseconds <= 150000)) ||
+    die "historical rehearsal exceeds the reviewed two-times duration headroom"
+  target_history=$(migration_history_sha256 "$source_env" "$candidate")
+  [[ "$target_history" == adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93 ]] ||
+    die "historical rehearsal target is not the exact schema-21 ledger"
+  write_preexisting_data_snapshot "$source_env" "$candidate" \
+    "$preexisting_data_contract" "$preexisting_data_after"
+  verify_preexisting_data_snapshots "$preexisting_data_contract" \
+    "$preexisting_data_before" "$preexisting_data_after" ||
+    die "historical rehearsal changed preexisting application data"
+  peak_wal_bytes=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+    psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
+      --tuples-only --no-align --command \
+      "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), '$start_wal_lsn'::pg_lsn)::bigint")
+
+  details=$(docker container inspect --format \
+    '{{.Id}}|{{.Name}}|{{.Config.Labels.com.docker.compose.project}}|{{.Config.Labels.com.docker.compose.service}}|{{.Config.Image}}|{{.Image}}' \
+    "$migration_container_id")
+  [[ "$details" == "$migration_container_id|/$migration_container|$compose_project|migration|$migration_image_reference|$migration_image_id" ]] ||
+    die "historical rehearsal migration cleanup identity differs"
+  docker container rm "$migration_container_id" >/dev/null
+  ! docker container inspect "$migration_container_id" >/dev/null 2>&1 ||
+    die "historical rehearsal migration cleanup was not confirmed"
+  migration_started=false
+  [[ "$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+    psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      --tuples-only --no-align --command \
+      "SELECT oid FROM pg_database WHERE datname = '$candidate'")" == "$candidate_oid" ]] ||
+    die "historical rehearsal clone cleanup identity differs"
+  WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+    dropdb --username postgres "$candidate"
+  [[ -z "$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+    psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      --tuples-only --no-align --command \
+      "SELECT oid FROM pg_database WHERE datname = '$candidate'")" ]] ||
+    die "historical rehearsal clone cleanup was not confirmed"
+  candidate_created=false
+  # require the monitor to be live and to close its complete sequence explicitly
+  stop_owned_capacity_monitor "$monitor_pid" "$monitor_completion" "$samples" ||
+    die "historical rehearsal capacity monitor died or ended incompletely"
+  monitor_pid=
+  read -r sample_free_bytes _ sample_free_inodes < <(
+    stat --file-system --format='%a %S %d' "$postgres_dir" |
+      awk '{ printf "%.0f %s %s\n", $1 * $2, $2, $3 }')
+  sample_temp_bytes=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+    psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      --tuples-only --no-align --command "SELECT COALESCE(sum(size), 0) FROM pg_ls_tmpdir()")
+  printf '%s %s %s %s %s\n' "$capacity_monitor_next_sequence" "$(date -u +%s%3N)" \
+    "$sample_free_bytes" "$sample_free_inodes" "$sample_temp_bytes" >>"$samples"
+
+  node --input-type=module - "$samples" "$samples_json_temporary" "$receipt_temporary" \
+    "$(sha256sum "$source_env" | awk '{print $1}')" \
+    "$(sha256sum "$target_env" | awk '{print $1}')" "$system_identifier" \
+    "$database_oid" "$database_bytes" "$weather_rows" "$weather_bytes" \
+    "$before_data_sha256" "$candidate_scan_rows" "$candidate_scan_heap_bytes" \
+    "$largest_index_bytes" "$max_wal_bytes" "$source_database_file_count" \
+    "$free_bytes_before" "$free_inodes_before" "$required_historical_bytes" \
+    "$required_historical_inodes" "$duration_milliseconds" "$peak_wal_bytes" \
+    "$(env_value "$source_env" WEATHER_SERVER_IMAGE)" \
+    "$(env_value "$source_env" WEATHER_WEB_IMAGE)" \
+    "$(env_value "$target_env" WEATHER_SERVER_IMAGE)" \
+    "$(env_value "$target_env" WEATHER_WEB_IMAGE)" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+
+const [samplesPath, samplesOutput, output, sourceEnvSha256, targetEnvSha256, systemIdentifier,
+  databaseOid, databaseBytes, weatherRecordCount, weatherRecordBytes,
+  candidateAppDataSha256, candidateScanRowCount, candidateScanHeapBytes,
+  largestSourceIndexBytes, maxWalBytes, sourceDatabaseFileCount, freeBytesBefore,
+  freeInodesBefore, requiredFreeBytes, requiredFreeInodes, durationMilliseconds,
+  peakWalBytes, sourceServerImage, sourceWebImage, targetServerImage,
+  targetWebImage] = process.argv.slice(2);
+const lines = readFileSync(samplesPath, "utf8").trimEnd().split("\n");
+if (lines.length < 2 || lines.length > 4_096) throw new Error("historical sample count is invalid");
+const samples = lines.map((line) => line.split(" ").map(Number));
+if (samples.some((sample) => sample.length !== 5 || sample.some((value) =>
+  !Number.isSafeInteger(value) || value < 0))) throw new Error("historical sample is invalid");
+for (let index = 0; index < samples.length; index += 1) {
+  if (samples[index][0] !== index ||
+    (index > 0 && samples[index][1] < samples[index - 1][1])) {
+    throw new Error("historical sample sequence is incomplete");
+  }
+}
+const retainedSamples = samples.map(([sequence, capturedAtMilliseconds, freeBytes,
+  freeInodes, tempBytes]) => ({ capturedAtMilliseconds, freeBytes, freeInodes,
+  sequence, tempBytes }));
+const minimumFreeBytesObserved = Math.min(...samples.map((sample) => sample[2]));
+const minimumFreeInodesObserved = Math.min(...samples.map((sample) => sample[3]));
+const peakTempBytes = Math.max(...samples.map((sample) => sample[4]));
+const peakGrowthBytes = Number(freeBytesBefore) - minimumFreeBytesObserved;
+const peakGrowthInodes = Number(freeInodesBefore) - minimumFreeInodesObserved;
+if (peakGrowthBytes < 0 || peakGrowthInodes < 0 ||
+  minimumFreeBytesObserved < 2_034_155_520 || minimumFreeInodesObserved < 32_768 ||
+  peakTempBytes > 268_435_456 || Number(peakWalBytes) > 2 * Number(maxWalBytes)) {
+  throw new Error("historical rehearsal exceeded its measured envelope");
+}
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+const samplesBody = {
+  contractVersion: "historical-v14-capacity-samples/v1",
+  samples: retainedSamples,
+};
+const samplesReceipt = { ...samplesBody,
+  receiptSha256: createHash("sha256").update(canonical(samplesBody)).digest("hex") };
+const samplesBytes = Buffer.from(canonical(samplesReceipt));
+writeFileSync(samplesOutput, samplesBytes, { mode: 0o600 });
+const body = {
+  appDataEqual: true,
+  architecture: "aarch64",
+  candidateAppDataSha256,
+  candidateScanHeapBytes: Number(candidateScanHeapBytes),
+  candidateScanRowCount: Number(candidateScanRowCount),
+  capacitySampleCount: retainedSamples.length,
+  capacitySamplesReceiptSha256: samplesReceipt.receiptSha256,
+  capacitySamplesSha256: createHash("sha256").update(samplesBytes).digest("hex"),
+  capturedAt: new Date().toISOString(),
+  cleanupConfirmed: true,
+  contractVersion: "historical-v14-18-21-rehearsal/v1",
+  databaseBytes: Number(databaseBytes),
+  databaseOid: Number(databaseOid),
+  durationMilliseconds: Number(durationMilliseconds),
+  freeBytesBefore: Number(freeBytesBefore),
+  freeInodesBefore: Number(freeInodesBefore),
+  largestSourceIndexBytes: Number(largestSourceIndexBytes),
+  lockTimeoutMilliseconds: 10000,
+  maxWalBytes: Number(maxWalBytes),
+  memoryLimitBytes: 512 * 1024 * 1024,
+  minimumFreeBytesObserved,
+  minimumFreeInodesObserved,
+  peakGrowthBytes,
+  peakGrowthInodes,
+  peakTempBytes,
+  peakWalBytes: Number(peakWalBytes),
+  requiredFreeBytes: Number(requiredFreeBytes),
+  requiredFreeInodes: Number(requiredFreeInodes),
+  sourceDatabaseFileCount: Number(sourceDatabaseFileCount),
+  sourceEnvSha256,
+  sourceLedgerSha256: "e4a73765078fba8235bf94753c799c209d59f737dde6f38d1a1a458e3164a82e",
+  sourceRelease: "2026.10.09-2",
+  sourceServerImage,
+  sourceWebImage,
+  statementTimeoutMilliseconds: 300000,
+  systemIdentifier,
+  targetEnvSha256,
+  targetLedgerSha256: "adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93",
+  targetRelease: "2026.10.09-3",
+  targetServerImage,
+  targetWebImage,
+  weatherRecordBytes: Number(weatherRecordBytes),
+  weatherRecordCount: Number(weatherRecordCount),
+};
+const receipt = { ...body,
+  receiptSha256: createHash("sha256").update(canonical(body)).digest("hex") };
+writeFileSync(output, canonical(receipt), { mode: 0o600 });
+NODE
+  require_normal_release_resource_gate
+  require_literal_full_v14_release_capacity "$source_env" "$target_env"
+  require_historical_v14_rehearsal_receipt \
+    "$source_env" "$target_env" "$receipt_temporary" "$samples_json_temporary"
+  mv -f -- "$samples_json_temporary" "$historical_v14_rehearsal_samples"
+  samples_json_temporary=
+  chmod 600 "$historical_v14_rehearsal_samples"
+  sync -f "$historical_v14_rehearsal_samples" "$state_dir"
+  mv -f -- "$receipt_temporary" "$historical_v14_rehearsal_receipt"
+  receipt_temporary=
+  chmod 600 "$historical_v14_rehearsal_receipt"
+  sync -f "$historical_v14_rehearsal_receipt" "$state_dir"
+  require_historical_v14_rehearsal_receipt "$source_env" "$target_env"
+  rm -f -- "$samples" "$monitor_completion"
+  trap - EXIT
+  printf 'Historical v14 full-size rehearsal passed and was sealed.\n'
+)
+
+# require one measured full-size ARM64 proof for the historical 18-to-21 handoff
+require_historical_v14_rehearsal_receipt() {
+  local source_env=$1
+  local target_env=$2
+  local receipt_path=${3:-$historical_v14_rehearsal_receipt}
+  local samples_path=${4:-$historical_v14_rehearsal_samples}
+  local database_name receipt_mode receipt_size source_env_sha256 target_env_sha256
+  local source_history system_identifier database_oid database_bytes weather_rows weather_bytes
+  local live_scan_rows live_scan_heap_bytes largest_index_bytes max_wal_bytes
+  local source_database_file_count postgres_dir free_bytes free_inodes
+  database_name=$(env_value "$source_env" WEATHER_DATABASE_NAME)
+  require_canonical_descendant "$receipt_path" "$state_dir" \
+    "historical v14 rehearsal receipt"
+  require_file "$receipt_path"
+  [[ ! -L "$receipt_path" ]] ||
+    die "historical v14 rehearsal receipt must not be linked"
+  receipt_mode=$(stat -c '%u:%a' "$receipt_path")
+  receipt_size=$(stat -c '%s' "$receipt_path")
+  [[ "$receipt_mode" == "$EUID:600" && "$receipt_size" -ge 2 &&
+    "$receipt_size" -le 16384 ]] ||
+    die "historical v14 rehearsal receipt metadata is invalid"
+  require_canonical_descendant "$samples_path" "$state_dir" \
+    "historical v14 rehearsal samples"
+  require_file "$samples_path"
+  [[ ! -L "$samples_path" && "$(stat -c '%u:%a' "$samples_path")" == "$EUID:600" &&
+    "$(stat -c '%s' "$samples_path")" -ge 2 &&
+    "$(stat -c '%s' "$samples_path")" -le 1048576 ]] ||
+    die "historical v14 rehearsal sample metadata is invalid"
+  source_env_sha256=$(sha256sum "$source_env" | awk '{print $1}')
+  target_env_sha256=$(sha256sum "$target_env" | awk '{print $1}')
+  source_history=$(migration_history_sha256 "$source_env" "$database_name")
+  read -r system_identifier database_oid database_bytes weather_rows weather_bytes \
+    live_scan_rows live_scan_heap_bytes largest_index_bytes max_wal_bytes < <(
+    WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+      psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
+        --tuples-only --no-align --field-separator=' ' --command \
+        "SELECT (SELECT system_identifier FROM pg_control_system()), (SELECT oid FROM pg_database WHERE datname = current_database()), pg_database_size(current_database()), (SELECT count(*) FROM weather_records), pg_total_relation_size('weather_records'), (SELECT count(*) FROM weather_records) + (SELECT count(*) FROM forecast_anchor_records) + (SELECT count(*) FROM rain_adjustment_runs) + (SELECT count(*) FROM ecmwf_temperature_canary_runs), pg_relation_size('weather_records') + pg_relation_size('forecast_anchor_records') + pg_relation_size('rain_adjustment_runs') + pg_relation_size('ecmwf_temperature_canary_runs'), COALESCE((SELECT max(pg_relation_size(indexrelid)) FROM pg_index JOIN pg_class ON pg_class.oid = pg_index.indrelid WHERE pg_class.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)), 0), pg_size_bytes(current_setting('max_wal_size'))")
+  postgres_dir=$(env_value "$source_env" WEATHER_POSTGRES_DIR)
+  [[ -d "$postgres_dir/base/$database_oid" && ! -L "$postgres_dir/base/$database_oid" ]] ||
+    die "historical v14 source file root is invalid"
+  source_database_file_count=$(find -P "$postgres_dir/base/$database_oid" -type f -printf . | wc -c)
+  read -r free_bytes _ free_inodes < <(
+    stat --file-system --format='%a %S %d' "$postgres_dir" |
+      awk '{ printf "%.0f %s %s\n", $1 * $2, $2, $3 }')
+  node --input-type=module - "$receipt_path" "$samples_path" \
+    "$source_env_sha256" "$target_env_sha256" "$system_identifier" "$database_oid" \
+    "$database_bytes" "$weather_rows" "$weather_bytes" "$live_scan_rows" \
+    "$live_scan_heap_bytes" "$largest_index_bytes" "$max_wal_bytes" \
+    "$source_database_file_count" "$free_bytes" "$free_inodes" \
+    "$(env_value "$source_env" WEATHER_SERVER_IMAGE)" \
+    "$(env_value "$source_env" WEATHER_WEB_IMAGE)" \
+    "$(env_value "$target_env" WEATHER_SERVER_IMAGE)" \
+    "$(env_value "$target_env" WEATHER_WEB_IMAGE)" "$source_history" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+const [path, samplesPath, sourceEnvSha256, targetEnvSha256, systemIdentifier, databaseOid,
+  databaseBytes, weatherRows, weatherBytes, liveScanRows, liveScanHeapBytes,
+  largestSourceIndexBytes, maxWalBytes, sourceDatabaseFileCount, freeBytes, freeInodes,
+  sourceServerImage, sourceWebImage,
+  targetServerImage, targetWebImage, sourceHistory] = process.argv.slice(2);
+const receipt = JSON.parse(readFileSync(path, "utf8"));
+const samplesBytes = readFileSync(samplesPath);
+const retained = JSON.parse(samplesBytes);
+const keys = ["appDataEqual", "architecture", "candidateAppDataSha256",
+  "candidateScanHeapBytes", "candidateScanRowCount", "capacitySampleCount",
+  "capacitySamplesReceiptSha256", "capacitySamplesSha256", "capturedAt", "cleanupConfirmed",
+  "contractVersion", "databaseBytes", "databaseOid", "durationMilliseconds",
+  "freeBytesBefore", "freeInodesBefore", "largestSourceIndexBytes",
+  "lockTimeoutMilliseconds", "maxWalBytes", "memoryLimitBytes",
+  "minimumFreeBytesObserved", "minimumFreeInodesObserved", "peakGrowthBytes",
+  "peakGrowthInodes", "peakTempBytes", "peakWalBytes", "requiredFreeBytes",
+  "requiredFreeInodes",
+  "receiptSha256", "sourceEnvSha256", "sourceLedgerSha256", "sourceRelease",
+  "sourceDatabaseFileCount", "sourceServerImage", "sourceWebImage",
+  "statementTimeoutMilliseconds",
+  "systemIdentifier", "targetEnvSha256", "targetLedgerSha256", "targetRelease",
+  "targetServerImage", "targetWebImage", "weatherRecordBytes", "weatherRecordCount"];
+const exactKeys = Object.keys(receipt).sort().join("\n") === keys.sort().join("\n");
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+const body = { ...receipt };
+delete body.receiptSha256;
+const digest = createHash("sha256").update(canonical(body)).digest("hex");
+const capturedAt = Date.parse(receipt.capturedAt);
+const age = Date.now() - capturedAt;
+const integer = (value) => Number.isSafeInteger(value) && value >= 0;
+const receiptRequiredFreeBytes = 2_030_043_136 + 4_112_384 + receipt.databaseBytes +
+  receipt.largestSourceIndexBytes + 2 * receipt.maxWalBytes + 268_435_456;
+const receiptRequiredFreeInodes = 32_768 + receipt.sourceDatabaseFileCount + 4_096;
+const liveRequiredFreeBytes = 2_030_043_136 + 4_112_384 + Number(databaseBytes) +
+  Number(largestSourceIndexBytes) + 2 * Number(maxWalBytes) + 268_435_456;
+const liveRequiredFreeInodes = 32_768 + Number(sourceDatabaseFileCount) + 4_096;
+const retainedBody = { ...retained };
+delete retainedBody.receiptSha256;
+const retainedDigest = createHash("sha256").update(canonical(retainedBody)).digest("hex");
+const retainedSamples = retained.samples;
+let retainedSeriesValid = retained.contractVersion === "historical-v14-capacity-samples/v1" &&
+  Object.keys(retained).sort().join("\n") === ["contractVersion", "receiptSha256", "samples"].sort().join("\n") &&
+  retained.receiptSha256 === retainedDigest && Array.isArray(retainedSamples) &&
+  retainedSamples.length >= 2 && retainedSamples.length <= 4_096;
+// reject a truncated, reordered or noncanonical retained sample series
+if (retainedSeriesValid) {
+  for (let index = 0; index < retainedSamples.length; index += 1) {
+    const sample = retainedSamples[index];
+    if (Object.keys(sample).sort().join("\n") !==
+      ["capturedAtMilliseconds", "freeBytes", "freeInodes", "sequence", "tempBytes"].sort().join("\n") ||
+      sample.sequence !== index || !integer(sample.capturedAtMilliseconds) ||
+      !integer(sample.freeBytes) || !integer(sample.freeInodes) || !integer(sample.tempBytes) ||
+      (index > 0 && sample.capturedAtMilliseconds < retainedSamples[index - 1].capturedAtMilliseconds)) {
+      retainedSeriesValid = false;
+      break;
+    }
+  }
+}
+const retainedMinimumBytes = retainedSeriesValid
+  ? Math.min(...retainedSamples.map((sample) => sample.freeBytes)) : -1;
+const retainedMinimumInodes = retainedSeriesValid
+  ? Math.min(...retainedSamples.map((sample) => sample.freeInodes)) : -1;
+const retainedPeakTemp = retainedSeriesValid
+  ? Math.max(...retainedSamples.map((sample) => sample.tempBytes)) : -1;
+const liveRows = BigInt(liveScanRows);
+const liveHeapBytes = BigInt(liveScanHeapBytes);
+const candidateRows = BigInt(receipt.candidateScanRowCount ?? 0);
+const candidateHeapBytes = BigInt(receipt.candidateScanHeapBytes ?? 0);
+const duration = BigInt(receipt.durationMilliseconds ?? 0);
+if (!exactKeys || receipt.contractVersion !== "historical-v14-18-21-rehearsal/v1" ||
+  receipt.sourceRelease !== "2026.10.09-2" || receipt.targetRelease !== "2026.10.09-3" ||
+  receipt.sourceEnvSha256 !== sourceEnvSha256 || receipt.targetEnvSha256 !== targetEnvSha256 ||
+  receipt.systemIdentifier !== systemIdentifier || receipt.databaseOid !== Number(databaseOid) ||
+  !integer(receipt.databaseBytes) || !integer(receipt.weatherRecordCount) ||
+  !integer(receipt.weatherRecordBytes) || !integer(receipt.largestSourceIndexBytes) ||
+  !integer(receipt.maxWalBytes) || !integer(receipt.sourceDatabaseFileCount) ||
+  receipt.requiredFreeBytes !== receiptRequiredFreeBytes ||
+  receipt.requiredFreeInodes !== receiptRequiredFreeInodes ||
+  !/^[a-f0-9]{64}$/u.test(receipt.candidateAppDataSha256) ||
+  !integer(receipt.candidateScanRowCount) || receipt.candidateScanRowCount < 1 ||
+  !integer(receipt.candidateScanHeapBytes) || receipt.candidateScanHeapBytes < 1 ||
+  !retainedSeriesValid || receipt.capacitySampleCount !== retainedSamples.length ||
+  receipt.capacitySamplesReceiptSha256 !== retained.receiptSha256 ||
+  receipt.capacitySamplesSha256 !== createHash("sha256").update(samplesBytes).digest("hex") ||
+  receipt.minimumFreeBytesObserved !== retainedMinimumBytes ||
+  receipt.minimumFreeInodesObserved !== retainedMinimumInodes ||
+  receipt.peakTempBytes !== retainedPeakTemp ||
+  receipt.freeBytesBefore !== retainedSamples[0]?.freeBytes ||
+  receipt.freeInodesBefore !== retainedSamples[0]?.freeInodes ||
+  receipt.peakGrowthBytes !== receipt.freeBytesBefore - retainedMinimumBytes ||
+  receipt.peakGrowthInodes !== receipt.freeInodesBefore - retainedMinimumInodes ||
+  receipt.sourceServerImage !== sourceServerImage || receipt.sourceWebImage !== sourceWebImage ||
+  receipt.targetServerImage !== targetServerImage || receipt.targetWebImage !== targetWebImage ||
+  receipt.sourceLedgerSha256 !== sourceHistory ||
+  sourceHistory !== "e4a73765078fba8235bf94753c799c209d59f737dde6f38d1a1a458e3164a82e" ||
+  receipt.targetLedgerSha256 !== "adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93" ||
+  receipt.architecture !== "aarch64" || receipt.memoryLimitBytes !== 512 * 1024 * 1024 ||
+  receipt.statementTimeoutMilliseconds !== 300000 || receipt.lockTimeoutMilliseconds !== 10000 ||
+  !integer(receipt.durationMilliseconds) || receipt.durationMilliseconds < 1 ||
+  receipt.durationMilliseconds > 150000 || candidateRows < 1n || candidateHeapBytes < 1n ||
+  duration * liveRows > 150000n * candidateRows ||
+  duration * liveHeapBytes > 150000n * candidateHeapBytes ||
+  !integer(receipt.peakGrowthBytes) || !integer(receipt.peakGrowthInodes) ||
+  !integer(receipt.peakTempBytes) || receipt.peakTempBytes > 268_435_456 ||
+  !integer(receipt.peakWalBytes) || receipt.peakWalBytes > 2 * receipt.maxWalBytes ||
+  !integer(receipt.freeBytesBefore) || receipt.freeBytesBefore < receiptRequiredFreeBytes ||
+  !integer(receipt.freeInodesBefore) || receipt.freeInodesBefore < receiptRequiredFreeInodes ||
+  Number(freeBytes) < liveRequiredFreeBytes || Number(freeInodes) < liveRequiredFreeInodes ||
+  !integer(receipt.minimumFreeBytesObserved) || !integer(receipt.minimumFreeInodesObserved) ||
+  receipt.minimumFreeBytesObserved < 2_034_155_520 ||
+  receipt.minimumFreeInodesObserved < 32_768 ||
+  receipt.appDataEqual !== true || receipt.cleanupConfirmed !== true ||
+  !Number.isFinite(capturedAt) || age < -30_000 || age > 3_600_000 ||
+  receipt.receiptSha256 !== digest) {
+  throw new Error("historical v14 rehearsal receipt differs from the live handoff");
+}
+NODE
 }
 
 # apply one source-preserving direct release without deployment-time backup
@@ -4221,10 +6748,12 @@ inert_v14_release() (
   local actual_history expected_history v14_source_history restored_history schema_after_restore key
   local v14_starting_schema
   local git_proof target_commit catalog_sha256 settings_sha256 settings_inode
+  local api_writer_id worker_writer_id
   local previous_before=
   local previous_existed=false
   local active_mutation_started=false
   local completed=false
+  # shellcheck disable=SC2030
   current=$(read_optional_release_state "$state_dir/current-release")
 
   # restore the exact retained source after every active-database mutation failure
@@ -4370,16 +6899,38 @@ process.stdout.write(proof.targetCommit);
   [[ "$v14_source_history" =~ ^[a-f0-9]{64}$ ]] ||
     die "fixed v14 source migration ledger is invalid"
 
+  # require the measured full-size atomic proof before the last reversible boundary
+  require_historical_v14_rehearsal_receipt "$source_env" "$target" ||
+    die "full-size historical v14 rehearsal receipt is absent or stale"
+
   # remeasure fresh resources and literal images at the last reversible boundary
-  require_v13_resource_gate || die "fixed v14 resource gate failed before activation"
+  require_normal_release_resource_gate ||
+    die "fixed v14 resource gate failed before activation"
   require_literal_full_v14_release_capacity "$source_env" "$target" ||
     die "full v14 literal capacity failed before activation"
 
+  # bind both supported writers before crossing the reversible stop boundary
+  api_writer_id=$(capture_supported_writer_container "$v14_current_env" api)
+  worker_writer_id=$(capture_supported_writer_container "$v14_current_env" worker)
+
   printf 'Applying release %s directly...\n' "$release"
   active_mutation_started=true
+  stop_supported_writer_container "$v14_current_env" api "$api_writer_id" ||
+    die "fixed v14 API writer quiescence failed"
+  stop_supported_writer_container "$v14_current_env" worker "$worker_writer_id" ||
+    die "fixed v14 worker quiescence failed"
+  require_supported_writers_quiesced "$v14_current_env"
+  # remeasure the prospective workload only after every supported writer is stopped
+  require_historical_v14_rehearsal_receipt "$source_env" "$target" ||
+    die "full-size historical v14 envelope changed after writer quiescence"
   start_postgres "$target" || die "fixed v14 PostgreSQL restart failed"
+  require_supported_writers_quiesced "$target"
+  require_historical_v14_rehearsal_receipt "$source_env" "$target" ||
+    die "full-size historical v14 envelope changed after PostgreSQL restart"
   # keep the exact maintenance tail atomic for source-safe failure recovery
-  WEATHER_ENV_FILE=$target compose run --rm migration \
+  WEATHER_ENV_FILE=$target compose run --rm \
+    --env WEATHER_DATABASE_STATEMENT_TIMEOUT_MS=300000 \
+    --env WEATHER_DATABASE_LOCK_TIMEOUT_MS=10000 migration \
     node deploy/scripts/migrate.mjs --atomic-maintenance-v14 ||
     die "fixed v14 active migration failed"
   actual_history=$(migration_history_sha256 \
@@ -4428,69 +6979,146 @@ process.stdout.write(proof.targetCommit);
 # activate one forward release
 start_release() (
   local target=$1
-  local activation_env current current_env backup_env authorization_path schema_release
-  local initial_started=false
+  local activation_env current current_env authorization_path schema_release stage_receipt
+  local pre_capacity_input pre_capacity_receipt post_capacity_input post_capacity_receipt
+  local backup_output backup_archive backup_bytes backup_ceiling
+  local backup_checksum
+  local migration_container_name migration_container_id migration_status actual_history
+  local target_history=3f9a9dbccbd89c39b9f06c4a82dcdfdb535e3b6e7477ca02859774a17fc2dc51
+  local active_mutation_started=false
+  local completed=false
 
-  # clean a partially started first activation
+  # remove only invocation-owned activation evidence
   # shellcheck disable=SC2317,SC2329
-  cleanup_initial_activation() {
+  cleanup_normal_activation() {
     local status=$?
-
-    # stop only this Weather project
-    if [[ "$initial_started" == true ]]; then
-      WEATHER_ENV_FILE=$activation_env compose down --remove-orphans >/dev/null 2>&1 || status=1
-    fi
-
+    local recovery_status=0
     trap - EXIT
+    set +e
+    rm -f -- "$pre_capacity_input" "$pre_capacity_receipt" \
+      "$post_capacity_input" "$post_capacity_receipt"
+    # classify only after the exact migration process can no longer commit
+    if [[ "$completed" != true && "$active_mutation_started" == true ]]; then
+      quiesce_normal_activation_migration "$activation_env" || recovery_status=1
+      # shellcheck disable=SC2031
+      start_postgres "$current_env" || recovery_status=1
+      if [[ "$recovery_status" == 0 ]]; then
+        # shellcheck disable=SC2031
+        restore_normal_activation_after_quiescence \
+          "$current_env" "$current" "$current" "$target" || recovery_status=1
+      else
+        recovery_status=1
+      fi
+      # remove authority only after exact-ledger restoration completes
+      if [[ "$recovery_status" == 0 ]]; then
+        rm -f -- "$normal_activation_journal" || recovery_status=1
+        sync -f "$state_dir" || recovery_status=1
+      fi
+      if ((recovery_status != 0)); then
+        printf 'Normal activation and exact-ledger restoration both failed.\n' >&2
+        exit 1
+      fi
+    fi
     exit "$status"
   }
   activation_env=$(release_env "$target")
   validate_release_env "$activation_env" "$target"
   require_control_plane_compatibility "$activation_env"
-  current=$(read_optional_release_state "$state_dir/current-release")
-  schema_release=$(read_optional_release_state "$state_dir/schema-release")
-
-  # default legacy state to the active release
-  if [[ -n "$current" && -z "$schema_release" ]]; then
-    schema_release=$current
-  fi
-
-  # reject stale retained targets
-  if [[ "$current" != "$schema_release" && "$target" != "$schema_release" ]]; then
-    die "cannot activate release $target while runtime release ${current:-unrecorded} differs from retained schema release $schema_release"
-  fi
-
-  require_capacity_gate
+  current=$(read_release_state "$state_dir/current-release")
+  schema_release=$(read_release_state "$state_dir/schema-release")
+  [[ "$current" == "$schema_release" && "$current" != "$target" ]] ||
+    die "normal activation requires one exact forward staged release"
+  current_env=$(normal_release_source_env)
+  require_control_plane_compatibility "$current_env"
+  stage_receipt="$releases_dir/$target.normal-stage-receipt.json"
+  read_normal_stage_qualification "$current_env" "$activation_env" "$stage_receipt" >/dev/null
+  authorization_path=$(migration_authorization "$target")
+  validate_migration_authorization "$authorization_path" "$current" "$target"
+  [[ ! -e "$normal_activation_journal" && ! -L "$normal_activation_journal" ]] ||
+    die "normal activation recovery journal exists; run recover first"
+  require_normal_release_resource_gate
   require_deployment_secrets
 
-  # establish the database used for the safety backup
-  if [[ -n "$current" ]]; then
-    current_env=$(release_env "$current")
-    validate_release_env "$current_env" "$current"
-    require_control_plane_compatibility "$current_env"
-    backup_env=$current_env
+  pre_capacity_input=$(mktemp "$releases_dir/.${target}.XXXXXX.activation-pre-input")
+  pre_capacity_receipt=$(mktemp "$releases_dir/.${target}.XXXXXX.activation-pre-receipt")
+  post_capacity_input=$(mktemp "$releases_dir/.${target}.XXXXXX.activation-post-input")
+  post_capacity_receipt=$(mktemp "$releases_dir/.${target}.XXXXXX.activation-post-receipt")
+  chmod 600 "$pre_capacity_input" "$pre_capacity_receipt" \
+    "$post_capacity_input" "$post_capacity_receipt"
+  trap cleanup_normal_activation EXIT
 
-    # require rollback proof before migration
-    if [[ "$current" != "$target" ]]; then
-      authorization_path=$(migration_authorization "$target")
-      validate_migration_authorization "$authorization_path" "$current" "$target"
-    fi
-  else
-    backup_env=$activation_env
-    initial_started=true
-  fi
-
-  trap cleanup_initial_activation EXIT
-  start_postgres "$backup_env"
+  # recreate only PostgreSQL before measuring the exact backup boundary
+  start_postgres "$current_env"
+  require_normal_activation_capacity "$current_env" "$activation_env" "$stage_receipt" \
+    pre_backup 0 "$pre_capacity_input" "$pre_capacity_receipt"
+  backup_ceiling=$(node --input-type=module - "$pre_capacity_input" <<'NODE'
+import { readFileSync } from "node:fs";
+const input = JSON.parse(readFileSync(process.argv[2], "utf8"));
+if (!Number.isSafeInteger(input.boundedBackupCeilingBytes) ||
+  input.boundedBackupCeilingBytes < 1) throw new Error("backup ceiling is invalid");
+process.stdout.write(String(input.boundedBackupCeilingBytes));
+NODE
+  )
 
   printf 'Creating pre-migration encrypted backup...\n'
-  "$deploy_dir/scripts/backup.sh" --env-file "$backup_env" ||
-    die "pre-migration backup failed"
+  backup_output=$("$deploy_dir/scripts/backup.sh" --env-file "$current_env" \
+    --max-output-bytes "$backup_ceiling") || die "pre-migration backup failed"
+  printf '%s\n' "$backup_output"
+  backup_archive=$(sed -n 's/^Backup complete: //p' <<<"$backup_output")
+  backup_checksum=$(sed -n 's/^Checksum: //p' <<<"$backup_output")
+  [[ -n "$backup_archive" && "$(grep -c '^Backup complete: ' <<<"$backup_output")" == 1 ]] ||
+    die "bounded backup did not report one archive"
+  [[ -n "$backup_checksum" && "$(grep -c '^Checksum: ' <<<"$backup_output")" == 1 &&
+    "$backup_checksum" == "$backup_archive.sha256" ]] ||
+    die "bounded backup did not report its adjacent checksum"
+  require_canonical_descendant "$backup_archive" /var/lib/weather/backups \
+    "bounded activation backup"
+  require_canonical_descendant "$backup_checksum" /var/lib/weather/backups \
+    "bounded activation backup checksum"
+  [[ -f "$backup_archive" && ! -L "$backup_archive" ]] ||
+    die "bounded activation backup is missing or linked"
+  [[ -f "$backup_checksum" && ! -L "$backup_checksum" ]] ||
+    die "bounded activation backup checksum is missing or linked"
+  (cd /var/lib/weather/backups && sha256sum --check --status \
+    "$(basename "$backup_checksum")") || die "bounded activation backup checksum differs"
+  backup_bytes=$(stat -c '%s' "$backup_archive")
+  require_normal_activation_capacity "$current_env" "$activation_env" "$stage_receipt" \
+    post_backup "$backup_bytes" "$post_capacity_input" "$post_capacity_receipt"
+  require_normal_activation_capacity_pair "$pre_capacity_receipt" \
+    "$post_capacity_receipt" "$backup_archive" "$backup_checksum"
+
+  # recheck every source and receipt binding at the irreversible schema boundary
+  [[ "$(normal_release_source_env)" == "$current_env" ]] ||
+    die "normal activation source changed after backup"
+  validate_migration_authorization "$authorization_path" "$current" "$target"
+  read_normal_stage_qualification "$current_env" "$activation_env" "$stage_receipt" >/dev/null
+  require_normal_release_resource_gate
 
   # record schema intent before the first migration
+  migration_container_name="weather_normal_migration_${target//./_}_$$"
+  write_normal_activation_journal "$current" "$target" \
+    "$migration_container_name" absent prepared
+  active_mutation_started=true
   write_private_state "$state_dir/schema-release" "$target"
   printf 'Applying candidate migrations...\n'
-  WEATHER_ENV_FILE=$activation_env compose run --rm migration
+  migration_container_id=$(WEATHER_ENV_FILE=$activation_env compose run --detach \
+    --name "$migration_container_name" --no-deps migration)
+  [[ "$migration_container_id" =~ ^[a-f0-9]{64}$ ]] ||
+    die "normal activation migration container identity is invalid"
+  write_normal_activation_journal "$current" "$target" \
+    "$migration_container_name" "$migration_container_id" running
+  migration_status=$(docker container wait "$migration_container_id") ||
+    die "normal activation migration wait failed"
+  if [[ "$migration_status" != 0 ]]; then
+    docker container logs "$migration_container_id" >&2 || true
+    die "normal activation migration failed"
+  fi
+  quiesce_normal_activation_migration "$activation_env" ||
+    die "normal activation migration cleanup failed"
+  actual_history=$(migration_history_sha256 \
+    "$activation_env" "$(env_value "$activation_env" WEATHER_DATABASE_NAME)")
+  [[ "$actual_history" == "$target_history" ]] ||
+    die "normal activation migration ledger differs"
   apply_runtime_database_acl \
     "$activation_env" "$(env_value "$activation_env" WEATHER_DATABASE_NAME)"
   verify_runtime_database_acl \
@@ -4498,20 +7126,16 @@ start_release() (
 
   printf 'Starting release %s...\n' "$target"
   if ! start_exact_release "$activation_env"; then
-    # restore only the prior exact image configuration
-    if [[ -n "$current" && "$current" != "$target" ]]; then
-      printf 'Activation failed; restoring Weather release %s...\n' "$current" >&2
-      authorization_path=$(migration_authorization "$target")
-      validate_migration_authorization "$authorization_path" "$current" "$target"
-      restore_images "$current_env" "$current" "$target" ||
-        die "activation and Weather image rollback both failed"
-    fi
     die "release $target failed health checks"
   fi
 
   # record success only after every health gate
   record_release_success "$target" "$current"
-  initial_started=false
+  completed=true
+  rm -f -- "$normal_activation_journal"
+  sync -f "$state_dir"
+  rm -f -- "$pre_capacity_input" "$pre_capacity_receipt" \
+    "$post_capacity_input" "$post_capacity_receipt"
   trap - EXIT
   printf 'Release %s is active.\n' "$target"
 )
@@ -4673,6 +7297,29 @@ case "$action" in
     require_command node
     v14_compatibility_bridge_release "$1"
     ;;
+  historical-v14-18-21-rehearsal)
+    (($# == 1)) || die "historical-v14-18-21-rehearsal requires one immutable release"
+    [[ "$1" == "$full_v14_release" ]] ||
+      die "historical-v14-18-21-rehearsal release differs"
+    acquire_release_transaction_lock
+    require_no_dashboard_override
+    require_adjustment_family_fixed_roots
+    require_command docker
+    require_command node
+    current=$(read_release_state "$state_dir/current-release")
+    schema=$(read_release_state "$state_dir/schema-release")
+    [[ "$current" == "$v14_compatibility_bridge_release" &&
+      "$schema" == "$v14_compatibility_bridge_release" ]] ||
+      die "historical rehearsal requires the exact committed schema-18 bridge"
+    source_env=$(release_env "$current")
+    require_v14_full_source_authority "$source_env"
+    require_deployment_secrets
+    node "$deploy_dir/scripts/adjustment-evaluation-package.mjs" \
+      verify-full-v14-release "$1" >/dev/null ||
+      die "historical rehearsal exact-commit CI proof failed"
+    target=$(prepare_inert_v14_release "$1" "$source_env")
+    historical_v14_18_21_rehearsal "$source_env" "$target"
+    ;;
   inert-v14)
     (($# == 1)) || die "inert-v14 requires one immutable release"
     validate_release "$1"
@@ -4686,59 +7333,29 @@ case "$action" in
     inert_v14_release "$1" "$source_env"
     ;;
   yolo)
-    (($# >= 1)) || die "yolo requires a release"
-    release=$1
-    shift
-    validate_release "$release"
-    acquire_release_transaction_lock
-    require_no_dashboard_override
-    source_env=$(retained_maintenance_source_env)
-
-    # accept one explicit source environment
-    if (($# > 0)); then
-      [[ "$1" == --from && $# -eq 2 ]] || die "expected --from ENV_FILE"
-      source_env=$2
-    fi
-
-    require_retained_maintenance_source "$source_env"
-    require_file "$source_env"
-    require_command docker
-    require_command node
-    yolo_release "$release" "$source_env"
+    die "yolo is closed; use the staged normal release path"
     ;;
   stage)
-    (($# >= 1)) || die "stage requires a release"
+    (($# == 1)) || die "stage requires exactly one release"
     release=$1
-    shift
     validate_release "$release"
     acquire_release_transaction_lock
     require_no_dashboard_override
-    source_env=$(retained_maintenance_source_env)
-
-    # accept one explicit source environment
-    if (($# > 0)); then
-      [[ "$1" == --from && $# -eq 2 ]] || die "expected --from ENV_FILE"
-      source_env=$2
-    fi
-
-    require_retained_maintenance_source "$source_env"
+    source_env=$(normal_release_source_env)
     require_file "$source_env"
     require_command docker
     require_command node
-    current=$(read_optional_release_state "$state_dir/current-release")
-
-    # gate the active control plane before any stage work
-    if [[ -n "$current" ]]; then
-      previous_env=$(release_env "$current")
-      validate_release_env "$previous_env" "$current"
-      require_control_plane_compatibility "$previous_env"
-    fi
-
-    require_capacity_gate
+    current=$(read_release_state "$state_dir/current-release")
+    previous_env=$source_env
+    require_normal_release_resource_gate
     mkdir -p "$releases_dir"
     target=$(release_env "$release")
     authorization=$(migration_authorization "$release")
-    [[ ! -e "$target" && ! -L "$target" && ! -e "$authorization" && ! -L "$authorization" ]] ||
+    stage_receipt="$releases_dir/$release.normal-stage-receipt.json"
+    stage_samples="$releases_dir/$release.normal-stage-samples.json"
+    [[ ! -e "$target" && ! -L "$target" && ! -e "$authorization" &&
+      ! -L "$authorization" && ! -e "$stage_receipt" && ! -L "$stage_receipt" &&
+      ! -e "$stage_samples" && ! -L "$stage_samples" ]] ||
       die "release is already staged: $release"
     server_source="$(image_repository "$(env_value "$source_env" WEATHER_SERVER_IMAGE)"):$release"
     web_source="$(image_repository "$(env_value "$source_env" WEATHER_WEB_IMAGE)"):$release"
@@ -4749,9 +7366,19 @@ case "$action" in
     temporary=$(mktemp "$releases_dir/.${release}.XXXXXX.env.partial")
     temporary_authorization=
     published_authorization=
+    pre_capacity_input=$(mktemp "$releases_dir/.${release}.XXXXXX.pre-capacity-input")
+    pre_capacity_receipt=$(mktemp "$releases_dir/.${release}.XXXXXX.pre-capacity-receipt")
+    post_capacity_input=$(mktemp "$releases_dir/.${release}.XXXXXX.post-capacity-input")
+    post_capacity_receipt=$(mktemp "$releases_dir/.${release}.XXXXXX.post-capacity-receipt")
+    migration_peak=$(mktemp "$releases_dir/.${release}.XXXXXX.migration-peak")
+    temporary_stage_receipt=$(mktemp "$releases_dir/.${release}.XXXXXX.stage-receipt.partial")
+    published_stage_receipt=
+    published_stage_samples=
+    chmod 600 "$pre_capacity_input" "$pre_capacity_receipt" "$post_capacity_input" \
+      "$post_capacity_receipt" "$migration_peak" "$temporary_stage_receipt"
 
     # remove failed stage state
-    trap 'rm -f "$temporary" ${temporary_authorization:+"$temporary_authorization"} ${published_authorization:+"$published_authorization"}' EXIT
+    trap 'rm -f "$temporary" "$pre_capacity_input" "$pre_capacity_receipt" "$post_capacity_input" "$post_capacity_receipt" "$migration_peak" "$temporary_stage_receipt" ${temporary_authorization:+"$temporary_authorization"} ${published_authorization:+"$published_authorization"} ${published_stage_receipt:+"$published_stage_receipt"} ${published_stage_samples:+"$published_stage_samples"}' EXIT
     write_release_env "$source_env" "$temporary" "$release" \
       "$server_image" "$web_image" "$postgres_image" "$cloudflared_image"
     WEATHER_ENV_FILE=$temporary compose config --quiet
@@ -4763,20 +7390,21 @@ case "$action" in
       validate_image_reference "$image"
     done
 
+    require_normal_stage_capacity "$source_env" "$temporary" pre_pull \
+      "$pre_capacity_input" "$pre_capacity_receipt"
     cleanup_obsolete_weather_images "$source_env" "$temporary"
     require_image_pull_capacity_floor
     WEATHER_ENV_FILE=$temporary compose pull
+    require_normal_stage_capacity "$source_env" "$temporary" post_pull \
+      "$post_capacity_input" "$post_capacity_receipt"
 
-    # require previous-image compatibility for upgrades
-    if [[ -n "$current" ]]; then
-      require_deployment_secrets
-      temporary_authorization=$(mktemp \
-        "$releases_dir/.${release}.XXXXXX.migration-authorization.partial")
-      verify_previous_image_compatibility \
-        "$temporary" "$previous_env" "$temporary_authorization"
-    else
-      printf 'Initial release: previous-image compatibility is not applicable.\n'
-    fi
+    # require the exact full-copy schema-21 to schema-22 compatibility proof
+    require_deployment_secrets
+    temporary_authorization=$(mktemp \
+      "$releases_dir/.${release}.XXXXXX.migration-authorization.partial")
+    verify_previous_image_compatibility \
+      "$temporary" "$previous_env" "$temporary_authorization" normal-21-22 \
+      "$migration_peak"
 
     # publish authorization before the release commit marker
     if [[ -n "$temporary_authorization" ]]; then
@@ -4785,13 +7413,38 @@ case "$action" in
       temporary_authorization=
     fi
 
+    # publish the retained sample series before its cleanup-confirmed qualification
+    ln "$migration_peak" "$stage_samples" ||
+      die "normal stage capacity samples already exist or could not be published"
+    sync -f "$stage_samples" "$releases_dir"
+    published_stage_samples=$stage_samples
+
+    # seal and publish the cleanup-confirmed stage qualification
+    [[ "$(normal_release_source_env)" == "$source_env" ]] ||
+      die "normal stage source changed during compatibility rehearsal"
+    write_normal_stage_qualification_receipt "$source_env" "$temporary" \
+      "$pre_capacity_receipt" "$post_capacity_receipt" "$migration_peak" \
+      "$temporary_stage_receipt"
+    read_normal_stage_qualification \
+      "$source_env" "$temporary" "$temporary_stage_receipt" >/dev/null
+    ln "$temporary_stage_receipt" "$stage_receipt" ||
+      die "normal stage receipt already exists or could not be published"
+    sync -f "$stage_receipt" "$releases_dir"
+    published_stage_receipt=$stage_receipt
+    rm -f -- "$temporary_stage_receipt"
+    temporary_stage_receipt=
+
     # clean failed release publication
     if ! mv "$temporary" "$target"; then
       # remove orphaned authorization
-      rm -f "$authorization"
+      rm -f "$authorization" "$stage_receipt" "$stage_samples"
       exit 1
     fi
     published_authorization=
+    published_stage_receipt=
+    published_stage_samples=
+    rm -f "$pre_capacity_input" "$pre_capacity_receipt" "$post_capacity_input" \
+      "$post_capacity_receipt" "$migration_peak"
     trap - EXIT
     printf 'Release %s staged without changing running services or the active database.\n' "$release"
     ;;
@@ -4834,6 +7487,43 @@ case "$action" in
     fi
     current=$(read_release_state "$state_dir/current-release")
     schema_release=$(read_optional_release_state "$state_dir/schema-release")
+    # close an interrupted normal migration before any ledger classification
+    if [[ -e "$normal_activation_journal" || -L "$normal_activation_journal" ]]; then
+      [[ "$dashboard_recovery" == false ]] ||
+        die "dashboard and normal activation recovery authorities cannot coexist"
+      read -r journal_source journal_target _ _ _ < <(read_normal_activation_journal)
+      [[ ( "$current" == "$journal_source" || "$current" == "$journal_target" ) &&
+        ( "$schema_release" == "$journal_source" || "$schema_release" == "$journal_target" ) ]] ||
+        die "normal activation recovery markers differ from its journal"
+      journal_source_env=$(release_env "$journal_source")
+      journal_target_env=$(release_env "$journal_target")
+      validate_release_env "$journal_source_env" "$journal_source"
+      validate_release_env "$journal_target_env" "$journal_target"
+      require_control_plane_compatibility "$journal_source_env"
+      require_control_plane_compatibility "$journal_target_env"
+      require_deployment_secrets
+      quiesce_normal_activation_migration "$journal_target_env" ||
+        die "interrupted normal migration could not be quiesced"
+      current_env=$(release_env "$current")
+      start_postgres "$current_env" || die "normal recovery PostgreSQL restart failed"
+      restore_normal_activation_after_quiescence \
+        "$current_env" "$current" "$journal_source" "$journal_target" ||
+        die "normal activation recovery ledger is neither exact source nor target"
+      write_active_symlink "$current"
+      rm -f -- "$normal_activation_journal"
+      sync -f "$state_dir"
+      return
+    fi
+    # prefer exact normal-stage authority over the retained historical bridge receipt
+    if [[ -n "$schema_release" &&
+      ( -e "$releases_dir/$schema_release.normal-stage-receipt.json" ||
+        -L "$releases_dir/$schema_release.normal-stage-receipt.json" ) ]]; then
+      [[ "$dashboard_recovery" == false ]] ||
+        die "dashboard and normal release recovery authorities cannot coexist"
+      require_deployment_secrets
+      recover_committed_normal_release "$current" "$schema_release"
+      return
+    fi
     v14_bridge_runtime_recovery=false
     v14_schema_marker_repair=false
     # classify the retained bridge receipt against exact runtime and schema markers

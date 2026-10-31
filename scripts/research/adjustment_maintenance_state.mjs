@@ -91,14 +91,8 @@ const FAMILY_RELEASE_REQUEST_KEYS = [
   "reportSha256", "targetRelease",
 ];
 const FORBIDDEN_VALUE_KEYS = /(?:^|_)(?:body|bytes|payload|row|rows|value|values)(?:$|_)/iu;
-const ADJUSTMENT_REVISION_FRONTIER_MIGRATION_HISTORY_SHA256 =
-  "c683c4f937c7f02b00f6ab49f75268eead81d2a221a8a9a23e38f9e4802a11b0";
 const ADJUSTMENT_ROLLING_MIGRATION_HISTORY_SHA256 =
   "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424";
-const ADJUSTMENT_CAPTURE_EPOCH_MIGRATION_HISTORY_SHA256S = new Set([
-  ADJUSTMENT_REVISION_FRONTIER_MIGRATION_HISTORY_SHA256,
-  ADJUSTMENT_ROLLING_MIGRATION_HISTORY_SHA256,
-]);
 
 // create the fixed-root journal or an injected test journal
 export function createMaintenanceJournal(options = {}) {
@@ -2896,9 +2890,7 @@ export function validateAdjustmentFutureOnlyEpochWitness(value) {
     value.archiveCommitOrdinal !== "0" ||
     value.catalogFrontierSha256 !== genesisFrontierSha256 ||
     value.controlPlaneVersion !== "14" ||
-    !ADJUSTMENT_CAPTURE_EPOCH_MIGRATION_HISTORY_SHA256S.has(
-      value.databaseMigrationHistorySha256,
-    ) ||
+    value.databaseMigrationHistorySha256 !== ADJUSTMENT_ROLLING_MIGRATION_HISTORY_SHA256 ||
     typeof value.sourceRelease !== "string" ||
     !/^\d{4}\.\d{2}\.\d{2}-[1-9]\d{0,2}$/u.test(value.sourceRelease) ||
     typeof value.sourceServerImageDigest !== "string" ||

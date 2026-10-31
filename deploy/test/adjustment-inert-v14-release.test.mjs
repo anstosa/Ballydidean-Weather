@@ -95,7 +95,7 @@ migration_history_sha256() {
 }
 # meter both pre- and post-start gates
 require_image_pull_capacity_floor() { image_calls=$((image_calls + 1)); [[ "$image_calls" != 2 ]] || checkpoint image-post; }
-require_v13_resource_gate() { resource_calls=$((resource_calls + 1)); [[ "$resource_calls" != 2 ]] || checkpoint resource-post; }
+require_normal_release_resource_gate() { resource_calls=$((resource_calls + 1)); [[ "$resource_calls" != 2 ]] || checkpoint resource-post; }
 require_literal_inert_v14_release_capacity() { capacity_calls=$((capacity_calls + 1)); [[ "$capacity_calls" != 2 ]] || checkpoint capacity-post; }
 # persist only a visible deterministic intent marker
 publish_v14_compatibility_bridge_state() { checkpoint publish; printf 'intent\\n' >"$v14_compatibility_bridge_state"; }
@@ -180,7 +180,7 @@ test("compatibility bridge and full source gates remain disjoint", async () => {
     "v14-source-test", update, target, source], { encoding: "utf8" });
   try {
     await writeEnvironment(source, sourceValues);
-    await writeEnvironment(target, { WEATHER_RELEASE: "2026.10.09-2", WEATHER_CONTROL_PLANE_VERSION: "14" });
+    await writeEnvironment(target, { WEATHER_RELEASE: "2026.10.09-2", WEATHER_CONTROL_PLANE_VERSION: "15" });
     assert.equal(verify().status, 0);
     // every independently pinned predecessor field rejects drift
     for (const [key, value] of Object.entries(sourceValues)) {
@@ -188,7 +188,7 @@ test("compatibility bridge and full source gates remain disjoint", async () => {
       assert.notEqual(verify().status, 0, key);
     }
     await writeEnvironment(source, sourceValues);
-    await writeEnvironment(target, { WEATHER_RELEASE: "2026.10.09-1", WEATHER_CONTROL_PLANE_VERSION: "14" });
+    await writeEnvironment(target, { WEATHER_RELEASE: "2026.10.09-1", WEATHER_CONTROL_PLANE_VERSION: "15" });
     assert.notEqual(verify().status, 0);
     await writeEnvironment(target, { WEATHER_RELEASE: "2026.10.09-2", WEATHER_CONTROL_PLANE_VERSION: "13" });
     assert.notEqual(verify().status, 0);
@@ -197,12 +197,12 @@ test("compatibility bridge and full source gates remain disjoint", async () => {
     const control = "3".repeat(64);
     await writeEnvironment(source, {
       WEATHER_CONTROL_PLANE_SHA256: control,
-      WEATHER_CONTROL_PLANE_VERSION: "14",
+      WEATHER_CONTROL_PLANE_VERSION: "15",
       WEATHER_RELEASE: "2026.10.09-2",
       WEATHER_SERVER_IMAGE: bridgeServer,
       WEATHER_WEB_IMAGE: bridgeWeb,
     });
-    await writeEnvironment(target, { WEATHER_RELEASE: "2026.10.09-3", WEATHER_CONTROL_PLANE_VERSION: "14" });
+    await writeEnvironment(target, { WEATHER_RELEASE: "2026.10.09-3", WEATHER_CONTROL_PLANE_VERSION: "15" });
     const full = spawnSync("bash", ["-c", `source "$1"
 full_v14_source_server_image=$4
 full_v14_source_web_image=$5
@@ -273,7 +273,7 @@ test("compatibility bridge uses no catalog or epoch bind mount", async () => {
     CLOUDFLARED_IMAGE: `cloudflare/cloudflared@sha256:${"1".repeat(64)}`,
     POSTGRES_IMAGE: `postgres@sha256:${"2".repeat(64)}`,
     WEATHER_CONTROL_PLANE_SHA256: "3".repeat(64),
-    WEATHER_CONTROL_PLANE_VERSION: "14",
+    WEATHER_CONTROL_PLANE_VERSION: "15",
     WEATHER_DATABASE_NAME: "weather",
     WEATHER_FORECAST_ADJUSTMENT_TEMPERATURE_CANARY_KILL_SWITCH: "1",
     WEATHER_FORECAST_ADJUSTMENT_WIND_CANARY_KILL_SWITCH: "0",
@@ -481,7 +481,7 @@ test("full v14 compensated retry restores schema 21 before succeeding", async ()
     CLOUDFLARED_IMAGE: `cloudflare/cloudflared@sha256:${"1".repeat(64)}`,
     POSTGRES_IMAGE: `postgres@sha256:${"2".repeat(64)}`,
     WEATHER_CONTROL_PLANE_SHA256: "3".repeat(64),
-    WEATHER_CONTROL_PLANE_VERSION: "14",
+    WEATHER_CONTROL_PLANE_VERSION: "15",
     WEATHER_DATABASE_NAME: "weather",
     WEATHER_FORECAST_ADJUSTMENT_TEMPERATURE_CANARY_KILL_SWITCH: "1",
     WEATHER_FORECAST_ADJUSTMENT_WIND_CANARY_KILL_SWITCH: "0",
@@ -540,8 +540,21 @@ require_deployment_secrets() { :; }
 prepare_inert_v14_release() { printf '%s/%s.env\\n' "$releases_dir" "$1"; }
 require_fixed_v14_source_identity() { :; }
 require_inert_v14_empty_catalog() { :; }
-require_v13_resource_gate() { :; }
+require_normal_release_resource_gate() { :; }
+require_historical_v14_rehearsal_receipt() { :; }
 require_literal_full_v14_release_capacity() { :; }
+capture_supported_writer_container() {
+  # provide one exact writer identity
+  printf '%064d\\n' 0
+}
+stop_supported_writer_container() {
+  # isolate writer shutdown from retry coverage
+  :
+}
+require_supported_writers_quiesced() {
+  # isolate writer absence from retry coverage
+  :
+}
 migration_history_sha256() { printf '%s\\n' "$fixture_history"; }
 start_postgres() { printf 'postgres:%s\\n' "$1" >>"$transcript"; }
 compose() { printf 'migration:%s\\n' "$*" >>"$transcript"; }
@@ -653,7 +666,7 @@ test("generic recovery repairs an authorized full ledger with source-two health"
     CLOUDFLARED_IMAGE: `cloudflare/cloudflared@sha256:${"1".repeat(64)}`,
     POSTGRES_IMAGE: `postgres@sha256:${"2".repeat(64)}`,
     WEATHER_CONTROL_PLANE_SHA256: control,
-    WEATHER_CONTROL_PLANE_VERSION: "14",
+    WEATHER_CONTROL_PLANE_VERSION: "15",
     WEATHER_DATABASE_NAME: "weather",
     WEATHER_FORECAST_ADJUSTMENT_TEMPERATURE_CANARY_KILL_SWITCH: "1",
     WEATHER_FORECAST_ADJUSTMENT_WIND_CANARY_KILL_SWITCH: "0",

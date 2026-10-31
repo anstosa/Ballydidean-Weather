@@ -171,6 +171,7 @@ const allowedApplicationCacheWitnessKeys = new Set([
   "state",
 ]);
 const allowedSupervisorConfigurationKeys = new Set([
+  "coldProofFile",
   "containers",
   "contractVersion",
   "cycles",
@@ -182,6 +183,7 @@ const allowedSupervisorConfigurationKeys = new Set([
   "runtimeAssignments",
   "runtimeId",
   "runtimeIdentities",
+  "storageIdentity",
   "tier",
 ]);
 const allowedSupervisorContainerKeys = new Set(["api", "database", "web"]);
@@ -217,11 +219,58 @@ const allowedPgdataColdProofKeys = new Set([
   "databaseContainerId",
   "databaseStartedAt",
   "fileCount",
+  "innerResidentPagesAfter",
+  "outerResidentPagesAfter",
   "proofSha256",
   "residentPagesAfter",
+  "storageIdentity",
+  "storageIdentitySha256",
   "totalPages",
   "volumeName",
 ]);
+const allowedDLoopStorageIdentityKeys = new Set([
+  "backingFile",
+  "backingFileBytes",
+  "loopDevice",
+  "loopUuid",
+  "mount",
+  "mountSource",
+  "volumeNames",
+]);
+const allowedDLoopProofKeys = new Set([
+  "completedAt",
+  "contractVersion",
+  "inner",
+  "outer",
+  "startedAt",
+  "storageIdentity",
+  "target",
+  "volumes",
+]);
+const allowedDLoopInnerKeys = new Set([
+  "completedAt",
+  "completedFiles",
+  "fadviseCompleted",
+  "fallbackUsed",
+  "mincoreCompleted",
+  "startedAt",
+  "totalPages",
+  "totalResidentAfter",
+]);
+const allowedDLoopOuterKeys = new Set([
+  ...allowedDLoopInnerKeys,
+  "backingFileBytes",
+]);
+const allowedDLoopTargetKeys = new Set([
+  "fileCount",
+  "inventoryAfterSha256",
+  "inventoryBeforeSha256",
+  "pgdataRoot",
+  "postmasterPidAbsent",
+  "totalBytes",
+  "volumeName",
+]);
+const allowedDLoopVolumeKeys = new Set(["name", "runningAttachments"]);
 
 // identify plain records only
 function isRecord(value) {
@@ -560,6 +609,20 @@ function databasePoolGenerationId(backends) {
 
 // bind one cold-proof digest to its exact observed HTTP attempt
 export function pgdataColdProofBindingSha256(coldProof, sample, observationSha256) {
+  // bind the complete compact dual-layer proof without changing legacy receipts
+  if (coldProof.contractVersion === "weather-page-d-loop-cold-proof/v1") {
+    const { bindingSha256: _bindingSha256, ...proof } = coldProof;
+    return sha256Json({
+      endpointId: sample.endpointId,
+      observationSha256,
+      proof,
+      runtimeId: sample.runtimeId,
+      sampleId: sample.sampleId,
+      startedAt: sample.startedAt,
+      tier: sample.tier,
+    });
+  }
+
   return sha256Json({
     completedAt: coldProof.completedAt,
     contractVersion: coldProof.contractVersion,
@@ -664,8 +727,8 @@ function validateSupervisorObservation(witness, runtimeIdentity, issues) {
 
   const backends = observation.databasePool.backends;
 
-  // require an observed application pool generation
-  if (!Array.isArray(backends) || backends.length === 0) {
+  // allow idle pools while requiring an observed backend set
+  if (!Array.isArray(backends)) {
     issues.push("supervisor database pool backends are missing");
   } else {
     // validate every observed application backend
@@ -849,7 +912,7 @@ function validateStateWitness(sample, tier, runtimeId, runtimeIdentity, stateWit
       }
     }
 
-    // constrain every observed pool backend to the fresh interval
+    // derive pool freshness from the stable API process and check retained connections
     for (const backend of observation?.databasePool?.backends ?? []) {
       const started = Date.parse(backend.startedAt);
 
@@ -884,24 +947,46 @@ function validateStateWitness(sample, tier, runtimeId, runtimeIdentity, stateWit
     ) {
       issues.push("K3 disposable cluster witness is missing");
     }
-    // require an independently completed zero-residency PGDATA proof
-    if (
-      !isRecord(coldProof) ||
-      coldProof.contractVersion !== "weather-page-pgdata-cold-proof/v1" ||
-      !/^[a-f0-9]{64}$/u.test(coldProof.proofSha256 ?? "") ||
-      !/^[a-f0-9]{64}$/u.test(coldProof.bindingSha256 ?? "") ||
-      coldProof.bindingSha256 !== pgdataColdProofBindingSha256(coldProof, sample, witness.observationSha256) ||
-      !isTimestamp(coldProof.completedAt) ||
-      !Number.isInteger(coldProof.fileCount) ||
-      coldProof.fileCount < 1 ||
-      !Number.isInteger(coldProof.totalPages) ||
-      coldProof.totalPages < 1 ||
-      coldProof.residentPagesAfter !== 0 ||
-      coldProof.volumeName !== observation?.before?.database?.dataVolume ||
-      coldProof.databaseContainerId !== observation?.before?.database?.containerId ||
-      coldProof.databaseStartedAt !== observation?.before?.database?.startedAt ||
-      Date.parse(coldProof.completedAt) >= Date.parse(observation?.before?.database?.startedAt)
-    ) {
+    const commonProofValid = isRecord(coldProof) &&
+      /^[a-f0-9]{64}$/u.test(coldProof.proofSha256 ?? "") &&
+      /^[a-f0-9]{64}$/u.test(coldProof.bindingSha256 ?? "") &&
+      coldProof.bindingSha256 === pgdataColdProofBindingSha256(coldProof, sample, witness.observationSha256) &&
+      isTimestamp(coldProof.completedAt) &&
+      coldProof.volumeName === observation?.before?.database?.dataVolume &&
+      coldProof.databaseContainerId === observation?.before?.database?.containerId &&
+      coldProof.databaseStartedAt === observation?.before?.database?.startedAt &&
+      Date.parse(coldProof.completedAt) < Date.parse(observation?.before?.database?.startedAt) &&
+      Date.parse(coldProof.completedAt) < Date.parse(observation?.postgresStartedAt);
+    const legacyProofValid = commonProofValid &&
+      coldProof.contractVersion === "weather-page-pgdata-cold-proof/v1" &&
+      Number.isInteger(coldProof.fileCount) &&
+      coldProof.fileCount > 0 &&
+      Number.isInteger(coldProof.totalPages) &&
+      coldProof.totalPages > 0 &&
+      coldProof.residentPagesAfter === 0;
+    let dLoopStorageValid = false;
+
+    // validate and hash the compact frozen D storage identity
+    if (isRecord(coldProof?.storageIdentity)) {
+      try {
+        validateDLoopStorageIdentity(
+          coldProof.storageIdentity,
+          "K3 D-loop proof storage identity",
+        );
+        dLoopStorageValid = coldProof.storageIdentitySha256 ===
+          sha256Json(coldProof.storageIdentity);
+      } catch {
+        dLoopStorageValid = false;
+      }
+    }
+    const dLoopProofValid = commonProofValid &&
+      coldProof.contractVersion === "weather-page-d-loop-cold-proof/v1" &&
+      dLoopStorageValid &&
+      coldProof.innerResidentPagesAfter === 0 &&
+      coldProof.outerResidentPagesAfter === 0;
+
+    // retain legacy evidence while requiring dual-layer proof from the new producer
+    if (!legacyProofValid && !dLoopProofValid) {
       issues.push("K3 independently bound zero-residency PGDATA proof is missing or invalid");
     }
   }
@@ -1239,6 +1324,191 @@ async function readPrivateJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
+// retain one stable private-file identity
+function privateFileIdentity(metadata) {
+  return {
+    changedAtMs: metadata.ctimeMs,
+    device: metadata.dev,
+    inode: metadata.ino,
+    mode: metadata.mode,
+    modifiedAtMs: metadata.mtimeMs,
+    size: metadata.size,
+    userId: metadata.uid,
+  };
+}
+
+// validate one frozen D-loop storage identity
+function validateDLoopStorageIdentity(storageIdentity, label) {
+  assertAllowedKeys(storageIdentity, allowedDLoopStorageIdentityKeys, label);
+  const pathFields = ["backingFile", "loopDevice", "mount", "mountSource"];
+
+  // require every frozen filesystem identity to be absolute
+  for (const field of pathFields) {
+    // reject relative or empty storage paths
+    if (!isNonemptyString(storageIdentity[field]) || resolve(storageIdentity[field]) !== storageIdentity[field]) {
+      throw new Error(`${label} ${field} must be an absolute path`);
+    }
+  }
+  // bind one concrete ext4 loop identity and backing size
+  if (
+    !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(storageIdentity.loopUuid ?? "") ||
+    !Number.isSafeInteger(storageIdentity.backingFileBytes) ||
+    storageIdentity.backingFileBytes < 1
+  ) {
+    throw new Error(`${label} loop identity is invalid`);
+  }
+  // require the complete five-volume benchmark set
+  if (
+    !Array.isArray(storageIdentity.volumeNames) ||
+    storageIdentity.volumeNames.length !== 5 ||
+    new Set(storageIdentity.volumeNames).size !== 5 ||
+    storageIdentity.volumeNames.some(
+      // reject unsafe or empty Docker volume identities
+      (name) => !isNonemptyString(name) || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/u.test(name),
+    )
+  ) {
+    throw new Error(`${label} must name five distinct benchmark volumes`);
+  }
+
+  return storageIdentity;
+}
+
+// validate one completed no-fallback eviction layer
+function validateDLoopLayer(layer, label, expectedFiles, allowedKeys) {
+  assertAllowedKeys(layer, allowedKeys, label);
+
+  // require chronological complete fadvise and mincore work
+  if (
+    !isTimestamp(layer.startedAt) ||
+    !isTimestamp(layer.completedAt) ||
+    Date.parse(layer.completedAt) < Date.parse(layer.startedAt) ||
+    layer.completedFiles !== expectedFiles ||
+    layer.fadviseCompleted !== true ||
+    layer.mincoreCompleted !== true ||
+    layer.fallbackUsed !== false ||
+    !Number.isSafeInteger(layer.totalPages) ||
+    layer.totalPages < 1 ||
+    layer.totalResidentAfter !== 0
+  ) {
+    throw new Error(`${label} D-loop cold proof is incomplete or resident`);
+  }
+}
+
+// validate one complete raw inner-plus-outer D-loop proof
+function validateDLoopColdProof(proof, storageIdentity) {
+  assertAllowedKeys(proof, allowedDLoopProofKeys, "D-loop cold proof");
+  assertAllowedKeys(proof.target, allowedDLoopTargetKeys, "D-loop cold proof target");
+  validateDLoopStorageIdentity(proof.storageIdentity, "D-loop cold proof storage identity");
+
+  // bind proof storage bytes to the frozen supervisor identity
+  if (!isDeepStrictEqual(proof.storageIdentity, storageIdentity)) {
+    throw new Error("D-loop cold proof storage identity does not match configuration");
+  }
+  // require exact outer clocks around the complete proof
+  if (
+    proof.contractVersion !== "weather-page-d-loop-cold-proof/v1" ||
+    !isTimestamp(proof.startedAt) ||
+    !isTimestamp(proof.completedAt) ||
+    Date.parse(proof.completedAt) < Date.parse(proof.startedAt)
+  ) {
+    throw new Error("D-loop cold proof contract or clocks are invalid");
+  }
+
+  const target = proof.target;
+
+  // require one unchanged stopped PGDATA inventory
+  if (
+    !Number.isSafeInteger(target.fileCount) ||
+    target.fileCount < 1 ||
+    !Number.isSafeInteger(target.totalBytes) ||
+    target.totalBytes < 1 ||
+    !/^[a-f0-9]{64}$/u.test(target.inventoryBeforeSha256 ?? "") ||
+    target.inventoryAfterSha256 !== target.inventoryBeforeSha256 ||
+    target.postmasterPidAbsent !== true ||
+    !isNonemptyString(target.volumeName) ||
+    !storageIdentity.volumeNames.includes(target.volumeName) ||
+    !isNonemptyString(target.pgdataRoot) ||
+    resolve(target.pgdataRoot) !== target.pgdataRoot ||
+    !target.pgdataRoot.startsWith(`${storageIdentity.mount}/`)
+  ) {
+    throw new Error("D-loop cold proof target inventory is invalid");
+  }
+  // require exactly the frozen five-volume attachment set
+  if (!Array.isArray(proof.volumes) || proof.volumes.length !== storageIdentity.volumeNames.length) {
+    throw new Error("D-loop cold proof volume attachment set is incomplete");
+  }
+
+  const observedVolumes = [];
+
+  // require every volume to be detached during cache eviction
+  for (const volume of proof.volumes) {
+    assertAllowedKeys(volume, allowedDLoopVolumeKeys, "D-loop cold proof volume");
+
+    // reject duplicate, substituted, or attached volumes
+    if (!isNonemptyString(volume.name) || !Array.isArray(volume.runningAttachments) || volume.runningAttachments.length !== 0) {
+      throw new Error("D-loop cold proof volume has a running attachment");
+    }
+    observedVolumes.push(volume.name);
+  }
+  // bind the unordered observed set to the frozen five names
+  if (!isDeepStrictEqual([...observedVolumes].sort(), [...storageIdentity.volumeNames].sort())) {
+    throw new Error("D-loop cold proof volume attachment set does not match configuration");
+  }
+
+  validateDLoopLayer(proof.inner, "inner", target.fileCount, allowedDLoopInnerKeys);
+  validateDLoopLayer(proof.outer, "outer", 1, allowedDLoopOuterKeys);
+
+  // require inner proof before outer proof and no later inner access
+  if (
+    proof.inner.startedAt !== proof.startedAt ||
+    proof.outer.startedAt !== proof.inner.completedAt ||
+    proof.completedAt !== proof.outer.completedAt ||
+    proof.outer.backingFileBytes !== storageIdentity.backingFileBytes
+  ) {
+    throw new Error("D-loop cold proof layer ordering or backing size is invalid");
+  }
+
+  return proof;
+}
+
+// read and hash one immutable private raw D-loop proof
+async function readDLoopColdProof(configuration, expectedArtifact = null) {
+  const path = configuration.coldProofFile;
+  const before = await assertPrivateOwnedPath(path, "file");
+
+  // require the raw proof's exact private mode
+  if ((before.mode & 0o777) !== 0o600) {
+    throw new Error(`${path} must have mode 0600`);
+  }
+  // bound the raw inventory artifact
+  if (before.size > 16 * 1024 * 1024) {
+    throw new Error(`${path} exceeds the 16 MiB evidence limit`);
+  }
+  const bytes = await readFile(path);
+  const after = await assertPrivateOwnedPath(path, "file");
+
+  // reject replacement or mutation during the read
+  if (!isDeepStrictEqual(privateFileIdentity(before), privateFileIdentity(after))) {
+    throw new Error("D-loop cold proof changed while it was read");
+  }
+  const proofSha256 = createHash("sha256").update(bytes).digest("hex");
+  const fileIdentity = privateFileIdentity(after);
+
+  // detect post-validation mutation before parsing substituted bytes
+  if (
+    expectedArtifact !== null &&
+    (proofSha256 !== expectedArtifact.proofSha256 ||
+      !isDeepStrictEqual(fileIdentity, expectedArtifact.fileIdentity))
+  ) {
+    throw new Error("D-loop cold proof changed after initial validation");
+  }
+  const proof = validateDLoopColdProof(
+    JSON.parse(bytes.toString("utf8")),
+    configuration.storageIdentity,
+  );
+  return { fileIdentity, proof, proofSha256 };
+}
+
 // validate the loopback-only origin
 export function validateLoopbackOrigin(origin) {
   let parsed;
@@ -1467,6 +1737,20 @@ export function validateSupervisorConfiguration(configuration) {
   if (configuration.tier === "K3" && runtime.environment !== "disposable") {
     throw new Error("K3 supervision requires a disposable runtime");
   }
+  // require raw eviction proof authority only for K3
+  if (configuration.tier === "K3") {
+    // bind one absolute private proof path and frozen storage identity
+    if (
+      !isNonemptyString(configuration.coldProofFile) ||
+      resolve(configuration.coldProofFile) !== configuration.coldProofFile ||
+      !isRecord(configuration.storageIdentity)
+    ) {
+      throw new Error("K3 supervision requires an absolute cold proof file and storage identity");
+    }
+    validateDLoopStorageIdentity(configuration.storageIdentity, "supervisor storage identity");
+  } else if (configuration.coldProofFile !== undefined || configuration.storageIdentity !== undefined) {
+    throw new Error("cold proof configuration is only supported for K3");
+  }
   // validate bounded endpoint identities
   if (!Array.isArray(configuration.endpointIds) || configuration.endpointIds.length < 1 || configuration.endpointIds.length > ENDPOINT_INVENTORY.length) {
     throw new Error("supervisor endpointIds must contain one through eleven endpoints");
@@ -1616,7 +1900,6 @@ export function parseSupervisorDatabaseObservation(stdout) {
     !isRecord(value) ||
     !isTimestamp(value.postgresStartedAt) ||
     !Array.isArray(value.backends) ||
-    value.backends.length === 0 ||
     !Array.isArray(value.schemaLedger) ||
     value.schemaLedger.length === 0 ||
     !isNonemptyString(value.serverVersionNum)
@@ -1876,14 +2159,54 @@ function buildSupervisorSample(configuration, endpointId, raw, cacheStateId) {
   };
 }
 
-// construct one hash-bound supervisor witness
-function buildSupervisorWitness(configuration, sample, observation, applicationCache) {
+// bind one validated raw proof to its freshly started database
+function bindDLoopProofToObservation(artifact, observation) {
+  const proof = artifact.proof;
+  const database = observation?.before?.database;
+
+  // require the exact target volume and post-eviction startup sequence
+  if (proof.target.volumeName !== database?.dataVolume) {
+    throw new Error("D-loop cold proof target volume does not match the observed database");
+  }
+  if (
+    !isTimestamp(database?.startedAt) ||
+    !isTimestamp(observation?.postgresStartedAt) ||
+    Date.parse(proof.completedAt) >= Date.parse(database.startedAt) ||
+    Date.parse(proof.completedAt) >= Date.parse(observation.postgresStartedAt)
+  ) {
+    throw new Error("D-loop cold proof must complete before PostgreSQL starts");
+  }
+
   return {
+    bindingSha256: null,
+    completedAt: proof.completedAt,
+    contractVersion: proof.contractVersion,
+    databaseContainerId: database.containerId,
+    databaseStartedAt: database.startedAt,
+    innerResidentPagesAfter: proof.inner.totalResidentAfter,
+    outerResidentPagesAfter: proof.outer.totalResidentAfter,
+    proofSha256: artifact.proofSha256,
+    storageIdentity: proof.storageIdentity,
+    storageIdentitySha256: sha256Json(proof.storageIdentity),
+    volumeName: proof.target.volumeName,
+  };
+}
+
+// construct one hash-bound supervisor witness
+function buildSupervisorWitness(
+  configuration,
+  sample,
+  observation,
+  applicationCache,
+  dLoopColdProof,
+) {
+  const observationSha256 = sha256Json(observation);
+  const witness = {
     applicationCache,
     endpointId: sample.endpointId,
     id: sample.witnessId,
     observation,
-    observationSha256: sha256Json(observation),
+    observationSha256,
     observedAt: new Date().toISOString(),
     producer: SUPERVISOR_PRODUCER,
     runtimeId: configuration.runtimeId,
@@ -1891,6 +2214,18 @@ function buildSupervisorWitness(configuration, sample, observation, applicationC
     scope: configuration.runtimeIdentities[configuration.runtimeId].environment,
     tier: configuration.tier,
   };
+
+  // bind the same raw proof digest to this exact K3 sample
+  if (dLoopColdProof !== null) {
+    witness.pgdataColdProof = { ...dLoopColdProof };
+    witness.pgdataColdProof.bindingSha256 = pgdataColdProofBindingSha256(
+      witness.pgdataColdProof,
+      sample,
+      observationSha256,
+    );
+  }
+
+  return witness;
 }
 
 // collect independently observed cold samples without cache mutation
@@ -1909,6 +2244,18 @@ export async function superviseColdSamples(configuration, injected = {}) {
   const supervisionIssues = [];
   const diagnostics = [];
   let priorGeneratedAt = null;
+  const initialDLoopProof = configuration.tier === "K3"
+    ? await readDLoopColdProof(configuration)
+    : null;
+
+  // retain a compact raw-proof reference without duplicating its inventory
+  if (initialDLoopProof !== null) {
+    diagnostics.push({
+      contractVersion: initialDLoopProof.proof.contractVersion,
+      kind: "K3-d-loop-cold-proof",
+      proofSha256: initialDLoopProof.proofSha256,
+    });
+  }
 
   // prime only the shared cache before its first natural-expiry cycle
   if (configuration.tier === "K1") {
@@ -1960,6 +2307,12 @@ export async function superviseColdSamples(configuration, injected = {}) {
     }
 
     const { observation, rawSamples } = await observeSupervisorGroup(configuration, controls);
+    const stableDLoopProof = initialDLoopProof === null
+      ? null
+      : await readDLoopColdProof(configuration, initialDLoopProof);
+    const boundDLoopProof = stableDLoopProof === null
+      ? null
+      : bindDLoopProofToObservation(stableDLoopProof, observation);
 
     // bind every probe result to its exact requested route
     for (let index = 0; index < rawSamples.length; index += 1) {
@@ -2000,7 +2353,13 @@ export async function superviseColdSamples(configuration, injected = {}) {
             state: "naturally-expired",
           }
         : null;
-      const witness = buildSupervisorWitness(configuration, sample, observation, applicationCache);
+      const witness = buildSupervisorWitness(
+        configuration,
+        sample,
+        observation,
+        applicationCache,
+        boundDLoopProof,
+      );
       samples.push(sample);
       witnesses.push(witness);
     }

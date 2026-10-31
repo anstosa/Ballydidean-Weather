@@ -1973,6 +1973,238 @@ test("v13 resource gate accepts only the exact reviewed legacy storage failures"
   }
 });
 
+test("normal v15 resource gate accepts only a full pass or varLib-only legacy failure", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-v15-resource-"));
+  const evidencePath = join(directory, "preflight-v15-resource.json");
+  const update = join(repoRoot, "deploy/scripts/update.sh");
+  const fixture = () => ({
+    architecture: { docker: "aarch64", expected: "aarch64", host: "aarch64" },
+    capturedAt: new Date().toISOString(),
+    cpu: { actual: 4, minimum: 4 },
+    docker: { freeBytes: 5 * 1_024 ** 3, inodeFreePercent: 95,
+      minimumFreeBytes: 4 * 1_024 ** 3, root: "/var/lib/docker" },
+    load15: { actual: 0.5, maximum: 2 },
+    memoryAvailableBytes: { minimumObserved: 3 * 1_024 ** 3,
+      minimumRequired: 1_792 * 1_024 ** 2 },
+    pass: false,
+    sampleSeconds: 900,
+    swapBytesPerMinute: { actual: 0, maximum: 1_024 ** 2 },
+    varLib: { databaseBytes: 1_000_000_000, freeBytes: 5 * 1_024 ** 3,
+      inodeFreePercent: 95, minimumFreeBytes: 10 * 1_024 ** 3 },
+  });
+  const runGate = () => spawnSync("bash", ["-c",
+    'source "$1"; v13_resource_evidence=$2; require_normal_release_resource_gate',
+    "weather-v15-resource", update, evidencePath], { encoding: "utf8" });
+  const writeEvidence = async (evidence) => {
+    await writeFile(evidencePath, `${JSON.stringify(evidence)}\n`, { mode: 0o600 });
+    await chmod(evidencePath, 0o600);
+  };
+
+  try {
+    await writeEvidence(fixture());
+    assert.equal(runGate().status, 0);
+
+    const fullPass = fixture();
+    fullPass.pass = true;
+    fullPass.varLib.freeBytes = fullPass.varLib.minimumFreeBytes;
+    await writeEvidence(fullPass);
+    assert.equal(runGate().status, 0);
+
+    const bothStorage = fixture();
+    bothStorage.docker.freeBytes = 1;
+    await writeEvidence(bothStorage);
+    assert.notEqual(runGate().status, 0);
+
+    const dockerOnly = fixture();
+    dockerOnly.varLib.freeBytes = dockerOnly.varLib.minimumFreeBytes;
+    dockerOnly.docker.freeBytes = 1;
+    await writeEvidence(dockerOnly);
+    assert.notEqual(runGate().status, 0);
+
+    const loadFailure = fixture();
+    loadFailure.load15.actual = 3;
+    await writeEvidence(loadFailure);
+    assert.notEqual(runGate().status, 0);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("normal stage qualification rejects over-envelope and low-water samples", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-normal-stage-envelope-"));
+  const evaluatorPath = join(repoRoot, "deploy/scripts/adjustment-evaluation-package.mjs");
+  const update = join(repoRoot, "deploy/scripts/update.sh");
+  const { evaluateNormalStageCapacity } = await import(evaluatorPath);
+  const now = new Date();
+  const digest = (character) => `sha256:${character.repeat(64)}`;
+  const base = {
+    activeDatabaseBytes: 1_000_000_000,
+    captureReserveBytes: 4_112_384,
+    capturedAt: now.toISOString(),
+    fixtureInodes: 4_096,
+    freeBytes: 40_000_000_000,
+    freeInodes: 100_000,
+    imagePullPeakBytes: 100_000_000,
+    imageReferences: [
+      { reference: `ghcr.io/anstosa/weather-server@${digest("a")}`, role: "source", runtime: "server" },
+      { reference: `ghcr.io/anstosa/weather-web@${digest("b")}`, role: "source", runtime: "web" },
+      { reference: `ghcr.io/anstosa/weather-server@${digest("c")}`, role: "target", runtime: "server" },
+      { reference: `ghcr.io/anstosa/weather-web@${digest("d")}`, role: "target", runtime: "web" },
+    ],
+    inodeFloor: 32_768,
+    largestSourceIndexBytes: 100_000_000,
+    maxWalBytes: 1_000_000,
+    newImageInodes: 1_000,
+    operationId: "normal-2026-10-09-3-to-2026-10-29-1",
+    persistentImageGrowthBytes: 50_000_000,
+    postgresComposeProject: "weather",
+    postgresContainerId: "e".repeat(64),
+    postgresContainerImageId: digest("f"),
+    postgresContainerImageReference: `postgres@${digest("1")}`,
+    postgresDataDirectory: "/var/lib/postgresql/data",
+    postgresDataFilesystemDevice: 1,
+    protectedFloorBytes: 2_030_043_136,
+    retirementCreditBytes: 0,
+    scratchBytes: 268_435_456,
+    sourceDatabaseFileCount: 10_000,
+    sourceDatabaseOid: 16_384,
+    sourceEnvSha256: "2".repeat(64),
+    sourceLedgerSha256: "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
+    sourceRelease: "2026.10.09-3",
+    sourceSchemaVersion: 21,
+    systemIdentifier: "123456789",
+    targetEnvSha256: "3".repeat(64),
+    targetLedgerSha256: "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
+    targetRelease: "2026.10.29-1",
+    targetSchemaVersion: 22,
+    weatherPostgresDir: "/var/lib/weather/postgres",
+    weatherPostgresDirFilesystemDevice: 1,
+  };
+  const pre = evaluateNormalStageCapacity({ ...base, phase: "pre_pull" }, now);
+  const post = evaluateNormalStageCapacity({ ...base, phase: "post_pull" }, now);
+  const canonical = (value) => Array.isArray(value)
+    ? `[${value.map(canonical).join(",")}]`
+    : value !== null && typeof value === "object"
+      ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+      : JSON.stringify(value);
+  const prePath = join(directory, "pre.json");
+  const postPath = join(directory, "post.json");
+  const samplesPath = join(directory, "samples.json");
+  const outputPath = join(directory, "qualification.json");
+  await writeFile(prePath, canonical(pre), { mode: 0o600 });
+  await writeFile(postPath, canonical(post), { mode: 0o600 });
+  const runSeal = () => spawnSync("bash", ["-c",
+    'source "$1"; write_normal_stage_qualification_receipt source.env target.env "$2" "$3" "$4" "$5"',
+    "weather-normal-stage-envelope", update, prePath, postPath, samplesPath, outputPath],
+  { encoding: "utf8" });
+
+  try {
+    // reject a measured peak larger than the post-pull headroom
+    for (const [initialFreeBytes, minimumFreeBytes] of [
+      [41_000_000_000, 2_034_155_520],
+      [40_000_000_000, 2_034_155_519],
+    ]) {
+      const body = {
+        contractVersion: "normal-stage-capacity-samples/v1",
+        initialFreeBytes,
+        initialFreeInodes: 100_000,
+        minimumFreeBytes,
+        minimumFreeInodes: 50_000,
+        migrationDurationMilliseconds: 1_000,
+        migrationMinimumFreeBytes: minimumFreeBytes,
+        migrationMinimumFreeInodes: 50_000,
+        migrationPeakGrowthBytes: initialFreeBytes - minimumFreeBytes,
+        migrationPeakGrowthInodes: 50_000,
+        migrationPhaseEndIndex: 1,
+        migrationPhaseEndTimestamp: now.getTime() + 1,
+        migrationPhaseStartIndex: 0,
+        migrationPhaseStartTimestamp: now.getTime(),
+        peakGrowthBytes: initialFreeBytes - minimumFreeBytes,
+        peakGrowthInodes: 50_000,
+        samples: [
+          { capturedAtMilliseconds: now.getTime(), freeBytes: initialFreeBytes, freeInodes: 100_000, sequence: 0 },
+          { capturedAtMilliseconds: now.getTime() + 1, freeBytes: minimumFreeBytes, freeInodes: 50_000, sequence: 1 },
+        ],
+      };
+      const samples = { ...body,
+        receiptSha256: createHash("sha256").update(canonical(body)).digest("hex") };
+      await writeFile(samplesPath, canonical(samples), { mode: 0o600 });
+      const result = runSeal();
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /exceeds its post-pull capacity envelope/u);
+    }
+    // reject a hash-consistent sample artifact with a missing sequence ordinal
+    const gapBody = {
+      contractVersion: "normal-stage-capacity-samples/v1",
+      initialFreeBytes: 10_000_000_000,
+      initialFreeInodes: 100_000,
+      minimumFreeBytes: 9_999_000_000,
+      minimumFreeInodes: 99_000,
+      migrationDurationMilliseconds: 1_000,
+      migrationMinimumFreeBytes: 9_999_000_000,
+      migrationMinimumFreeInodes: 99_000,
+      migrationPeakGrowthBytes: 1_000_000,
+      migrationPeakGrowthInodes: 1_000,
+      migrationPhaseEndIndex: 1,
+      migrationPhaseEndTimestamp: now.getTime() + 1,
+      migrationPhaseStartIndex: 0,
+      migrationPhaseStartTimestamp: now.getTime(),
+      peakGrowthBytes: 1_000_000,
+      peakGrowthInodes: 1_000,
+      samples: [
+        { capturedAtMilliseconds: now.getTime(), freeBytes: 10_000_000_000, freeInodes: 100_000, sequence: 0 },
+        { capturedAtMilliseconds: now.getTime() + 1, freeBytes: 9_999_000_000, freeInodes: 99_000, sequence: 2 },
+      ],
+    };
+    await writeFile(samplesPath, canonical({
+      ...gapBody,
+      receiptSha256: createHash("sha256").update(canonical(gapBody)).digest("hex"),
+    }), { mode: 0o600 });
+    const gap = runSeal();
+    assert.notEqual(gap.status, 0);
+    assert.match(gap.stderr, /exceeds its post-pull capacity envelope/u);
+    // reserve only the SQL/ACL phase peak, not the already allocated 14 GB clone
+    const cloneBody = {
+      contractVersion: "normal-stage-capacity-samples/v1",
+      initialFreeBytes: 39_000_000_000,
+      initialFreeInodes: 100_000,
+      minimumFreeBytes: 24_998_000_000,
+      minimumFreeInodes: 79_998,
+      migrationDurationMilliseconds: 1_000,
+      migrationMinimumFreeBytes: 24_998_000_000,
+      migrationMinimumFreeInodes: 79_998,
+      migrationPeakGrowthBytes: 2_000_000,
+      migrationPeakGrowthInodes: 2,
+      migrationPhaseEndIndex: 2,
+      migrationPhaseEndTimestamp: now.getTime() + 2,
+      migrationPhaseStartIndex: 1,
+      migrationPhaseStartTimestamp: now.getTime() + 1,
+      peakGrowthBytes: 14_002_000_000,
+      peakGrowthInodes: 20_002,
+      samples: [
+        { capturedAtMilliseconds: now.getTime(), freeBytes: 39_000_000_000, freeInodes: 100_000, sequence: 0 },
+        { capturedAtMilliseconds: now.getTime() + 1, freeBytes: 25_000_000_000, freeInodes: 80_000, sequence: 1 },
+        { capturedAtMilliseconds: now.getTime() + 2, freeBytes: 24_998_000_000, freeInodes: 79_998, sequence: 2 },
+        { capturedAtMilliseconds: now.getTime() + 3, freeBytes: 38_000_000_000, freeInodes: 99_000, sequence: 3 },
+      ],
+    };
+    await writeFile(samplesPath, canonical({
+      ...cloneBody,
+      receiptSha256: createHash("sha256").update(canonical(cloneBody)).digest("hex"),
+    }), { mode: 0o600 });
+    const clone = runSeal();
+    assert.equal(clone.status, 0, clone.stderr);
+    const qualification = JSON.parse(await readFile(outputPath, "utf8"));
+    // include the one-gigabyte post-receipt gap in the whole-stage envelope
+    assert.equal(qualification.wholeStagePeakBytes, 15_002_000_000);
+    assert.equal(qualification.postPullFreeBytes, 40_000_000_000);
+    assert.equal(qualification.measuredMigrationPeakBytes, 2_000_000);
+    assert.equal(qualification.measuredMigrationPeakInodes, 2);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
 // verify the fresh local minimum without substituting for the full oracle
 test("image pulls require the protected floor plus next-capture bytes and inodes", () => {
   const update = join(repoRoot, "deploy/scripts/update.sh");
@@ -1994,51 +2226,16 @@ test("image pulls require the protected floor plus next-capture bytes and inodes
   assert.match(oneInodeUnder.stderr, /protected capture floor/u);
 });
 
-// verify the explicit direct-deploy path
-test("yolo deployment skips clone, full coexistence, and deployment-time backup gates", () => {
-  const packageJson = JSON.parse(read("package.json"));
+// verify the unsafe direct-deploy entry point is closed
+test("yolo deployment is closed before any release mutation", () => {
   const update = read("deploy/scripts/update.sh");
-  const yoloFunction = update
-    .split("\nyolo_release() (")[1]
-    .split("\n)\n\n# activate one forward release")[0];
-  const prepareFunction = update
-    .split("prepare_yolo_release() {")[1]
-    .split("\n}\n\n# apply one source-preserving direct release")[0];
-  assert.equal(packageJson.scripts["remote:deploy"], "deploy/scripts/ssh-run.sh yolo");
-  assert.match(prepareFunction, /resolve_arm64_image/u);
-  assert.match(prepareFunction, /compose config --quiet/u);
-  assert.match(prepareFunction, /cleanup_obsolete_weather_images/u);
-  assert.match(prepareFunction, /require_image_pull_capacity_floor/u);
-  assert.match(prepareFunction, /require_v13_resource_gate/u);
-  assert.match(prepareFunction, /require_literal_adjustment_release_capacity/u);
-  assert.match(prepareFunction, /compose pull/u);
-  assert.equal((prepareFunction.match(/compose pull/gu) ?? []).length, 2);
-  assert.equal(
-    prepareFunction.indexOf("cleanup_obsolete_weather_images") <
-      prepareFunction.indexOf("require_image_pull_capacity_floor") &&
-      prepareFunction.indexOf("require_image_pull_capacity_floor") <
-      prepareFunction.indexOf("compose pull"),
-    true,
-  );
-  assert.match(yoloFunction, /start_postgres "\$target"/u);
-  assert.match(yoloFunction, /compose run --rm migration/u);
-  assert.equal(
-    yoloFunction.indexOf('start_postgres "$target"') <
-      yoloFunction.indexOf("compose run --rm migration"),
-    true,
-  );
-  assert.match(yoloFunction, /start_exact_release/u);
-  assert.match(yoloFunction, /record_release_success/u);
-  assert.match(yoloFunction, /verify_fixed_v13_source_compatibility/u);
-  assert.match(yoloFunction, /restore_failed_yolo/u);
-  assert.doesNotMatch(
-    `${prepareFunction}\n${yoloFunction}`,
-    /require_capacity_gate|verify_previous_image_compatibility|backup\.sh|pg_dump|weather_compat_/u,
-  );
+  const yoloCase = update.split("  yolo)\n")[1].split("  stage)\n")[0];
+  assert.match(yoloCase, /die "yolo is closed; use the staged normal release path"/u);
+  assert.doesNotMatch(yoloCase, /yolo_release|prepare_yolo_release|compose|record_release_success/u);
 });
 
 // verify the fixed v13 bridge cannot bypass literal capacity or exact source restoration
-test("v13 yolo uses literal capacity at every release transaction boundary", () => {
+test("legacy v13 and normal v15 paths use their distinct capacity contracts", () => {
   const update = read("deploy/scripts/update.sh");
   const capacityFunction = update
     .split("require_literal_adjustment_release_capacity() (")[1]
@@ -2075,13 +2272,71 @@ test("v13 yolo uses literal capacity at every release transaction boundary", () 
   assert.match(yoloRelease, /restore_images "\$current_env" "\$current" "\$release"/u);
   assert.match(yoloRelease, /capacity diagnostic/u);
   assert.doesNotMatch(stageCase, /require_v13_resource_gate|require_literal_adjustment_release_capacity/u);
-  assert.match(stageCase, /require_capacity_gate/u);
+  assert.match(stageCase, /require_normal_stage_capacity[\s\S]*pre_pull/u);
+  assert.match(stageCase, /require_normal_stage_capacity[\s\S]*post_pull/u);
+  assert.match(stageCase, /normal-21-22/u);
   assert.doesNotMatch(startRelease, /require_v13_resource_gate|require_literal_adjustment_release_capacity/u);
   assert.equal(
-    startRelease.indexOf("require_capacity_gate") <
-      startRelease.indexOf('start_postgres "$backup_env"'),
+    startRelease.indexOf("require_normal_activation_capacity") <
+      startRelease.indexOf("Creating pre-migration encrypted backup"),
     true,
   );
+  assert.match(startRelease, /--max-output-bytes/u);
+});
+
+test("historical schema-18 to schema-21 activation requires the measured ARM64 rehearsal", () => {
+  const update = read("deploy/scripts/update.sh");
+  const rehearsal = update
+    .split("historical_v14_18_21_rehearsal() (")[1]
+    .split("\n)\n\n# require one measured full-size ARM64 proof")[0];
+  const activation = update
+    .split("inert_v14_release() (")[1]
+    .split("\n)\n\n# activate one forward release")[0];
+  const receiptValidator = update
+    .split("require_historical_v14_rehearsal_receipt() {")[1]
+    .split("\n}\n\n# apply one source-preserving direct release")[0];
+  assert.match(rehearsal, /pg_dump[\s\S]*--format=custom[\s\S]*pg_restore/u);
+  assert.match(rehearsal, /candidate_oid/u);
+  assert.match(rehearsal, /historical rehearsal clone absence check failed/u);
+  assert.match(rehearsal, /historical rehearsal migration name already exists/u);
+  assert.match(rehearsal,
+    /Config\.Labels\.com\.docker\.compose\.project[\s\S]*Config\.Labels\.com\.docker\.compose\.service[\s\S]*Config\.Image/u);
+  assert.match(rehearsal, /postgres\|1000000000\|536870912/u);
+  assert.match(rehearsal, /--atomic-maintenance-v14/u);
+  assert.match(rehearsal, /WEATHER_DATABASE_STATEMENT_TIMEOUT_MS=300000/u);
+  assert.match(rehearsal, /duration_milliseconds <= 150000/u);
+  assert.match(rehearsal, /appDataEqual: true/u);
+  assert.match(rehearsal, /cleanupConfirmed: true/u);
+  assert.match(rehearsal, /minimumFreeBytesObserved/u);
+  assert.match(rehearsal, /peakWalBytes/u);
+  assert.match(rehearsal, /peakTempBytes/u);
+  const receiptGate = activation.indexOf("require_historical_v14_rehearsal_receipt");
+  const mutation = activation.indexOf("active_mutation_started=true");
+  assert.equal(receiptGate >= 0 && receiptGate < mutation, true);
+  assert.match(activation, /require_normal_release_resource_gate[\s\S]*require_literal_full_v14_release_capacity/u);
+  assert.match(activation,
+    /capture_supported_writer_container[\s\S]*active_mutation_started=true[\s\S]*stop_supported_writer_container[\s\S]*require_supported_writers_quiesced[\s\S]*require_historical_v14_rehearsal_receipt[\s\S]*start_postgres[\s\S]*require_supported_writers_quiesced[\s\S]*--atomic-maintenance-v14/u);
+  assert.match(update, /duration \* liveRows > 150000n \* candidateRows/u);
+  assert.match(update, /duration \* liveHeapBytes > 150000n \* candidateHeapBytes/u);
+  assert.doesNotMatch(`${rehearsal}\n${receiptValidator}`,
+    /64 \* 1024 \* 1024|67_108_864/u);
+});
+
+test("supported backfills take the shared lifecycle lock before reading active state", () => {
+  const common = read("deploy/scripts/common.sh");
+  assert.match(common,
+    /acquire_weather_lifecycle_lock\(\)[\s\S]*flock --exclusive --nonblock[\s\S]*\/proc\/self\/fd/u);
+  for (const name of [
+    "public-stations-backfill.sh",
+    "tempest-backfill.sh",
+    "tide-backfill.sh",
+  ]) {
+    const script = read(`deploy/scripts/${name}`);
+    assert.equal(script.indexOf("acquire_weather_lifecycle_lock") <
+      script.indexOf("read_release_state"), true, name);
+    assert.equal(script.indexOf("acquire_weather_lifecycle_lock") <
+      script.indexOf("compose run"), true, name);
+  }
 });
 
 // verify a post-health capacity failure restores exact source images before returning
@@ -2259,11 +2514,15 @@ test("trap-only cleanup functions suppress supported ShellCheck diagnostics", ()
   );
   assert.match(
     update,
-    /  # shellcheck disable=SC2317,SC2329\n  cleanup_initial_activation\(\) \{/u,
+    /  # shellcheck disable=SC2317,SC2329\n  cleanup_normal_activation\(\) \{/u,
   );
   assert.match(
     update,
     /  # shellcheck disable=SC2317,SC2329\n  restore_failed_yolo\(\) \{/u,
+  );
+  assert.match(
+    update,
+    /  # shellcheck disable=SC2317,SC2329\n  cleanup_historical_rehearsal\(\) \{/u,
   );
 });
 
@@ -2287,12 +2546,12 @@ test("release operations stage, compatibility-check, activate, rollback, and rec
   assert.match(stageCase, /trap[\s\S]*EXIT/u);
   assert.match(stageCase, /mv[\s\S]*\$target/u);
   assert.doesNotMatch(stageCase, /compose up|compose down/u);
-  const stageControlGate = stageCase.indexOf("require_control_plane_compatibility");
+  const stageControlGate = stageCase.indexOf("normal_release_source_env");
   assert.notEqual(stageControlGate, -1);
 
   // require compatibility before stage mutation
   for (const mutation of [
-    "require_capacity_gate",
+    "require_normal_release_resource_gate",
     "mkdir -p \"$releases_dir\"",
     "resolve_arm64_image",
     "mktemp",
@@ -2303,7 +2562,7 @@ test("release operations stage, compatibility-check, activate, rollback, and rec
   }
   const cleanupIndex = stageCase.indexOf("cleanup_obsolete_weather_images");
   const basicCapacityIndex = stageCase.indexOf("require_image_pull_capacity_floor");
-  const fullCapacityIndex = stageCase.indexOf("require_capacity_gate");
+  const fullCapacityIndex = stageCase.indexOf("require_normal_stage_capacity");
   const pullIndex = stageCase.indexOf("compose pull");
   assert.equal(fullCapacityIndex < cleanupIndex, true);
   assert.equal(cleanupIndex < basicCapacityIndex, true);
@@ -2312,30 +2571,36 @@ test("release operations stage, compatibility-check, activate, rollback, and rec
     update.split("# locate one validated release environment")[0],
     /mkdir -p/u,
   );
-  const activationControlGate = startRelease.lastIndexOf("require_control_plane_compatibility");
+  const activationControlGate = startRelease.indexOf("normal_release_source_env");
   const activationSchemaRead = startRelease.indexOf(
-    'read_optional_release_state "$state_dir/schema-release"',
+    'read_release_state "$state_dir/schema-release"',
   );
   const activationSchemaGate = startRelease.indexOf(
-    'if [[ "$current" != "$schema_release" && "$target" != "$schema_release" ]]',
+    '[[ "$current" == "$schema_release" && "$current" != "$target" ]]',
   );
-  const activationCleanupTrap = startRelease.indexOf("trap cleanup_initial_activation EXIT");
+  const activationCleanupTrap = startRelease.indexOf("trap cleanup_normal_activation EXIT");
   assert.notEqual(activationSchemaRead, -1);
   assert.equal(activationSchemaRead < activationSchemaGate, true);
   // reject stale targets before every mutation boundary
   for (const mutation of [
-    "require_capacity_gate",
+    "read_normal_stage_qualification",
     "require_deployment_secrets",
-    'start_postgres "$backup_env"',
     "Creating pre-migration encrypted backup",
-    'write_private_state "$state_dir/schema-release"',
-    "compose run --rm migration",
+    "compose run --detach",
   ]) {
     assert.equal(activationSchemaGate < startRelease.indexOf(mutation), true, mutation);
   }
+  assert.equal(
+    activationSchemaGate < startRelease.lastIndexOf('start_postgres "$current_env"'),
+    true,
+  );
+  assert.equal(
+    activationSchemaGate < startRelease.lastIndexOf('write_private_state "$state_dir/schema-release"'),
+    true,
+  );
   assert.equal(activationSchemaGate < activationCleanupTrap, true);
   assert.equal(activationControlGate < activationCleanupTrap, true);
-  assert.equal(activationCleanupTrap < startRelease.indexOf('start_postgres "$backup_env"'), true);
+  assert.equal(activationCleanupTrap < startRelease.lastIndexOf('start_postgres "$current_env"'), true);
   assert.match(update, /imagetools inspect/u);
   assert.match(update, /weather_compat_/u);
   assert.match(update, /compatibility-provider\.mjs/u);
@@ -2376,7 +2641,7 @@ test("release operations stage, compatibility-check, activate, rollback, and rec
   assert.match(update, /Creating pre-migration encrypted backup/u);
   assert.match(update, /compose up -d --remove-orphans --wait/u);
   assert.match(update, /record success only after every health gate/u);
-  assert.match(update, /compose down --remove-orphans/u);
+  assert.doesNotMatch(startRelease, /compose down --remove-orphans/u);
   assert.match(rollbackCase, /rollback_release/u);
   assert.match(rollbackFunction, /restore_images/u);
   assert.match(update, /--no-deps --force-recreate --wait postgres/u);

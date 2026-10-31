@@ -1361,21 +1361,14 @@ export const ADJUSTMENT_REVISION_CAPTURE_EPOCH_PATH =
 export const ADJUSTMENT_REVISION_CAPTURE_EPOCH_SNAPSHOT_PATH =
   "/opt/weather/current/deploy/state/adjustment-capture-epoch-snapshot.json";
 const ADJUSTMENT_REVISION_CAPTURE_EPOCH_MAXIMUM_BYTES = 16 * 1024;
-const ADJUSTMENT_REVISION_FRONTIER_MIGRATION_HISTORY_SHA256 =
-  "c683c4f937c7f02b00f6ab49f75268eead81d2a221a8a9a23e38f9e4802a11b0";
 const ADJUSTMENT_ROLLING_REGISTRATION_MIGRATION_HISTORY_SHA256 =
   "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424";
-const ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGERS = Object.freeze([Object.freeze({
-  checksum: "56027b4f2cb2c3c83e746f14dac753b75d573753934898fa7a52f78faa56499c",
-  count: 20,
-  historySha256: ADJUSTMENT_REVISION_FRONTIER_MIGRATION_HISTORY_SHA256,
-  name: "0020_adjustment_revision_frontier.sql",
-}), Object.freeze({
+const ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGER = Object.freeze({
   checksum: "ca29db99377001fca2e2e4268fd80d1cbe7b876f71f2d5ba04e575712cb9f13b",
   count: 21,
   historySha256: ADJUSTMENT_ROLLING_REGISTRATION_MIGRATION_HISTORY_SHA256,
   name: "0021_adjustment_rolling_registration.sql",
-})]);
+});
 
 const OBJECT_MAXIMUM_BYTES = 512 * 1_024;
 const COMPRESSED_OBJECT_MAXIMUM_BYTES = 16 * 1_024;
@@ -1401,6 +1394,9 @@ const ADJUSTMENT_ROLLING_SCHEDULE_SHA256 =
 const OBJECT_FILENAME_PATTERN = /^sha256-([a-f0-9]{64})\.json\.gz$/u;
 const RECEIPT_FILENAME_PATTERN = /^sha256-([a-f0-9]{64})\.json$/u;
 const CHANNEL_FILENAME_PATTERN = /^sha256-([a-f0-9]{64})\.json$/u;
+const CAPTURE_TEMPORARY_FILENAME_PATTERN = /^\.capture-[a-f0-9-]+\.tmp$/u;
+const CAPTURE_REFRESH_RETRY_COUNT = 200;
+const CAPTURE_REFRESH_RETRY_MILLISECONDS = 10;
 const SCHEDULE_HOURS = [0, 6, 12, 18];
 const ISSUANCE_CHANNELS = ["legacy_unattributed", "public_get", "scheduler_request"];
 const WINDOWS = ["days=1", "days=5", "days=10", "overnight"];
@@ -1540,10 +1536,8 @@ export function validateAdjustmentRevisionCaptureEpochWitness(value) {
     value.catalogFrontierSha256 !== adjustmentRevisionGenesisFrontier() ||
     value.contractVersion !== ADJUSTMENT_REVISION_CAPTURE_EPOCH_CONTRACT_VERSION ||
     value.controlPlaneVersion !== "14" ||
-    !ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGERS.some(
-      // admit only one complete reviewed activation ledger
-      (ledger) => value.databaseMigrationHistorySha256 === ledger.historySha256,
-    ) ||
+    value.databaseMigrationHistorySha256 !==
+      ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGER.historySha256 ||
     typeof value.sourceCommit !== "string" || !/^[a-f0-9]{40}$/u.test(value.sourceCommit) ||
     typeof value.sourceRelease !== "string" || !releasePattern.test(value.sourceRelease) ||
     typeof value.sourceServerImageDigest !== "string" ||
@@ -1819,13 +1813,11 @@ function validateAdjustmentRevisionCaptureEpochDatabaseEnvelope(value) {
         (name, index) => `${name}:${manifest.migration_checksums[index]}`,
       ).join("\n")))
     : null;
-  const reviewedLedger = ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGERS.find(
-    // select only an exact reviewed full-history identity
-    (ledger) => manifest.migration_history_sha256 === ledger.historySha256,
-  );
-  // require one disjoint complete reviewed ledger rather than a compatible prefix
+  const reviewedLedger = ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGER;
+  // require the exact complete 0021 capture ledger rather than a compatible prefix
   if (manifest.contract_version !== "adjustment-evaluation-export-manifest/v1" ||
-    reviewedLedger === undefined || !Array.isArray(manifest.migration_names) ||
+    manifest.migration_history_sha256 !== reviewedLedger.historySha256 ||
+    !Array.isArray(manifest.migration_names) ||
     manifest.migration_names.length !== reviewedLedger.count ||
     !Array.isArray(manifest.migration_checksums) ||
     manifest.migration_checksums.length !== reviewedLedger.count ||
@@ -9117,7 +9109,11 @@ export class AdjustmentEvidenceStore {
 
   // refresh global immutable allocation after a cross-writer observation
   async #refreshAllocationFromDisk() {
-    const scan = await scanEvidenceDirectories(this.#options.root, false);
+    const scan = await scanEvidenceDirectories(
+      this.#options.root,
+      false,
+      CAPTURE_REFRESH_RETRY_COUNT,
+    );
     this.#allocatedBytes = scan.allocatedBytes;
     this.#objectCount = scan.objectCount;
     this.#receiptCount = scan.receiptCount;
@@ -11586,21 +11582,34 @@ function projectMetricValues(value, keys, path, omitAbsent = false) {
 }
 
 // scan bounded immutable directories and allocation
-async function scanEvidenceDirectories(root, validatePairs) {
+async function scanEvidenceDirectories(root, validatePairs, temporaryRetries = 0) {
   await validateEvidenceDirectories(root);
   const objects = await readdir(join(root, "objects"));
   const receipts = await readdir(join(root, "receipts"));
   const channels = await readdir(join(root, "channels"));
   const channelBindings = await readdir(join(root, "channel-bindings"));
+  const unexpected = [
+    ...objects.filter((name) => !OBJECT_FILENAME_PATTERN.test(name)),
+    ...receipts.filter((name) => !RECEIPT_FILENAME_PATTERN.test(name)),
+    ...channels.filter((name) => !CHANNEL_FILENAME_PATTERN.test(name)),
+    ...channelBindings.filter((name) => !RECEIPT_FILENAME_PATTERN.test(name)),
+  ];
+
+  // retry only a concurrent writer's uniquely named atomic temporary
+  if (unexpected.length > 0 && temporaryRetries > 0 &&
+    unexpected.every((name) => CAPTURE_TEMPORARY_FILENAME_PATTERN.test(name))) {
+    await new Promise(
+      // allow the publishing writer to unlink its durable temporary
+      (resolveWait) => setTimeout(resolveWait, CAPTURE_REFRESH_RETRY_MILLISECONDS),
+    );
+    return await scanEvidenceDirectories(root, validatePairs, temporaryRetries - 1);
+  }
 
   // stop startup on unexpected or unbounded contents
   if (objects.length > MAXIMUM_IDENTITIES || receipts.length > MAXIMUM_IDENTITIES ||
-    objects.some((name) => !OBJECT_FILENAME_PATTERN.test(name)) ||
-    receipts.some((name) => !RECEIPT_FILENAME_PATTERN.test(name)) ||
     channels.length > MAXIMUM_CHANNEL_ASSERTIONS ||
     channelBindings.length > MAXIMUM_CHANNEL_ASSERTIONS ||
-    channels.some((name) => !CHANNEL_FILENAME_PATTERN.test(name)) ||
-    channelBindings.some((name) => !RECEIPT_FILENAME_PATTERN.test(name))) {
+    unexpected.length > 0) {
     throw new Error("adjustment evidence directory is invalid");
   }
 

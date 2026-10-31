@@ -321,7 +321,7 @@ function futureOnlyEpochWitness() {
     controlPlaneSha256: HASH_A,
     controlPlaneVersion: "14",
     databaseMigrationHistorySha256:
-      "c683c4f937c7f02b00f6ab49f75268eead81d2a221a8a9a23e38f9e4802a11b0",
+      "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
     epochAt: "2026-10-10T08:00:00.000Z",
     servingSnapshotSha256: HASH_C,
     sourceCommit: "1".repeat(40),
@@ -335,24 +335,24 @@ function futureOnlyEpochWitness() {
   };
 }
 
-test("future-only lifecycle genesis binds exact frontier and rolling ledgers", async () => {
+test("future-only lifecycle genesis binds only the exact rolling capture ledger", async () => {
   const store = new MemoryJournalStore();
   const journal = new MaintenanceJournal(store);
   const witness = futureOnlyEpochWitness();
   await journal.initialize();
   assert.deepEqual(validateAdjustmentFutureOnlyEpochWitness(witness), witness);
-  const rollingUnsigned = {
+  const catalogUnsigned = {
     ...witness,
     databaseMigrationHistorySha256:
-      "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
+      "422dac5e0547295b7fd973f8e1b234a013dd629b04001215a044bee928b77b6e",
   };
-  delete rollingUnsigned.witnessSha256;
-  const rollingWitness = {
-    ...rollingUnsigned,
+  delete catalogUnsigned.witnessSha256;
+  const catalogWitness = {
+    ...catalogUnsigned,
     witnessSha256: createHash("sha256")
-      .update(`${JSON.stringify(rollingUnsigned)}\n`).digest("hex"),
+      .update(`${JSON.stringify(catalogUnsigned)}\n`).digest("hex"),
   };
-  assert.deepEqual(validateAdjustmentFutureOnlyEpochWitness(rollingWitness), rollingWitness);
+  assert.throws(() => validateAdjustmentFutureOnlyEpochWitness(catalogWitness));
   const first = await journal.initializeFutureOnlyLifecycle({
     now: "2026-10-10T08:00:01.000Z",
     witness,

@@ -380,10 +380,14 @@ test("family transaction authorizes a disjoint custody-only rain control pair", 
 test("root family Git proof rejects hidden changes, incomplete results and stale Check success", async () => {
   const built = fixture();
   const target = "2".repeat(40);
-  const repository = { id: 1342404160, full_name: "anstosa/weather" };
+  const repository = {
+    fork: false,
+    full_name: "anstosa/Ballydidean-Weather",
+    id: 1_342_404_160,
+  };
   // create one complete scoped successful workflow run
   const run = (filename, id, created_at, updated_at) => ({ id, run_attempt: 1, created_at, updated_at,
-    head_sha: target, event: "push", repository, head_repository: repository,
+    head_sha: target, event: "push", repository: { ...repository }, head_repository: { ...repository },
     path: `.github/workflows/${filename}`, status: "completed", conclusion: "success" });
   const responses = new Map([
     [`git/ref/tags/${built.action.expectedSourceRelease}`, { object: { type: "commit", sha: "1".repeat(40) } }],
@@ -402,6 +406,15 @@ test("root family Git proof rejects hidden changes, incomplete results and stale
   const request = { action: built.action, targetRelease: "2027.01.10-1", readJson };
   assert.equal((await verifyAdjustmentFamilyGitRelease(request)).targetCommit, target);
   const check = responses.get(`actions/workflows/check.yml/runs?head_sha=${target}&event=push&per_page=100`);
+  check.workflow_runs[0].repository.full_name = "anstosa/weather";
+  await assert.rejects(verifyAdjustmentFamilyGitRelease(request), /identity differs/u);
+  check.workflow_runs[0].repository.full_name = repository.full_name;
+  check.workflow_runs[0].head_repository.fork = true;
+  await assert.rejects(verifyAdjustmentFamilyGitRelease(request), /identity differs/u);
+  check.workflow_runs[0].head_repository.fork = false;
+  check.workflow_runs[0].head_repository.id += 1;
+  await assert.rejects(verifyAdjustmentFamilyGitRelease(request), /identity differs/u);
+  check.workflow_runs[0].head_repository.id = repository.id;
   check.workflow_runs.push({ ...run("check.yml", 3, "2027-01-10T08:12:00Z", "2027-01-10T08:21:00Z"), conclusion: "failure" });
   check.total_count = 2;
   await assert.rejects(verifyAdjustmentFamilyGitRelease(request), /not successful/u);
@@ -600,10 +613,14 @@ test("family transaction preserves settings and records failure before family-on
 test("inactive v14 Git proof binds the actual v13 predecessor and refuses stale CI", async () => {
   const source = "56b327d9c750946f6f6963b6fe1fa5c9bba791ca";
   const target = "f6daa89d135661eb60dd5479c5d0d6c23e7198a9";
-  const repository = { id: 1_342_404_160, full_name: "anstosa/weather" };
+  const repository = {
+    fork: false,
+    full_name: "anstosa/Ballydidean-Weather",
+    id: 1_342_404_160,
+  };
   // construct exact successful same-repository workflow metadata
   const run = (filename, id, created_at, updated_at) => ({ id, run_attempt: 1, created_at, updated_at,
-    head_sha: target, event: "push", repository, head_repository: repository,
+    head_sha: target, event: "push", repository: { ...repository }, head_repository: { ...repository },
     path: `.github/workflows/${filename}`, status: "completed", conclusion: "success" });
   const responses = new Map([
     ["git/ref/tags/2026.10.09-1", { object: { type: "commit", sha: source } }],
@@ -640,10 +657,14 @@ test("inactive v14 Git proof binds the actual v13 predecessor and refuses stale 
 test("full v14 Git proof binds the exact bridge predecessor", async () => {
   const source = "f6daa89d135661eb60dd5479c5d0d6c23e7198a9";
   const target = "4".repeat(40);
-  const repository = { id: 1_342_404_160, full_name: "anstosa/weather" };
+  const repository = {
+    fork: false,
+    full_name: "anstosa/Ballydidean-Weather",
+    id: 1_342_404_160,
+  };
   // construct complete exact-commit workflow results
   const run = (filename, id, created_at, updated_at) => ({ id, run_attempt: 1, created_at, updated_at,
-    head_sha: target, event: "push", repository, head_repository: repository,
+    head_sha: target, event: "push", repository: { ...repository }, head_repository: { ...repository },
     path: `.github/workflows/${filename}`, status: "completed", conclusion: "success" });
   const responses = new Map([
     ["git/ref/tags/2026.10.09-2", { object: { type: "commit", sha: source } }],

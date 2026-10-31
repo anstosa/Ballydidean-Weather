@@ -2,7 +2,6 @@ import {
   buildForecastObservationPoints,
   buildSolarCloudEvidence,
   fromSiteWallClock,
-  parseForecastRecordsResponse,
   toSiteWallClock,
 } from "../../apps/web/dist/index.js";
 
@@ -13,18 +12,16 @@ export class ForecastObservationCache {
   #fetcher;
   #origin;
   #now;
-  #maxPages;
   #maxBytes;
   #timeoutMs;
   #retryMs;
   #retryAfter = 0;
 
   // bind fixed upstream geometry with injectable limits for deterministic refusal tests
-  constructor({ origin, fetcher = fetch, now = () => new Date(), maxPages = 128, maxBytes = 24 * 1024 * 1024, timeoutMs = 30_000, retryMs = 30_000 }) {
+  constructor({ origin, fetcher = fetch, now = () => new Date(), maxBytes = 4 * 1024 * 1024, timeoutMs = 30_000, retryMs = 30_000 }) {
     this.#origin = origin;
     this.#fetcher = fetcher;
     this.#now = now;
-    this.#maxPages = maxPages;
     this.#maxBytes = maxBytes;
     this.#timeoutMs = timeoutMs;
     this.#retryMs = retryMs;
@@ -47,14 +44,13 @@ export class ForecastObservationCache {
     if (this.#retryAfter > now.getTime()) {
       throw new Error("Forecast observation retry cooldown is active");
     }
-    const start = fromSiteWallClock(`${localDay}T00:00`, "America/Los_Angeles");
-    const pending = this.#fill(start, now.toISOString()).then((body) => {
-      this.#cached = { body, day: localDay, expires: now.getTime() + 5 * 60_000 };
+    const pending = this.#fill(now).then(({ body, day }) => {
+      this.#cached = { body, day, expires: now.getTime() + 5 * 60_000 };
       return body;
     });
     this.#pending = pending;
     try {
-      return await pending;
+      await pending;
     } catch (error) {
       this.#retryAfter = this.#now().getTime() + this.#retryMs;
       throw error;
@@ -62,98 +58,161 @@ export class ForecastObservationCache {
       // failed paging never poisons later recovery or publishes an incomplete mean
       this.#pending = null;
     }
+    // recheck the farm day after a fill that may have crossed local midnight
+    return this.get();
   }
 
-  // fully page the two existing core read contracts without changing core or evidence capture
-  async #fill(start, through) {
-    // recover still-live daytime evidence across midnight with its regional pairing halo
-    const from = new Date(Math.min(Date.parse(start) - 3 * 3_600_000, Date.parse(through) - 24 * 3_600_000 - 20 * 60_000)).toISOString();
+  // read and validate one complete private compact input
+  async #fill(requestStartedAt) {
     const abort = new AbortController();
     const signal = abort.signal;
     const timer = setTimeout(() => abort.abort(), this.#timeoutMs);
     const deadline = performance.now() + this.#timeoutMs;
-    let bytes = 0;
-    let rows = 0;
-    // preserve one immutable window and one sequential cursor chain per source kind
-    const readKind = async (kind) => {
-      const records = [];
-      const cursors = new Set();
-      let cursor;
-      // refuse a growing archive rather than silently publishing a truncated day
-      for (let page = 0; page < this.#maxPages; page += 1) {
-        signal.throwIfAborted();
-        // retain a monotonic deadline even when a test or transport ignores abort
-        if (performance.now() >= deadline) {
-          throw new Error("Forecast observation deadline exceeded");
-        }
-        const url = new URL("/api/v1/sites/ballydidean/history", this.#origin);
-        url.search = new URLSearchParams({ from, to: through, sourceKind: kind, limit: "250", ...cursor === undefined ? {} : { cursor } }).toString();
-        const response = await this.#fetcher(url, { headers: { accept: "application/json" }, redirect: "error", signal });
-        // an incomplete class cannot produce a trustworthy station mean
-        if (!response.ok || response.body === null) {
-          throw new Error("Forecast observation history is unavailable");
-        }
-        let body = "";
-        let pageBytes = 0;
-        const decoder = new TextDecoder("utf-8", { fatal: true });
-        // bound individual pages and the combined fill before decoding normalized records
-        for await (const chunk of response.body) {
-          bytes += chunk.byteLength;
-          pageBytes += chunk.byteLength;
-          body += decoder.decode(chunk, { stream: true });
-          // refuse memory or wall-time growth without keeping partial results
-          if (bytes > this.#maxBytes || pageBytes > 1024 * 1024 || performance.now() >= deadline) {
-            throw new Error("Forecast observation history limit exceeded");
-          }
-          signal.throwIfAborted();
-        }
-        body += decoder.decode();
-        const raw = JSON.parse(body);
-        const parsed = parseForecastRecordsResponse(raw);
-        const next = raw.page?.nextCursor;
-        // bind every envelope and cursor to the one fixed farm product
-        if (parsed.site.slug !== "ballydidean" || parsed.site.timezone !== "America/Los_Angeles" || parsed.data.length > 250 || raw.page?.limit !== 250 ||
-          (next !== null && (typeof next !== "string" || next.length === 0 || next.length > 512 || cursors.has(next))) ||
-          parsed.data.some((record) => record.provenance.sourceKind !== kind || Date.parse(record.validAt) < Date.parse(from) || Date.parse(record.validAt) >= Date.parse(through))) {
-          throw new Error("Forecast observation history envelope is invalid");
-        }
-        rows += parsed.data.length;
-        // cap expanded normalized objects within the web container memory budget
-        if (rows > 20_000) {
-          throw new Error("Forecast observation row limit exceeded");
-        }
-        records.push(...parsed.data);
-        // finish only after the core confirms that this window has no remaining rows
-        if (next === null) {
-          return records;
-        }
-        cursors.add(next);
-        cursor = next;
-      }
-      throw new Error("Forecast observation history page limit exceeded");
-    };
+    const url = new URL("/internal/v1/forecast-observation-input", this.#origin);
+
     try {
-      const [physical, regional] = await Promise.all([readKind("physical_sensor"), readKind("model_current")]);
-      signal.throwIfAborted();
-      const records = [...physical, ...regional];
-      const data = buildForecastObservationPoints(records, start, through);
+      const response = await this.#fetcher(url, {
+        headers: { accept: "application/json" }, redirect: "error", signal,
+      });
+      // a partial or failed private envelope cannot produce public evidence
+      if (!response.ok || response.body === null) {
+        throw new Error("Forecast observation input is unavailable");
+      }
+      let body = "";
+      let bytes = 0;
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      // retain one strict byte and wall-clock bound while streaming
+      for await (const chunk of response.body) {
+        const nextBytes = bytes + chunk.byteLength;
+        // reject an unbounded chunk before decoding or retaining it
+        if (nextBytes > Math.min(this.#maxBytes, 4 * 1024 * 1024) || performance.now() >= deadline) {
+          throw new Error("Forecast observation input limit exceeded");
+        }
+        signal.throwIfAborted();
+        bytes = nextBytes;
+        body += decoder.decode(chunk, { stream: true });
+      }
+      body += decoder.decode();
+      const receivedAt = this.#now();
+      const input = parseObservationInput(
+        JSON.parse(body),
+        requestStartedAt,
+        receivedAt,
+      );
+      const data = buildForecastObservationPoints(
+        input.records,
+        input.projectionFrom,
+        input.through,
+      );
       let solarCloudEvidence = null;
       try {
-        solarCloudEvidence = buildSolarCloudEvidence(records, {
+        solarCloudEvidence = buildSolarCloudEvidence(input.records, {
           latitude: 47.950429954185445, longitude: -122.42797012608193,
-        }, through);
+        }, input.through);
       } catch {
-        // optional pairing refusal leaves the complete recorded projection independently usable
+        // optional pairing refusal leaves the recorded projection independently usable
       }
       signal.throwIfAborted();
-      // calculation time cannot silently exceed the same bounded complete-fill deadline
+      // calculation time remains part of the complete-fill deadline
       if (performance.now() >= deadline) {
         throw new Error("Forecast observation deadline exceeded");
       }
-      return { generatedAt: through, data, solarCloudEvidence };
+      return {
+        body: { generatedAt: input.through, data, solarCloudEvidence },
+        day: toSiteWallClock(input.projectionFrom, "America/Los_Angeles").slice(0, 10),
+      };
     } finally {
       clearTimeout(timer);
       abort.abort();
     }
   }
+}
+
+const metricKeys = [
+  "apparentTemperatureC", "cloudCoverPercent", "pm25MicrogramsPerCubicMeter",
+  "precipitationRateMmPerHour", "pressureHpa", "relativeHumidityPercent",
+  "solarRadiationWm2", "temperatureC", "uvIndex", "windDirectionDegrees",
+  "windGustMps", "windSpeedMps",
+];
+const recordKeys = ["id", "metrics", "provenance", "receivedAt", "validAt"];
+const provenanceKeys = ["providerKey", "sourceId", "sourceKey", "sourceKind", "stationSlug"];
+
+// narrow one object without accepting arrays
+function object(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+// require one exact key set
+function exactKeys(value, keys) {
+  return Object.keys(value).toSorted().join("\0") === [...keys].toSorted().join("\0");
+}
+
+// require one canonical UTC instant
+function instant(value) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) &&
+    new Date(Date.parse(value)).toISOString() === value;
+}
+
+// validate the closed compact input without manufacturing public-record fields
+function parseObservationInput(value, requestStartedAt, receivedAt) {
+  const input = object(value);
+  const site = object(input?.site);
+  if (input === null || site === null ||
+    !exactKeys(input, ["contractVersion", "generatedAt", "projectionFrom", "queryFrom", "records", "site", "through"]) ||
+    !exactKeys(site, ["slug", "timezone"]) ||
+    input.contractVersion !== "forecast-observation-input/v1" ||
+    site.slug !== "ballydidean" || site.timezone !== "America/Los_Angeles" ||
+    !instant(input.generatedAt) || input.through !== input.generatedAt ||
+    !instant(input.projectionFrom) || !instant(input.queryFrom) ||
+    Date.parse(input.generatedAt) < requestStartedAt.getTime() ||
+    Date.parse(input.generatedAt) > receivedAt.getTime() ||
+    !Array.isArray(input.records) || input.records.length > 20_000) {
+    throw new Error("Forecast observation input envelope is invalid");
+  }
+  const localDay = toSiteWallClock(input.generatedAt, site.timezone).slice(0, 10);
+  const expectedProjection = fromSiteWallClock(`${localDay}T00:00`, site.timezone);
+  const expectedQuery = new Date(Math.min(
+    Date.parse(expectedProjection) - 3 * 3_600_000,
+    Date.parse(input.generatedAt) - 24 * 3_600_000 - 20 * 60_000,
+  )).toISOString();
+  if (input.projectionFrom !== expectedProjection || input.queryFrom !== expectedQuery) {
+    throw new Error("Forecast observation input geometry is invalid");
+  }
+
+  let previousKind = "physical_sensor";
+  let previousValidAt = Number.POSITIVE_INFINITY;
+  let previousId = null;
+  // validate every minimal record and the frozen physical-then-model ordering
+  for (const recordValue of input.records) {
+    const record = object(recordValue);
+    const metrics = object(record?.metrics);
+    const provenance = object(record?.provenance);
+    if (record === null || metrics === null || provenance === null ||
+      !exactKeys(record, recordKeys) || !exactKeys(metrics, metricKeys) ||
+      !exactKeys(provenance, provenanceKeys) || typeof record.id !== "string" ||
+      !/^[1-9][0-9]*$/u.test(record.id) ||
+      !instant(record.validAt) || !instant(record.receivedAt) ||
+      Date.parse(record.validAt) < Date.parse(input.queryFrom) ||
+      Date.parse(record.validAt) >= Date.parse(input.through) ||
+      !["physical_sensor", "model_current"].includes(provenance.sourceKind) ||
+      [provenance.providerKey, provenance.sourceId, provenance.sourceKey, provenance.stationSlug]
+        .some((field) => typeof field !== "string" || field.length === 0 || field.length > 512) ||
+      metricKeys.some((key) => metrics[key] !== null &&
+        (typeof metrics[key] !== "number" || !Number.isFinite(metrics[key])))) {
+      throw new Error("Forecast observation input record is invalid");
+    }
+    const kindOrder = provenance.sourceKind === "physical_sensor" ? 0 : 1;
+    const previousOrder = previousKind === "physical_sensor" ? 0 : 1;
+    const validAt = Date.parse(record.validAt);
+    if (kindOrder < previousOrder || (kindOrder === previousOrder &&
+      (validAt > previousValidAt || (validAt === previousValidAt && previousId !== null &&
+        BigInt(record.id) > BigInt(previousId))))) {
+      throw new Error("Forecast observation input order is invalid");
+    }
+    previousKind = provenance.sourceKind;
+    previousValidAt = validAt;
+    previousId = record.id;
+  }
+
+  return input;
 }

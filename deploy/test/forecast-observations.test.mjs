@@ -1,198 +1,251 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  buildForecastObservationPoints,
+  buildSolarCloudEvidence,
+  fromSiteWallClock,
+  toSiteWallClock,
+} from "../../apps/web/dist/index.js";
 import { ForecastObservationCache } from "../scripts/forecast-observations.mjs";
 
 const at = new Date("2026-08-22T05:37:00.000Z");
-const site = { slug: "ballydidean", name: "Ballydídean", latitude: 47.950429954185445, longitude: -122.42797012608193, stations: [], timezone: "America/Los_Angeles" };
+const metricKeys = [
+  "apparentTemperatureC", "cloudCoverPercent", "pm25MicrogramsPerCubicMeter",
+  "precipitationRateMmPerHour", "pressureHpa", "relativeHumidityPercent",
+  "solarRadiationWm2", "temperatureC", "uvIndex", "windDirectionDegrees",
+  "windGustMps", "windSpeedMps",
+];
 
-// create the same normalized raw envelope served by the frozen core
-function record(index, validAt = "2026-08-21T12:00:00.000Z", temperatureC = 10) {
+// create one narrow input record
+function record(index, overrides = {}) {
+  const metrics = Object.fromEntries(metricKeys.map((key) => [key, null]));
   return {
-    id: String(index), validAt, receivedAt: validAt, productRunAt: null, revisionCount: 0,
-    freshness: { ageSeconds: 1000, status: "stale", label: "Historical" },
-    metadata: { device: null, provider: null, quality: null, upstream: { model: null, timezone: site.timezone } },
-    metrics: {
-      apparentTemperatureC: null, blackGlobeTemperatureC: null, cloudCoverPercent: null, pm25MicrogramsPerCubicMeter: null,
-      precipitationMm: null, precipitationRateMmPerHour: null, pressureHpa: null, relativeHumidityPercent: null,
-      soilElectricalConductivityMicrosiemensPerCm: null, soilMoisturePercent: null, solarRadiationWm2: null,
-      temperatureC, uvIndex: null, windDirectionDegrees: null, windGustMps: null, windSpeedMps: null, wetBulbGlobeTemperatureC: null,
+    id: String(index + 1),
+    metrics: { ...metrics, temperatureC: 10, ...overrides.metrics },
+    provenance: {
+      providerKey: "ecowitt-local", sourceId: "1",
+      sourceKey: "ecowitt-88f15505d89f-local-live-v1",
+      sourceKind: "physical_sensor", stationSlug: "ballydidean-ecowitt",
+      ...overrides.provenance,
     },
-    provenance: { attribution: { label: "Weather", url: "https://example.test/" }, label: "physical sensor", providerKey: "ecowitt-local", sourceId: "1", sourceKey: "ecowitt-88f15505d89f-local-live-v1", sourceKind: "physical_sensor", stationSlug: "ballydidean-ecowitt" },
+    receivedAt: overrides.receivedAt ?? overrides.validAt ?? "2026-08-21T12:00:00.000Z",
+    validAt: overrides.validAt ?? "2026-08-21T12:00:00.000Z",
   };
 }
 
-// encode a complete bounded page with an opaque stable cursor
-function page(data = [], nextCursor = null, overrides = {}) {
-  return Response.json({ data, page: { limit: 250, nextCursor }, site, ...overrides });
+// create one exact internal envelope
+function envelope(records = [], generatedAt = at.toISOString(), overrides = {}) {
+  const localDay = toSiteWallClock(generatedAt, "America/Los_Angeles").slice(0, 10);
+  const projectionFrom = fromSiteWallClock(`${localDay}T00:00`, "America/Los_Angeles");
+  const queryFrom = new Date(Math.min(
+    Date.parse(projectionFrom) - 3 * 3_600_000,
+    Date.parse(generatedAt) - 24 * 3_600_000 - 20 * 60_000,
+  )).toISOString();
+  return {
+    contractVersion: "forecast-observation-input/v1",
+    generatedAt,
+    projectionFrom,
+    queryFrom,
+    records,
+    site: { slug: "ballydidean", timezone: "America/Los_Angeles" },
+    through: generatedAt,
+    ...overrides,
+  };
 }
 
-// prove all pages and both source classes use one immutable geometry and shared cache
-test("forecast history fully pages beyond 250 and singleflights concurrent viewers", async () => {
-  const requests = [];
+// serve one JSON envelope
+function response(value) {
+  return Response.json(value);
+}
+
+// mirror the repository's frozen physical-then-model order
+function ordered(records) {
+  return records.toSorted((left, right) => {
+    const leftKind = left.provenance.sourceKind === "physical_sensor" ? 0 : 1;
+    const rightKind = right.provenance.sourceKind === "physical_sensor" ? 0 : 1;
+    return leftKind - rightKind || Date.parse(right.validAt) - Date.parse(left.validAt) ||
+      Number(BigInt(right.id) - BigInt(left.id));
+  });
+}
+
+// prove the compact transport preserves complete legacy projection results
+ test("compact input preserves observations and solar evidence with one shared request", async () => {
+  const physical = Array.from({ length: 251 }, (_, index) => record(index));
+  physical.push(record(300, {
+    metrics: { solarRadiationWm2: 800, temperatureC: 42 },
+    validAt: "2026-08-22T04:00:00.000Z",
+  }));
+  const regional = record(400, {
+    metrics: { cloudCoverPercent: 80 },
+    provenance: {
+      providerKey: "open-meteo", sourceId: "2", sourceKey: "open-meteo-current-v1",
+      sourceKind: "model_current", stationSlug: "open-meteo-virtual",
+    },
+    validAt: "2026-08-22T03:55:00.000Z",
+  });
+  const records = ordered([...physical, regional]);
+  let requests = 0;
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
-  const cache = new ForecastObservationCache({ origin: "http://api:3001", now: () => at, fetcher: async (input) => {
-    const url = new URL(input);
-    requests.push(url);
-    await gate;
-    // a missing regional archive leaves the physical class independently usable
-    if (url.searchParams.get("sourceKind") === "model_current") {
-      return page();
-    }
-    // retain a second page containing the farm metric actually plotted
-    if (url.searchParams.get("cursor") === "second") {
-      return page([record(251, "2026-08-22T04:00:00.000Z", 42)]);
-    }
-    return page(Array.from({ length: 250 }, (_, index) => record(index)), "second");
-  } });
+  const cache = new ForecastObservationCache({
+    origin: "http://api:3001", now: () => at,
+    fetcher: async (input) => {
+      requests += 1;
+      assert.equal(new URL(input).pathname, "/internal/v1/forecast-observation-input");
+      await gate;
+      return response(envelope(records));
+    },
+  });
   const first = cache.get();
   const second = cache.get();
   release();
   const [left, right] = await Promise.all([first, second]);
-  assert.deepEqual(left, right);
-  assert.equal(left.data.find((point) => point.validAt === "2026-08-22T04:00:00.000Z").metrics.temperatureC, 42);
-  assert.equal(requests.length, 3);
+  const source = envelope(records);
+  assert.deepEqual(left.data, buildForecastObservationPoints(records, source.projectionFrom, source.through));
+  assert.deepEqual(left.solarCloudEvidence, buildSolarCloudEvidence(records, { latitude: 47.950429954185445, longitude: -122.42797012608193 }, source.through));
+  assert.equal(left, right);
+  assert.equal(requests, 1);
   assert.equal(await cache.get(), left);
-  assert.equal(requests.length, 3);
-  // retain local midnight plus pressure context on every page
-  for (const url of requests) {
-    assert.equal(url.pathname, "/api/v1/sites/ballydidean/history");
-    assert.equal(url.searchParams.get("from"), "2026-08-21T04:00:00.000Z");
-    assert.equal(url.searchParams.get("to"), at.toISOString());
-    assert.equal(url.searchParams.get("limit"), "250");
-  }
+  assert.equal(requests, 1);
 });
 
-// cache only fully completed paging and permit bounded recovery after every refusal
-test("repeated cursors limits malformed pages and errors never publish partial observations", async () => {
-  // exercise independent refusal branches without weakening archive completeness
-  for (const scenario of ["cursor", "pages", "bytes", "invalid", "status", "timeout"]) {
-    let broken = true;
-    let requests = 0;
+// refuse malformed geometry records and order without publishing partial state
+ test("compact input rejects malformed geometry records and ordering then recovers", async () => {
+  const valid = [record(2, { validAt: "2026-08-21T13:00:00.000Z" }), record(1)];
+  for (const broken of [
+    envelope(valid, at.toISOString(), { queryFrom: "2026-08-21T05:00:00.000Z" }),
+    envelope([{ ...valid[0], metrics: { ...valid[0].metrics, pressureHpa: "bad" } }]),
+    envelope([{ ...valid[0], id: 3 }]),
+    envelope(valid.toReversed()),
+    envelope([{ ...valid[0], metadata: {} }]),
+  ]) {
+    let fail = true;
     const cache = new ForecastObservationCache({
-      origin: "http://api:3001", now: () => at, retryMs: 0, maxPages: 2, maxBytes: scenario === "bytes" ? 100 : 100_000, timeoutMs: scenario === "timeout" ? 1 : 30_000,
-      fetcher: async (input) => {
-        requests += 1;
-        // after refusal a fresh empty envelope proves that no failed fill was cached
-        if (!broken) {
-          return page();
-        }
-        // isolate each frozen upstream class while forcing one incomplete class
-        if (new URL(input).searchParams.get("sourceKind") === "model_current") {
-          return page();
-        }
-        // retain transport refusal separately from payload and capacity guards
-        if (scenario === "status") {
-          return new Response("unavailable", { status: 503 });
-        }
-        // simulate a transport that returns too late despite receiving an abort signal
-        if (scenario === "timeout") {
-          await new Promise((resolve) => setTimeout(resolve, 5));
-          return page();
-        }
-        // malformed classes cannot cross the normalized parser boundary
-        if (scenario === "invalid") {
-          return page([record(1)], null, { site: { ...site, slug: "other" } });
-        }
-        const cursor = scenario === "pages" ? `page-${requests}` : "repeat";
-        return page([record(1)], cursor);
-      },
+      origin: "http://api:3001", now: () => at, retryMs: 0,
+      fetcher: async () => response(fail ? broken : envelope([])),
     });
     await assert.rejects(cache.get());
-    broken = false;
-    // the tiny byte limit still refuses even an empty envelope as designed
-    if (scenario === "bytes" || scenario === "timeout") {
-      continue;
-    }
-    const before = requests;
-    const recovered = await cache.get();
-    assert.equal(requests, before + 2);
-    assert.ok(recovered.data.length > 0);
-    assert.equal(recovered.data.every((point) => Object.keys(point.metrics).length === 0), true);
+    fail = false;
+    assert.equal((await cache.get()).data.length, 23);
   }
 });
 
-// re-read after five minutes and never serve the previous farm day after midnight
-test("recorded projection expires and handles farm-local DST days", async () => {
+// refill both waiters when one successful request crosses farm midnight
+test("compact cache initiator and joiner recheck the farm day after a fill", async () => {
+  const beforeMidnight = new Date("2026-08-22T06:59:59.000Z");
+  const afterMidnight = new Date("2026-08-22T07:00:01.000Z");
+  let now = beforeMidnight;
+  let requests = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const cache = new ForecastObservationCache({
+    origin: "http://api:3001", now: () => now,
+    fetcher: async () => {
+      requests += 1;
+      // delay only the first pre-midnight snapshot until the next farm day
+      if (requests === 1) {
+        await gate;
+        return response(envelope([], beforeMidnight.toISOString()));
+      }
+      return response(envelope([], afterMidnight.toISOString()));
+    },
+  });
+  const initiator = cache.get();
+  const joiner = cache.get();
+  now = afterMidnight;
+  release();
+  const [left, right] = await Promise.all([initiator, joiner]);
+  assert.equal(left, right);
+  assert.equal(left.generatedAt, afterMidnight.toISOString());
+  assert.equal(left.data.length, 1);
+  assert.equal(requests, 2);
+  assert.equal(await cache.get(), left);
+  assert.equal(requests, 2);
+});
+
+// preserve expiry and local-midnight invalidation including fall DST geometry
+ test("compact cache expires and never serves the prior farm day", async () => {
   let now = at;
-  const requests = [];
-  const cache = new ForecastObservationCache({ origin: "http://api:3001", now: () => now, fetcher: async (input) => {
-    requests.push(new URL(input));
-    return page();
-  } });
+  let requests = 0;
+  const cache = new ForecastObservationCache({
+    origin: "http://api:3001", now: () => now,
+    fetcher: async () => { requests += 1; return response(envelope([], now.toISOString())); },
+  });
   await cache.get();
   now = new Date(at.getTime() + 5 * 60_000);
   await cache.get();
-  assert.equal(requests.length, 4);
+  assert.equal(requests, 2);
   now = new Date("2026-11-02T07:59:00.000Z");
-  const fall = await cache.get();
-  assert.equal(fall.data.length, 25);
-  assert.equal(requests.at(-1).searchParams.get("from"), "2026-11-01T04:00:00.000Z");
+  assert.equal((await cache.get()).data.length, 25);
   now = new Date("2026-11-02T08:01:00.000Z");
-  const next = await cache.get();
-  assert.equal(next.data.length, 1);
-  assert.equal(requests.at(-1).searchParams.get("from"), "2026-11-01T07:41:00.000Z");
+  assert.equal((await cache.get()).data.length, 1);
+  assert.equal(requests, 4);
 });
 
-// bound repeated public failure load without caching partial data as a success
-test("failed fills have a short retry cooldown before complete recovery", async () => {
+// keep retry cooldown and body limits independent from successful cache state
+ test("compact failures cool down and bounded recovery never caches partial input", async () => {
+  const oversized = new ForecastObservationCache({
+    origin: "http://api:3001", now: () => at, maxBytes: 3, retryMs: 0,
+    fetcher: async () => new Response(new ReadableStream({
+      // expose invalid UTF-8 that must never reach the fatal decoder
+      start(controller) {
+        controller.enqueue(Uint8Array.from([0xff, 0xff, 0xff, 0xff]));
+        controller.close();
+      },
+    })),
+  });
+  await assert.rejects(oversized.get(), /limit/u);
   let now = at;
-  let calls = 0;
   let broken = true;
-  const cache = new ForecastObservationCache({ origin: "http://api:3001", now: () => now, fetcher: async () => {
-    calls += 1;
-    return broken ? new Response("offline", { status: 503 }) : page();
-  } });
-  await assert.rejects(cache.get());
-  const before = calls;
+  let calls = 0;
+  const cache = new ForecastObservationCache({
+    origin: "http://api:3001", now: () => now, maxBytes: 100,
+    fetcher: async () => {
+      calls += 1;
+      return broken ? response(envelope([record(1)])) : response(envelope([]));
+    },
+  });
+  await assert.rejects(cache.get(), /limit/u);
+  const failedCalls = calls;
   await assert.rejects(cache.get(), /cooldown/u);
-  assert.equal(calls, before);
+  assert.equal(calls, failedCalls);
   now = new Date(at.getTime() + 30_000);
   broken = false;
-  assert.ok((await cache.get()).data.length > 0);
-  assert.equal(calls, before + 2);
+  await assert.rejects(cache.get(), /limit/u);
 });
 
-// a restarted edge recovers yesterday's original daylight pair without changing today's graph
-test("shared completed archive recovers daylight evidence across local midnight", async () => {
-  const now = new Date("2026-06-22T08:01:00.000Z");
-  const physical = { ...record("ws90", "2026-06-21T20:00:00.000Z"), metrics: { ...record(1).metrics, solarRadiationWm2: 800 } };
-  const regional = { ...record("regional", "2026-06-21T19:55:00.000Z"), metrics: { ...record(1).metrics, cloudCoverPercent: 80 },
-    provenance: { ...record(1).provenance, providerKey: "open-meteo", sourceId: "model", sourceKey: "open-meteo-current-v1", sourceKind: "model_current", stationSlug: "open-meteo-virtual" } };
-  const urls = [];
-  const cache = new ForecastObservationCache({ origin: "http://api:3001", now: () => now, fetcher: async (input) => {
-    const url = new URL(input);
-    urls.push(url);
-    return page([url.searchParams.get("sourceKind") === "physical_sensor" ? physical : regional]);
-  } });
-  const [observations, evidence] = await Promise.all([cache.get(), cache.get()]);
-  assert.equal(observations, evidence);
-  assert.equal(urls.length, 2);
-  assert.equal(urls[0].searchParams.get("from"), "2026-06-21T07:41:00.000Z");
-  assert.equal(evidence.solarCloudEvidence.evaluatedAt, "2026-06-21T20:00:00.000Z");
-  assert.equal(evidence.solarCloudEvidence.ws90.recordId, "ws90");
-  assert.equal(evidence.solarCloudEvidence.regional.recordId, "regional");
-  assert.equal(observations.data.length, 2);
-  assert.deepEqual(observations.data[0].metrics, {});
-  assert.equal(JSON.stringify(evidence.solarCloudEvidence).includes("metadata"), false);
-});
-
-// refuse pathological optional pair growth without discarding a fully recorded graph
-test("optional solar comparison refusal leaves complete observations available", async () => {
-  const now = new Date("2026-06-22T05:00:00.000Z");
-  const physical = Array.from({ length: 257 }, (_, index) => ({ ...record(index, "2026-06-21T20:00:00.000Z"), metrics: { ...record(1).metrics, solarRadiationWm2: 0 } }));
-  const regional = Array.from({ length: 250 }, (_, index) => ({ ...record(`model-${index}`, "2026-06-21T20:00:00.000Z"), metrics: { ...record(1).metrics, cloudCoverPercent: 80 },
-    provenance: { ...record(1).provenance, providerKey: "open-meteo", sourceId: "model", sourceKey: "open-meteo-current-v1", sourceKind: "model_current", stationSlug: "open-meteo-virtual" } }));
-  const cache = new ForecastObservationCache({ origin: "http://api:3001", now: () => now, fetcher: async (input) => {
-    const url = new URL(input);
-    // page the complete physical revision population before evaluating the optional pair budget
-    if (url.searchParams.get("sourceKind") === "physical_sensor") {
-      return url.searchParams.has("cursor") ? page(physical.slice(250)) : page(physical.slice(0, 250), "more");
-    }
-    return page(regional);
-  } });
+// contain an optional solar comparison refusal while retaining observations
+ test("optional solar refusal leaves compact observations available", async () => {
+  const generatedAt = "2026-06-22T05:00:00.000Z";
+  const now = new Date(generatedAt);
+  const physical = Array.from({ length: 257 }, (_, index) => record(index, {
+    metrics: { solarRadiationWm2: 0 }, validAt: "2026-06-21T20:00:00.000Z",
+  }));
+  const regional = Array.from({ length: 250 }, (_, index) => record(index + 300, {
+    metrics: { cloudCoverPercent: 80 },
+    provenance: {
+      providerKey: "open-meteo", sourceId: "model", sourceKey: "open-meteo-current-v1",
+      sourceKind: "model_current", stationSlug: "open-meteo-virtual",
+    },
+    validAt: "2026-06-21T20:00:00.000Z",
+  }));
+  const cache = new ForecastObservationCache({
+    origin: "http://api:3001", now: () => now,
+    fetcher: async () => response(envelope(ordered([...physical, ...regional]), generatedAt)),
+  });
   const body = await cache.get();
   assert.equal(body.solarCloudEvidence, null);
   assert.equal(body.data.find((point) => point.validAt === "2026-06-21T20:00:00.000Z").metrics.cloudCoverPercent, 80);
-  assert.equal(await cache.get(), body);
+});
+
+// abort an input transport that exceeds the unchanged complete-fill deadline
+ test("compact input timeout refuses incomplete work", async () => {
+  const cache = new ForecastObservationCache({
+    origin: "http://api:3001", now: () => at, timeoutMs: 1,
+    fetcher: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return response(envelope([]));
+    },
+  });
+  await assert.rejects(cache.get());
 });
