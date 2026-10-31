@@ -1811,7 +1811,7 @@ printf 'release-recovered:%s\\n' "$(WEATHER_ENV_FILE=$previous_env compose exec 
       assert.match(rollbackCommands, /acl-after-recover:verified/u);
       assert.match(
         rollbackCommands,
-        /stale-activate-before\nerror: cannot activate release 2026\.08\.22-2 while runtime release 2026\.08\.22-1 differs from retained schema release 2026\.08\.22-3\nstale-activate-after/u,
+        /stale-activate-before\nerror: normal activation requires one exact forward staged release\nstale-activate-after/u,
       );
       assert.match(rollbackCommands, /release-recovered:2026\.08\.22-1/u);
       assert.equal(await readFile(join(releaseState, "schema-release"), "utf8"), "2026.08.22-3\n");
