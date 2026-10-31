@@ -556,7 +556,7 @@ test(
       const secondEvent = JSON.parse(second.stdout.trim());
 
       assert.equal(firstEvent.event, "migrations_complete");
-      // require the complete immutable 0021 ledger
+      // require the complete immutable 0022 ledger
       assert.deepEqual(firstEvent.applied, [
         "0001_initial_weather.sql",
         "0002_worker_migration_readiness.sql",
@@ -579,6 +579,7 @@ test(
         "0019_adjustment_maintenance_recurring.sql",
         "0020_adjustment_revision_frontier.sql",
         "0021_adjustment_rolling_registration.sql",
+        "0022_forecast_product_catalog.sql",
       ]);
       assert.deepEqual(firstEvent.current, []);
       assert.equal(secondEvent.event, "migrations_complete");
@@ -605,6 +606,7 @@ test(
         "0019_adjustment_maintenance_recurring.sql",
         "0020_adjustment_revision_frontier.sql",
         "0021_adjustment_rolling_registration.sql",
+        "0022_forecast_product_catalog.sql",
       ]);
       assert.deepEqual(secondEvent.bootstrap, firstEvent.bootstrap);
       assert.deepEqual(secondEvent.ecowittBootstrap, firstEvent.ecowittBootstrap);
@@ -642,6 +644,7 @@ test(
         { name: "0019_adjustment_maintenance_recurring.sql" },
         { name: "0020_adjustment_revision_frontier.sql" },
         { name: "0021_adjustment_rolling_registration.sql" },
+        { name: "0022_forecast_product_catalog.sql" },
       ]);
       assert.deepEqual(firstSnapshot.owners, [
         { tableowner: "weather_owner", tablename: "providers" },
@@ -1213,6 +1216,7 @@ test(
         { name: "0019_adjustment_maintenance_recurring.sql" },
         { name: "0020_adjustment_revision_frontier.sql" },
         { name: "0021_adjustment_rolling_registration.sql" },
+        { name: "0022_forecast_product_catalog.sql" },
       ]);
       // retain all normalized metric update grants
       const metricUpdatePrivileges = await ingestPool.query(

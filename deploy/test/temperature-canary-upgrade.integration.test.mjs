@@ -120,6 +120,7 @@ test(
         "0019_adjustment_maintenance_recurring.sql",
         "0020_adjustment_revision_frontier.sql",
         "0021_adjustment_rolling_registration.sql",
+        "0022_forecast_product_catalog.sql",
       ]);
       await applyRuntimeAcl(server, runtimeAclPath, "runtime-acl-v2-upgraded.sql");
 
