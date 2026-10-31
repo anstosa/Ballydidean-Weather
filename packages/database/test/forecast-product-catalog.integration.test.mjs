@@ -249,6 +249,7 @@ test("0022 maintains an exact catalog for schema-21 workers and public reads", {
 }, async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "weather-product-catalog-"));
   const legacyDirectory = join(temporaryDirectory, "migrations");
+  const catalogDirectory = join(temporaryDirectory, "catalog-migrations");
   const server = await startPostgres(17, "forecast-product-catalog");
   const admin = createTestPool(server);
   let pool;
@@ -261,6 +262,8 @@ test("0022 maintains an exact catalog for schema-21 workers and public reads", {
       legacyDirectory,
       "0021_adjustment_rolling_registration.sql",
     );
+    // isolate catalog behavior from later index migrations
+    await copyMigrationsThrough(catalogDirectory, "0022_forecast_product_catalog.sql");
 
     await prepareRuntimeRoles(admin);
     pool = createTestPool(server, "weather_test", "weather_owner", "owner-test");
@@ -348,7 +351,7 @@ test("0022 maintains an exact catalog for schema-21 workers and public reads", {
       validAt: ["2026-11-01T06:00:00Z", "2026-11-01T07:00:00Z"],
     });
 
-    const upgraded = await runMigrations(pool, migrationDirectory);
+    const upgraded = await runMigrations(pool, catalogDirectory);
     assert.deepEqual(upgraded.applied, ["0022_forecast_product_catalog.sql"]);
     assert.equal(upgraded.current.length, 21);
     assert.equal(
@@ -372,7 +375,7 @@ test("0022 maintains an exact catalog for schema-21 workers and public reads", {
       `)).rows[0].count,
       2,
     );
-    const repeated = await runMigrations(pool, migrationDirectory);
+    const repeated = await runMigrations(pool, catalogDirectory);
     assert.deepEqual(repeated.applied, []);
     assert.equal(repeated.current.length, 22);
 
@@ -1015,6 +1018,7 @@ test("0022 rolls back timeout faults and uses a read-compatible table lock", {
 }, async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "weather-product-locks-"));
   const legacyDirectory = join(temporaryDirectory, "legacy");
+  const catalogDirectory = join(temporaryDirectory, "catalog-migrations");
   const lockFaultDirectory = join(temporaryDirectory, "lock-fault");
   const statementFaultDirectory = join(temporaryDirectory, "statement-fault");
   const server = await startPostgres(17, "forecast-product-locks");
@@ -1028,6 +1032,8 @@ test("0022 rolls back timeout faults and uses a read-compatible table lock", {
       legacyDirectory,
       "0021_adjustment_rolling_registration.sql",
     );
+    // retain the exact catalog-only retry boundary
+    await copyMigrationsThrough(catalogDirectory, "0022_forecast_product_catalog.sql");
     await createFaultMigrationDirectory(
       lockFaultDirectory,
       // shorten only the injected lock fault
@@ -1088,7 +1094,7 @@ test("0022 rolls back timeout faults and uses a read-compatible table lock", {
       { ledger_count: 0, relation: null },
     );
     assert.deepEqual(
-      (await runMigrations(migrationPool, migrationDirectory)).applied,
+      (await runMigrations(migrationPool, catalogDirectory)).applied,
       ["0022_forecast_product_catalog.sql"],
     );
 

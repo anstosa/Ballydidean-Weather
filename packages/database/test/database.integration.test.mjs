@@ -126,7 +126,7 @@ test(
         `);
 
         assert.deepEqual(forecastIndex.rows, [{
-          definition: "CREATE INDEX weather_records_forecast_product_valid_idx ON public.weather_records USING btree (source_id, product_run_at DESC, valid_at, id) WHERE (source_kind = 'forecast'::text)",
+          definition: "CREATE INDEX weather_records_forecast_product_valid_idx ON public.weather_records USING btree (source_id, product_run_at DESC, valid_at, id) WHERE ((source_kind)::text = 'forecast'::text)",
           owner: "weather_owner",
           ready: true,
           valid: true,
