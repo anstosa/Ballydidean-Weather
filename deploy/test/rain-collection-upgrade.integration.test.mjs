@@ -167,7 +167,11 @@ test(
           to_regprocedure('weather_guard_rain_adjustment_run()') AS adjustment_guard,
           to_regprocedure('weather_guard_rain_capture_claim()') AS claim_guard,
           to_regprocedure('weather_guard_rain_capture_receipt()') AS receipt_guard,
-          to_regprocedure('weather_reject_rain_capture_mutation()') AS mutation_guard
+          to_regprocedure('weather_reject_rain_capture_mutation()') AS mutation_guard,
+          to_regclass('forecast_products') AS forecast_products,
+          to_regprocedure('weather_sync_forecast_products_after_insert()') AS forecast_product_insert,
+          to_regprocedure('weather_sync_forecast_products_after_delete()') AS forecast_product_delete,
+          to_regprocedure('weather_sync_forecast_products_after_truncate()') AS forecast_product_truncate
         FROM schema_migrations
       `);
       assert.deepEqual(boundary.rows[0], {
@@ -175,6 +179,10 @@ test(
         adjustment_runs: null,
         claim_guard: null,
         claims: null,
+        forecast_product_delete: null,
+        forecast_product_insert: null,
+        forecast_product_truncate: null,
+        forecast_products: null,
         migrations: "8",
         mutation_guard: null,
         receipt_guard: null,
@@ -193,6 +201,38 @@ test(
         "0021_adjustment_rolling_registration.sql",
         "0022_forecast_product_catalog.sql",
       ]);
+      const replayedCatalog = await pool.query(`
+        SELECT to_regclass('forecast_products')::text AS catalog,
+          (SELECT count(*)::integer
+           FROM pg_proc procedure
+           JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
+           WHERE namespace.nspname = 'public'
+             AND procedure.proname LIKE 'weather_sync_forecast_products_after_%') AS functions,
+          (SELECT count(*)::integer
+           FROM pg_trigger trigger
+           WHERE trigger.tgrelid = 'weather_records'::regclass
+             AND NOT trigger.tgisinternal
+             AND trigger.tgname LIKE 'weather_records_forecast_products_%') AS triggers,
+          NOT EXISTS (
+            (SELECT DISTINCT source_id, product_run_at
+             FROM weather_records
+             WHERE source_kind = 'forecast'
+             EXCEPT
+             SELECT source_id, product_run_at FROM forecast_products)
+            UNION ALL
+            (SELECT source_id, product_run_at FROM forecast_products
+             EXCEPT
+             SELECT DISTINCT source_id, product_run_at
+             FROM weather_records
+             WHERE source_kind = 'forecast')
+          ) AS consistent
+      `);
+      assert.deepEqual(replayedCatalog.rows, [{
+        catalog: "forecast_products",
+        consistent: true,
+        functions: 3,
+        triggers: 3,
+      }]);
       await applyRuntimeAcl(server);
       await verifyRuntimeAcl(server);
     } finally {
