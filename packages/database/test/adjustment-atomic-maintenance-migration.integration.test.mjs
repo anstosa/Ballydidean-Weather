@@ -85,6 +85,10 @@ test("atomic maintenance bridge restores 18 on failure and commits all three fil
     const retry = await runMigrations(owner, bridgeRoot, { atomicMaintenanceV14: true });
     assert.deepEqual(retry.applied, []);
     assert.deepEqual(retry.current, names.slice(0, 21));
+    // refuse an extended target after the reviewed bridge ledger is complete
+    await copyPrefix(root, 21);
+    await writeFile(join(root, "0022_unreviewed.sql"), "SELECT 1;\n");
+    await assert.rejects(runMigrations(owner, root, { atomicMaintenanceV14: true }), /exact 18-to-21/u);
     const ordinary = await runMigrations(owner, migrationDirectory);
     assert.deepEqual(ordinary.applied, names.slice(21));
     assert.deepEqual(ordinary.current, names.slice(0, 21));
@@ -196,10 +200,6 @@ test("atomic maintenance bridge restores 18 on failure and commits all three fil
       assert.equal(Number((await client.query("SELECT count(*) FROM adjustment_shadow_registrations_v2")).rows[0].count), 1);
     } finally { client.release(); }
     assert.equal((await readLifecycle()).entries[0].metadata.generation, 1);
-    // refuse an extended target even after the reviewed ledger is already complete
-    await copyPrefix(root, 21);
-    await writeFile(join(root, "0022_unreviewed.sql"), "SELECT 1;\n");
-    await assert.rejects(runMigrations(owner, root, { atomicMaintenanceV14: true }), /exact 18-to-21/u);
   } finally {
     await owner?.end();
     await admin.end();
