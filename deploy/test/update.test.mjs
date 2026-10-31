@@ -966,7 +966,7 @@ test("inert v14 provisions fixed rain target sources before producer activation"
 });
 
 // pin the backward-compatible migration boundary
-test("compatibility clone removes private evidence before replaying migrations through 0021", async () => {
+test("compatibility clone removes private evidence before replaying migrations through 0022", async () => {
   const update = await readFile(updateScript, "utf8");
   const compatibility = update
     .split("verify_previous_image_compatibility() (")[1]
@@ -994,7 +994,7 @@ test("compatibility clone removes private evidence before replaying migrations t
   const claimGuardDrop = compatibility.indexOf("DROP FUNCTION IF EXISTS weather_guard_rain_capture_claim()");
   const receiptGuardDrop = compatibility.indexOf("DROP FUNCTION IF EXISTS weather_guard_rain_capture_receipt()");
   const mutationGuardDrop = compatibility.indexOf("DROP FUNCTION IF EXISTS weather_reject_rain_capture_mutation()");
-  const ledgerReset = compatibility.indexOf("'0017_adjustment_evaluation_export.sql', '0018_adjustment_maintenance_v2.sql', '0019_adjustment_maintenance_recurring.sql', '0020_adjustment_revision_frontier.sql', '0021_adjustment_rolling_registration.sql')");
+  const ledgerReset = compatibility.indexOf("'0017_adjustment_evaluation_export.sql', '0018_adjustment_maintenance_v2.sql', '0019_adjustment_maintenance_recurring.sql', '0020_adjustment_revision_frontier.sql', '0021_adjustment_rolling_registration.sql', '0022_forecast_product_catalog.sql')");
   const replay = compatibility.indexOf(
     'run_owned_compatibility_container "$target_env" "${candidate}_migration" migration --no-deps',
   );
