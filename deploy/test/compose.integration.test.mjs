@@ -1672,7 +1672,7 @@ verify_previous_image_compatibility "$compatibility_env" "$previous_compatibilit
             "WEATHER_FORECAST_ADJUSTMENT_WIND_CANARY_KILL_SWITCH=0",
             "WEATHER_FORECAST_ADJUSTMENT_TEMPERATURE_CANARY_KILL_SWITCH=1",
             `WEATHER_CONTROL_PLANE_SHA256=${controlPlane}`,
-            "WEATHER_CONTROL_PLANE_VERSION=14",
+            "WEATHER_CONTROL_PLANE_VERSION=15",
             "",
           ].join("\n"),
           { mode: 0o600 },
