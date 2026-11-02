@@ -5874,7 +5874,7 @@ prepare_v14_compatibility_bridge_release() {
   local release=$1
   local source_env=$2
   local target server_source web_source server_image web_image postgres_image
-  local cloudflared_image temporary image
+  local cloudflared_image temporary cleanup_trap image
   local -a images
   [[ "$release" == "$v14_compatibility_bridge_release" ]] ||
     die "v14 compatibility bridge release differs"
@@ -5904,7 +5904,8 @@ prepare_v14_compatibility_bridge_release() {
   temporary=$(mktemp "$releases_dir/.${release}.XXXXXX.env.partial")
 
   # remove an interrupted render
-  trap 'rm -f "$temporary"' EXIT
+  printf -v cleanup_trap 'rm -f -- %q' "$temporary"
+  trap "$cleanup_trap" EXIT
   write_release_env "$source_env" "$temporary" "$release" \
     "$server_image" "$web_image" "$postgres_image" "$cloudflared_image"
   require_v14_compatibility_bridge_release_pair "$temporary" "$source_env"
@@ -6012,7 +6013,8 @@ process.stdout.write(proof.targetCommit);
 ' "$git_proof" "$v14_compatibility_bridge_commit")
   [[ "$bridge_target_commit" == "$v14_compatibility_bridge_commit" ]] ||
     die "v14 compatibility bridge commit differs"
-  target=$(prepare_v14_compatibility_bridge_release "$release" "$source_env")
+  # propagate required preparation failures through command substitution
+  target=$(set -e; prepare_v14_compatibility_bridge_release "$release" "$source_env")
   require_v14_compatibility_bridge_release_pair "$target" "$source_env"
   require_v14_compatibility_bridge_migration_ledger \
     "$source_env" "$(env_value "$source_env" WEATHER_DATABASE_NAME)"

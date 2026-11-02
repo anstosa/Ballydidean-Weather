@@ -8939,6 +8939,55 @@ async function fetchWeatherRegistryObject(repository, kind, digest, accept) {
   return response;
 }
 
+// retry one complete registry-object operation after a transport deadline
+export async function retryWeatherRegistryObject(repository, kind, digest, operation) {
+  // require one closed public object identity
+  if (!/^weather-(server|web)$/u.test(repository) ||
+    !["blobs", "manifests"].includes(kind) ||
+    !ADJUSTMENT_RELEASE_DIGEST.test(digest) || typeof operation !== "function") {
+    throw new Error("registry retry identity is invalid");
+  }
+
+  // permit one fresh full-object attempt only for a timeout
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const timedOut = error !== null && typeof error === "object" &&
+        error.name === "TimeoutError";
+
+      // preserve every non-timeout refusal without retrying
+      if (!timedOut) throw error;
+
+      // expose only the closed object identity after the retry is exhausted
+      if (attempt === 2) {
+        const failure = new Error(
+          `registry ${repository} ${kind} ${digest} timed out on attempt ${String(attempt)}`,
+        );
+        failure.name = "TimeoutError";
+        throw failure;
+      }
+    }
+  }
+  throw new Error("registry timeout retry did not terminate");
+}
+
+// read and hash one bounded content-addressed registry object
+async function readWeatherRegistryObject(repository, kind, digest, accept, maximumBytes,
+  description) {
+  // restart both fetch and consumption after a deadline
+  return retryWeatherRegistryObject(repository, kind, digest, async () => {
+    const response = await fetchWeatherRegistryObject(repository, kind, digest, accept);
+    const bytes = await readBoundedRegistryResponse(response, maximumBytes, description);
+
+    // require complete bytes before accepting this attempt
+    if (`sha256:${createHash("sha256").update(bytes).digest("hex")}` !== digest) {
+      throw new Error(`${description} digest differs`);
+    }
+    return bytes;
+  });
+}
+
 // parse one portable tar size field
 function parseReleaseTarSize(header) {
   const bytes = header.subarray(124, 136);
@@ -9230,6 +9279,19 @@ export async function measureReleaseLayer(response, descriptor, expectedDiffId) 
   };
 }
 
+// cache only one fully validated immutable layer measurement
+export async function cacheReleaseLayerMeasurement(layerMeasurements, measurementKey,
+  operation) {
+  let measurement = layerMeasurements.get(measurementKey);
+
+  // publish no partial result from a failed load
+  if (measurement === undefined) {
+    measurement = await operation();
+    layerMeasurements.set(measurementKey, measurement);
+  }
+  return measurement;
+}
+
 // inspect one pinned image and measure every literal layer without storing it
 async function inspectRemoteReleaseImage(reference, layerMeasurements) {
   const match = ADJUSTMENT_RELEASE_REFERENCE.exec(reference);
@@ -9238,39 +9300,26 @@ async function inspectRemoteReleaseImage(reference, layerMeasurements) {
   }
   const repository = `weather-${match[1]}`;
   const manifestDigest = `sha256:${match[2]}`;
-  const manifestResponse = await fetchWeatherRegistryObject(
+  const manifestBytes = await readWeatherRegistryObject(
     repository,
     "manifests",
     manifestDigest,
     "application/vnd.oci.image.manifest.v1+json",
-  );
-  const manifestBytes = await readBoundedRegistryResponse(
-    manifestResponse,
     1_048_576,
     "release image manifest",
   );
-  if (`sha256:${createHash("sha256").update(manifestBytes).digest("hex")}` !== manifestDigest) {
-    throw new Error("release image manifest digest differs");
-  }
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
   if (!ADJUSTMENT_RELEASE_DIGEST.test(manifest.config?.digest)) {
     throw new Error("release image config descriptor is invalid");
   }
-  const configResponse = await fetchWeatherRegistryObject(
+  const configBytes = await readWeatherRegistryObject(
     repository,
     "blobs",
     manifest.config.digest,
     "application/vnd.oci.image.config.v1+json",
-  );
-  const configBytes = await readBoundedRegistryResponse(
-    configResponse,
     4_194_304,
     "release image config",
   );
-  if (`sha256:${createHash("sha256").update(configBytes).digest("hex")}` !==
-    manifest.config.digest) {
-    throw new Error("release image config digest differs");
-  }
   const config = JSON.parse(configBytes.toString("utf8"));
   if (!Array.isArray(manifest.layers) || !Array.isArray(config.rootfs?.diff_ids) ||
     manifest.layers.length !== config.rootfs.diff_ids.length) {
@@ -9289,21 +9338,30 @@ async function inspectRemoteReleaseImage(reference, layerMeasurements) {
   // fetch one copy of each content-addressed blob measurement
   for (const [index, descriptor] of manifest.layers.entries()) {
     const measurementKey = `${descriptor.digest}/${config.rootfs.diff_ids[index]}`;
-    let measurement = layerMeasurements.get(measurementKey);
-    if (measurement === undefined) {
-      const layerResponse = await fetchWeatherRegistryObject(
+    const measurement = await cacheReleaseLayerMeasurement(
+      layerMeasurements,
+      measurementKey,
+      // load one complete measurement before publishing its cache entry
+      async () => retryWeatherRegistryObject(
         repository,
         "blobs",
         descriptor.digest,
-        "application/vnd.oci.image.layer.v1.tar+gzip",
-      );
-      measurement = await measureReleaseLayer(
-        layerResponse,
-        descriptor,
-        config.rootfs.diff_ids[index],
-      );
-      layerMeasurements.set(measurementKey, measurement);
-    }
+        // restart both fetch and validation after a deadline
+        async () => {
+          const layerResponse = await fetchWeatherRegistryObject(
+            repository,
+            "blobs",
+            descriptor.digest,
+            "application/vnd.oci.image.layer.v1.tar+gzip",
+          );
+          return measureReleaseLayer(
+            layerResponse,
+            descriptor,
+            config.rootfs.diff_ids[index],
+          );
+        },
+      ),
+    );
     unpackedLayers.push(measurement);
   }
   return {
