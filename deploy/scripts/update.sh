@@ -5905,6 +5905,8 @@ prepare_v14_compatibility_bridge_release() {
 
   # remove an interrupted render
   printf -v cleanup_trap 'rm -f -- %q' "$temporary"
+  # freeze the owned path before local scope exits
+  # shellcheck disable=SC2064
   trap "$cleanup_trap" EXIT
   write_release_env "$source_env" "$temporary" "$release" \
     "$server_image" "$web_image" "$postgres_image" "$cloudflared_image"
