@@ -205,7 +205,10 @@ normal_release_capacity_receipt() {
       (($# == 2)) || die "normal image proof takes only its request path"
       ;;
     normal-stage-capacity)
-      (($# == 3)) && [[ -n "$proof_path" ]] || die "normal stage capacity requires its image proof"
+      # reject either missing stage-proof requirement explicitly
+      if (($# != 3)) || [[ -z "$proof_path" ]]; then
+        die "normal stage capacity requires its image proof"
+      fi
       ;;
     normal-activation-capacity)
       (($# == 2)) || [[ -n "$proof_path" ]] || die "normal activation predecessor path is empty"
