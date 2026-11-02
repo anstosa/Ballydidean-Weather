@@ -8,6 +8,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   symlink,
@@ -118,6 +119,14 @@ function predecessorIdentities() {
     const [sha256, uid, gid, mode, relativePath] = line.split(" ");
     return { gid, mode, relativePath, sha256, uid };
   });
+}
+
+// run one semantic evidence identity calculation
+function evidenceIdentity(path, extra = "") {
+  return spawnSync("bash", ["-c", `source "$1"
+${extra}
+successor_evidence_tree_identity "$2"`, "successor-evidence-identity", installer, path],
+  { cwd: repoRoot, encoding: "utf8" });
 }
 
 // materialize the exact AF80 predecessor from committed git objects
@@ -284,6 +293,87 @@ test("successor tests isolate a Git-like 0755 script checkout", async () => {
   }
 });
 
+// ignore copied directory allocation while retaining semantic evidence identity
+test("successor evidence identity survives directory churn and rejects semantic changes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "weather-successor-evidence-"));
+  const source = join(root, "source");
+  const copied = join(root, "copied");
+  const nested = join(source, "nested");
+  try {
+    await mkdir(nested, { recursive: true, mode: 0o700 });
+    // create and remove entries to model ext4 directory slack
+    for (let index = 0; index < 40; index += 1) {
+      await writeFile(join(nested, `long-evidence-entry-${String(index).padStart(3, "0")}`),
+        `value-${index}\n`, { mode: 0o600 });
+    }
+    // retain only ten logical files after physical churn
+    for (let index = 10; index < 40; index += 1) {
+      await rm(join(nested, `long-evidence-entry-${String(index).padStart(3, "0")}`));
+    }
+    await cp(source, copied, { recursive: true, preserveTimestamps: true });
+    const comparison = spawnSync("bash", ["-c", `source "$1"
+source_tree=$2
+stat() {
+  if [[ "$1" == -c && "$2" == %s && -d "$3" ]]; then
+    if [[ "$3" == "$source_tree"* ]]; then printf '36864\\n'; else printf '4096\\n'; fi
+  else
+    command stat "$@"
+  fi
+}
+printf '%s\\n' "$(runtime_state_identity "$2")" "$(runtime_state_identity "$3")" "$(successor_evidence_tree_identity "$2")" "$(successor_evidence_tree_identity "$3")"`,
+    "successor-evidence-copy", installer, source, copied], { cwd: repoRoot, encoding: "utf8" });
+    assert.equal(comparison.status, 0, comparison.stderr);
+    const [oldSource, oldCopy, semanticSource, semanticCopy] = comparison.stdout.trim().split("\n");
+    assert.notEqual(oldSource, oldCopy);
+    assert.equal(semanticSource, semanticCopy);
+
+    const baseline = evidenceIdentity(source);
+    assert.equal(baseline.status, 0, baseline.stderr);
+    const retained = join(nested, "long-evidence-entry-000");
+    const retainedBytes = await readFile(retained);
+    const retainedMode = (await stat(retained)).mode & 0o777;
+
+    await writeFile(join(nested, "extra-file"), "extra\n", { mode: 0o600 });
+    assert.notEqual(evidenceIdentity(source).stdout, baseline.stdout);
+    await rm(join(nested, "extra-file"));
+
+    await writeFile(retained, Buffer.from("changed\n"));
+    assert.notEqual(evidenceIdentity(source).stdout, baseline.stdout);
+    await writeFile(retained, retainedBytes);
+
+    await chmod(retained, 0o640);
+    assert.notEqual(evidenceIdentity(source).stdout, baseline.stdout);
+    await chmod(retained, retainedMode);
+
+    const renamed = join(nested, "renamed-evidence-entry");
+    await rename(retained, renamed);
+    assert.notEqual(evidenceIdentity(source).stdout, baseline.stdout);
+    await rename(renamed, retained);
+
+    const linked = join(nested, "linked-evidence-entry");
+    await symlink("long-evidence-entry-000", linked);
+    const linkedResult = evidenceIdentity(source);
+    assert.notEqual(linkedResult.status, 0, `${linkedResult.stdout}\n${linkedResult.stderr}`);
+    assert.match(linkedResult.stderr, /unsafe entry/u);
+    await rm(linked);
+
+    const empty = join(root, "empty");
+    await mkdir(empty, { mode: 0o700 });
+    const findFailure = evidenceIdentity(empty, "find() { return 23; }");
+    assert.notEqual(findFailure.status, 0);
+    assert.equal(findFailure.stdout, "");
+    assert.match(findFailure.stderr, /evidence state enumeration failed/u);
+
+    const concurrent = evidenceIdentity(source,
+      "successor_evidence_identity_probe() { printf 'concurrent\\n' >>\"$1/nested/long-evidence-entry-000\"; }");
+    assert.notEqual(concurrent.status, 0);
+    assert.equal(concurrent.stdout, "");
+    assert.match(concurrent.stderr, /changed during semantic identity/u);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 // bind the embedded predecessor and helper contract
 test("successor embeds the exact AF80 packet and three-path order", async () => {
   assert.ok((await readFile(installer, "utf8")).startsWith("#!/bin/bash\n"));
@@ -421,6 +511,49 @@ test("successor rollback preserves advanced evidence and the published receipt",
       "evidence\nadvanced\n");
     const receipt = join(fixture.state, "control-plane-handoff-v16-v1.json");
     assert.equal((await stat(receipt)).isFile(), true);
+  } finally {
+    await rm(fixture.root, { force: true, recursive: true });
+  }
+});
+
+// reject source evidence drift across the backup copy
+test("successor backup refuses concurrent evidence mutation before transaction", async () => {
+  const fixture = await createFixture();
+  try {
+    const result = runInstaller(fixture, 0, `successor_evidence_copy_probe() {
+  if [[ "$2" == 0 ]]; then printf 'advanced\\n' >>"$1/current.json"; fi
+}`);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /evidence source changed during backup/u);
+    await assertPredecessor(fixture);
+    assert.equal(await readFile(join(fixture.runtime, "xweather/adjustment-evidence/current.json"), "utf8"),
+      "evidence\nadvanced\n");
+    assert.equal((await readdir(fixture.backups)).filter((entry) => entry.startsWith("successor-")).length, 0);
+    await assert.rejects(stat(join(fixture.state, "control-plane-handoff-v16-v1.json")), /ENOENT/u);
+  } finally {
+    await rm(fixture.root, { force: true, recursive: true });
+  }
+});
+
+// reject evidence enumeration failure before creating a recovery backup
+test("successor fails closed when evidence find fails", async () => {
+  const fixture = await createFixture();
+  try {
+    const before = await preservedEvidence(fixture);
+    const result = runInstaller(fixture, 0, `successor_test_runtime="$4"
+find() {
+  if [[ "$1" == -P && ( "$2" == "$successor_test_runtime/xweather/adjustment-evidence" ||
+    "$2" == "$successor_test_runtime/xweather/adjustment-release-state" ) ]]; then
+    return 23
+  fi
+  command find "$@"
+}`);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /evidence state enumeration failed/u);
+    await assertPredecessor(fixture);
+    assert.deepEqual(await preservedEvidence(fixture), before);
+    assert.equal((await readdir(fixture.backups)).filter((entry) => entry.startsWith("successor-")).length, 0);
+    await assert.rejects(stat(join(fixture.state, "control-plane-handoff-v16-v1.json")), /ENOENT/u);
   } finally {
     await rm(fixture.root, { force: true, recursive: true });
   }

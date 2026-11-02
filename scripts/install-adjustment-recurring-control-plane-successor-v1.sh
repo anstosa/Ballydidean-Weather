@@ -180,10 +180,66 @@ successor_require_source_state() {
   successor_require_no_active_journal "$destination"
 }
 
+# emit one semantic evidence-tree manifest
+successor_evidence_tree_manifest() {
+  local state_root=$1 entry relative mode uid gid size sha kind
+  [[ ! -L "$state_root" && -d "$state_root" ]] ||
+    { fail "evidence state root is not a safe directory: $state_root"; return 1; }
+  # bind paths and logical metadata without physical directory size
+  find -P "$state_root" -print0 | LC_ALL=C sort -z | while IFS= read -r -d '' entry; do
+    relative=.; [[ "$entry" == "$state_root" ]] || relative=${entry#"$state_root"/}
+    mode=$(stat -c '%a' "$entry") || return 1
+    uid=$(stat -c '%u' "$entry") || return 1
+    gid=$(stat -c '%g' "$entry") || return 1
+    # encode directories without allocation-dependent size
+    if [[ -d "$entry" && ! -L "$entry" ]]; then
+      kind='directory'
+      printf '%s\0%s\0%s\0%s\0%s\0' "$relative" "$kind" "$mode" "$uid" "$gid"
+    elif [[ -f "$entry" && ! -L "$entry" ]]; then
+      kind='file'
+      size=$(stat -c '%s' "$entry") || return 1
+      sha=$(sha256sum "$entry" | awk '{print $1}') || return 1
+      printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+        "$relative" "$kind" "$mode" "$uid" "$gid" "$size" "$sha"
+    else
+      fail "evidence state changed to an unsafe entry: $entry"
+      return 1
+    fi
+  done || { fail "evidence state enumeration failed: $state_root"; return 1; }
+}
+
+# provide one no-op semantic identity probe
+successor_evidence_identity_probe() {
+  :
+}
+
+# provide one no-op evidence copy probe
+successor_evidence_copy_probe() {
+  :
+}
+
+# hash one evidence tree without filesystem allocation artifacts
+successor_evidence_tree_identity() {
+  local state_root=$1 first second
+  [[ ! -L "$state_root" ]] ||
+    { fail "evidence state root is linked: $state_root"; return 1; }
+  # represent one absent tree explicitly
+  if [[ ! -e "$state_root" ]]; then
+    printf '%s\n' absent
+    return
+  fi
+  first=$(successor_evidence_tree_manifest "$state_root" | sha256sum | awk '{print $1}') || return 1
+  successor_evidence_identity_probe "$state_root" || return 1
+  second=$(successor_evidence_tree_manifest "$state_root" | sha256sum | awk '{print $1}') || return 1
+  [[ "$first" == "$second" ]] ||
+    { fail "evidence state changed during semantic identity"; return 1; }
+  printf '%s\n' "$first"
+}
+
 # capture every preserved state identity without file contents
 successor_state_snapshot() {
   local destination=$1 runtime_root=$2 control_uid=$3 control_gid=$4 data_uid=$5 data_gid=$6
-  local state="$destination/deploy/state" releases="$destination/deploy/releases" path
+  local state="$destination/deploy/state" releases="$destination/deploy/releases" path tree_identity
   successor_require_source_state "$destination" "$runtime_root" "$control_uid" "$control_gid" "$data_uid" "$data_gid"
   # bind fixed regular evidence metadata and bytes
   for path in \
@@ -197,13 +253,16 @@ successor_state_snapshot() {
     "$(stat -c '%d:%i:%u:%g:%a:%h:%s' "$state/active.env")" "$(readlink "$state/active.env")"
   # bind both evidence trees without restoring them
   while IFS= read -r path; do
-    printf 'tree\0%s\0%s\0' "$path" "$(runtime_state_identity "$path")"
+    tree_identity=$(successor_evidence_tree_identity "$path") || return 1
+    printf 'tree\0%s\0%s\0' "$path" "$tree_identity"
   done < <(runtime_state_roots "$runtime_root")
 }
 
 # hash the complete preserved state snapshot
 successor_state_snapshot_sha256() {
-  successor_state_snapshot "$@" | sha256sum | awk '{print $1}'
+  local identity
+  identity=$(successor_state_snapshot "$@" | sha256sum | awk '{print $1}') || return 1
+  printf '%s\n' "$identity"
 }
 
 # acquire the exact release-state directory lock
@@ -426,7 +485,7 @@ successor_expected_seal() {
 # create one complete successor recovery backup
 successor_create_backup() {
   local destination=$1 runtime_root=$2 backup=$3 candidate_manifest=$4 candidate_digest=$5
-  local uid=$6 gid=$7 state_root index=0 relative
+  local uid=$6 gid=$7 state_root index=0 relative source_identity after_identity copied_identity
   mkdir -p "$backup/control" "$backup/state" "$backup/evidence"
   # copy every predecessor control
   while read -r _ _ _ _ relative; do
@@ -435,9 +494,17 @@ successor_create_backup() {
   done < <(predecessor_identity_manifest)
   # snapshot both live evidence trees without restore authority
   while IFS= read -r state_root; do
-    printf '%s\n' "$(runtime_state_identity "$state_root")" >"$backup/state/$index.identity"
+    source_identity=$(successor_evidence_tree_identity "$state_root") || return 1
+    printf '%s\n' "$source_identity" >"$backup/state/$index.identity"
     if [[ -e "$state_root" ]]; then
       cp -a --reflink=never "$state_root" "$backup/state/$index"
+      successor_evidence_copy_probe "$state_root" "$index" || return 1
+      after_identity=$(successor_evidence_tree_identity "$state_root") || return 1
+      [[ "$source_identity" == "$after_identity" ]] ||
+        { fail "evidence source changed during backup: $index"; return 1; }
+      copied_identity=$(successor_evidence_tree_identity "$backup/state/$index") || return 1
+      [[ "$source_identity" == "$copied_identity" ]] ||
+        { fail "evidence backup identity differs: $index"; return 1; }
     else
       printf '%s\n' absent >"$backup/state/$index.absent"
     fi
@@ -473,7 +540,7 @@ successor_seal_backup() {
 
 # verify one complete successor recovery backup
 successor_verify_backup() {
-  local backup_root=$1 backup=$2 uid=$3 gid=$4 digest index=0 state_root member
+  local backup_root=$1 backup=$2 uid=$3 gid=$4 digest index=0 state_root member stored_identity copied_identity
   verify_backup_root "$backup_root" "$uid" "$gid"
   [[ "$(dirname "$backup")" == "$backup_root" &&
     "$(basename "$backup")" =~ ^successor-af80d5752590\.[a-zA-Z0-9]{8}$ ]] ||
@@ -497,11 +564,13 @@ successor_verify_backup() {
   # verify both captured evidence trees
   while ((index < 2)); do
     state_root="$backup/state/$index"
-    if [[ "$(cat "$state_root.identity")" == absent ]]; then
+    stored_identity=$(cat "$state_root.identity") || return 1
+    if [[ "$stored_identity" == absent ]]; then
       [[ -f "$state_root.absent" && ! -e "$state_root" ]] || fail "absent evidence snapshot differs"
     else
-      [[ "$(runtime_state_identity "$state_root")" == "$(cat "$state_root.identity")" ]] ||
-        fail "evidence snapshot differs"
+      copied_identity=$(successor_evidence_tree_identity "$state_root") || return 1
+      [[ "$copied_identity" == "$stored_identity" ]] ||
+        { fail "evidence snapshot differs"; return 1; }
     fi
     index=$((index + 1))
   done
@@ -610,7 +679,8 @@ successor_restore_transaction() {
     successor_install_control_file "$backup/control/$relative" "$destination/$relative" "$mode" "$uid" "$gid"
   done < <(predecessor_identity_manifest)
   successor_verify_predecessor_identities "$destination" "$uid" "$gid"
-  snapshot_now=$(successor_state_snapshot_sha256 "$destination" "$runtime_root" "$uid" "$gid" "$data_uid" "$data_gid")
+  snapshot_now=$(successor_state_snapshot_sha256 \
+    "$destination" "$runtime_root" "$uid" "$gid" "$data_uid" "$data_gid") || return 1
   if [[ "$snapshot_now" == "$(sha256sum "$backup/source-state.snapshot" | awk '{print $1}')" ]]; then
     # remove only the exact transaction receipt after unchanged-state rollback
     if [[ -e "$receipt" || -L "$receipt" ]]; then
@@ -649,7 +719,8 @@ install_successor_control_plane_v1() (
   local destination=$1 backup_root=$2 runtime_root=$3 archive=$4 archive_sha=$5 candidate_digest=$6
   local failure_step=${7:-0} uid=${8:-0} gid=${9:-0} data_uid=${10:-10002} data_gid=${11:-10002}
   local stage='' backup='' status recovery_status state_fd backup_fd candidate candidate_manifest
-  local existing_bytes recovery_bytes recovery_inodes scratch_bytes snapshot_sha receipt relative _ _ _ mode
+  local existing_bytes recovery_bytes recovery_inodes scratch_bytes snapshot_sha final_snapshot_sha
+  local receipt relative _ _ _ mode
   local transaction_started=0 replacement_step=0 candidate_manifest_sha
   # restore controls after any post-backup failure
   # shellcheck disable=SC2329
@@ -715,11 +786,12 @@ install_successor_control_plane_v1() (
   existing_bytes=$(successor_existing_task_recovery_bytes "$backup_root" "$uid" "$gid")
   successor_require_task_recovery_capacity "$existing_bytes" "$recovery_bytes"
   require_maintenance_capacity "$runtime_root" "$recovery_bytes" "$recovery_inodes"
-  snapshot_sha=$(successor_state_snapshot_sha256 "$destination" "$runtime_root" "$uid" "$gid" "$data_uid" "$data_gid")
+  snapshot_sha=$(successor_state_snapshot_sha256 \
+    "$destination" "$runtime_root" "$uid" "$gid" "$data_uid" "$data_gid") || return 1
   successor_state_snapshot "$destination" "$runtime_root" "$uid" "$gid" "$data_uid" "$data_gid" \
-    >"$stage/source-state.snapshot"
+    >"$stage/source-state.snapshot" || return 1
   [[ "$(sha256sum "$stage/source-state.snapshot" | awk '{print $1}')" == "$snapshot_sha" ]] ||
-    fail "source state changed during snapshot"
+    { fail "source state changed during snapshot"; return 1; }
   backup=$(mktemp -d "$backup_root/successor-af80d5752590.XXXXXXXX")
   chmod 700 "$backup"
   successor_create_backup "$destination" "$runtime_root" "$backup" "$candidate_manifest" \
@@ -746,8 +818,10 @@ install_successor_control_plane_v1() (
   done < <(predecessor_identity_manifest)
   successor_verify_live_candidate_identities "$destination" "$candidate_manifest" "$uid" "$gid"
   [[ "$(control_digest "$destination")" == "$candidate_digest" ]] || fail "installed successor digest differs"
-  [[ "$(successor_state_snapshot_sha256 "$destination" "$runtime_root" "$uid" "$gid" "$data_uid" "$data_gid")" == "$snapshot_sha" ]] ||
-    fail "source state changed during successor installation"
+  final_snapshot_sha=$(successor_state_snapshot_sha256 \
+    "$destination" "$runtime_root" "$uid" "$gid" "$data_uid" "$data_gid") || return 1
+  [[ "$final_snapshot_sha" == "$snapshot_sha" ]] ||
+    { fail "source state changed during successor installation"; return 1; }
   successor_publish_handoff "$receipt" "$candidate_digest" "$candidate_manifest_sha" "$uid" "$gid"
   if ((failure_step == 5)); then
     successor_failure_probe 5 "$runtime_root"
