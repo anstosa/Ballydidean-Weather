@@ -98,6 +98,7 @@ function normalStageCapacityInput(overrides = {}) {
     freeBytes: 4_000_000_000,
     freeInodes: 100_000,
     imagePullPeakBytes: 159_862_784,
+    imageProofSha256: "e".repeat(64),
     imageReferences: [
       { reference: `ghcr.io/anstosa/weather-server@sha256:${"1".repeat(64)}`,
         role: "source", runtime: "server" },
@@ -146,7 +147,7 @@ function normalStageCapacityInput(overrides = {}) {
 // create one exact normal activation capacity fixture
 function normalActivationCapacityInput(overrides = {}) {
   const liveDatabaseBytes = 1_000_000;
-  return {
+  const input = {
     actualBackupBytes: 0,
     backupHeadroomBytes: 1_073_741_824,
     boundedBackupCeilingBytes: liveDatabaseBytes + 1_073_741_824,
@@ -186,6 +187,11 @@ function normalActivationCapacityInput(overrides = {}) {
     weatherPostgresDirFilesystemDevice: 2_048,
     ...overrides,
   };
+  return input.phase === "post_backup" ? {
+    ...input,
+    actualBackupAllocatedBytes: overrides.actualBackupAllocatedBytes ?? input.actualBackupBytes,
+    preBackupReceiptSha256: overrides.preBackupReceiptSha256 ?? "d".repeat(64),
+  } : input;
 }
 
 // remove every evaluator-owned stage measurement from the CLI fixture
@@ -246,6 +252,43 @@ function canonicalRecord(value) {
     ));
   }
   return value;
+}
+
+// create one normalized immutable image proof fixture
+function normalStageImageProof(overrides = {}) {
+  const identity = normalStageCapacityInput();
+  const body = {
+    contractVersion: "normal-stage-image-proof/v1",
+    imageReferences: identity.imageReferences,
+    images: identity.imageReferences.map((entry, index) => {
+      const diffId = `sha256:${String(index + 5).repeat(64)}`;
+      return {
+        configDigest: `sha256:${String(index + 5).repeat(64)}`,
+        layers: [{
+          blobDigest: `sha256:${String(index + 5).repeat(64)}`,
+          chainId: diffId,
+          compressedBytes: 4_096,
+          diffId,
+          entryInodes: 3,
+          unpackedBytes: 8_192,
+        }],
+        manifestDigest: entry.reference.slice(entry.reference.indexOf("@") + 1),
+        metadataBytes: 4_096,
+        ...entry,
+      };
+    }),
+    operationId: identity.operationId,
+    sourceEnvSha256: identity.sourceEnvSha256,
+    sourceRelease: identity.sourceRelease,
+    targetEnvSha256: identity.targetEnvSha256,
+    targetRelease: identity.targetRelease,
+    verifiedAt: "2026-10-29T00:00:00.000Z",
+    ...overrides,
+  };
+  return {
+    ...body,
+    proofSha256: sha256(Buffer.from(`${JSON.stringify(canonicalRecord(body))}\n`)),
+  };
 }
 
 // create one fixed transaction manifest
@@ -482,28 +525,35 @@ test("normal capacity filesystem collection proves the running PostgreSQL mount"
 
 // collect only evaluator-owned host and image facts at the CLI trust boundary
 test("normal capacity collectors reject caller-shaped physical measurements", async () => {
+  const imageProof = normalStageImageProof();
   const collectFilesystem = async () => normalCapacityFilesystemFacts();
   const collectImages = async () => ({
     imagePullPeakBytes: 159_862_784,
     newImageInodes: 4_000,
     persistentImageGrowthBytes: 90_000_000,
   });
-  const ready = await collectNormalStageCapacity(normalStageCapacityCollectionInput(), {
+  const ready = await collectNormalStageCapacity(normalStageCapacityCollectionInput({
+    imageProofSha256: imageProof.proofSha256,
+  }), {
     collectFilesystem,
     collectImages,
-    trustedNow: normalCapacityNow,
+    clock: () => normalCapacityNow,
+    imageProof,
   });
   assert.equal(ready.state, "capacity_ready");
   assert.equal(ready.evaluatedAt, normalCapacityNow.toISOString());
-  const blocked = await collectNormalStageCapacity(normalStageCapacityCollectionInput(), {
+  const blocked = await collectNormalStageCapacity(normalStageCapacityCollectionInput({
+    imageProofSha256: imageProof.proofSha256,
+  }), {
     collectFilesystem: async () => normalCapacityFilesystemFacts({ freeBytes: 0 }),
     collectImages,
-    trustedNow: normalCapacityNow,
+    clock: () => normalCapacityNow,
+    imageProof,
   });
   assert.deepEqual(blocked.reasons, ["insufficient_free_bytes"]);
   const activation = await collectNormalActivationCapacity(
     normalActivationCapacityCollectionInput(),
-    { collectFilesystem, trustedNow: normalCapacityNow },
+    { clock: () => normalCapacityNow, collectFilesystem },
   );
   assert.equal(activation.state, "capacity_ready");
   let collected = false;
@@ -516,16 +566,18 @@ test("normal capacity collectors reject caller-shaped physical measurements", as
       return normalCapacityFilesystemFacts();
     },
     collectImages,
-    trustedNow: normalCapacityNow,
+    clock: () => normalCapacityNow,
+    imageProof,
   }), /unexpected keys/u);
   assert.equal(collected, false);
 });
 
-// expose only bounded canonical collection requests through the shell boundary
-test("normal capacity CLIs reject noncanonical and caller-measured stdin", async () => {
+// expose only bounded canonical collection request files through the CLI boundary
+test("normal capacity CLIs reject legacy stdin and caller-measured files", async () => {
   const script = join(repoRoot, "deploy/scripts/adjustment-evaluation-package.mjs");
+  const imageProof = normalStageImageProof();
   const callerMeasured = {
-    ...normalStageCapacityCollectionInput(),
+    ...normalStageCapacityCollectionInput({ imageProofSha256: imageProof.proofSha256 }),
     freeBytes: 4_000_000_000,
   };
   const input = `${JSON.stringify(canonicalRecord(callerMeasured))}\n`;
@@ -534,22 +586,28 @@ test("normal capacity CLIs reject noncanonical and caller-measured stdin", async
     input,
   });
   assert.equal(rejected.status, 1);
-  assert.match(rejected.stderr, /unexpected keys/u);
-  const malformed = spawnSync(process.execPath, [script, "normal-stage-capacity"], {
-    encoding: "utf8",
-    input: JSON.stringify(canonicalRecord(normalStageCapacityCollectionInput())),
-  });
-  assert.equal(malformed.status, 1);
-  assert.match(malformed.stderr, /not canonical/u);
+  assert.match(rejected.stderr, /INPUT_PATH PROOF_PATH/u);
 
   const root = await mkdtemp(join(tmpdir(), "weather-normal-capacity-"));
   const inputPath = join(root, "input.json");
+  const proofPath = join(root, "proof.json");
 
   try {
     await writeFile(inputPath, input, { mode: 0o600 });
-    await assert.rejects(executeFile("bash", ["-c",
-      'source "$1"; normal_release_capacity_receipt normal-stage-capacity "$2"',
-      "bash", join(repoRoot, "deploy/scripts/common.sh"), inputPath]), /unexpected keys/u);
+    await writeFile(proofPath,
+      `${JSON.stringify(canonicalRecord(imageProof))}\n`, { mode: 0o600 });
+    const measured = spawnSync(process.execPath,
+      [script, "normal-stage-capacity", inputPath, proofPath], { encoding: "utf8" });
+    assert.equal(measured.status, 1);
+    assert.match(measured.stderr, /unexpected keys/u);
+    await writeFile(inputPath,
+      JSON.stringify(canonicalRecord(normalStageCapacityCollectionInput({
+        imageProofSha256: imageProof.proofSha256,
+      }))), { mode: 0o600 });
+    const malformed = spawnSync(process.execPath,
+      [script, "normal-stage-capacity", inputPath, proofPath], { encoding: "utf8" });
+    assert.equal(malformed.status, 1);
+    assert.match(malformed.stderr, /not canonical/u);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

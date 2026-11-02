@@ -12,6 +12,8 @@ import {
 } from "../scripts/adjustment-evaluation-package.mjs";
 
 const update = resolve(import.meta.dirname, "../scripts/update.sh");
+const v16HandoffSourceControl =
+  "af80d5752590bf47f5b893ee69f04215132e80210993f4a8c78d8562d2ea9a52";
 const sourceValues = {
   WEATHER_RELEASE: "2026.10.09-1",
   WEATHER_CONTROL_PLANE_VERSION: "13",
@@ -194,7 +196,7 @@ test("compatibility bridge and full source gates remain disjoint", async () => {
     assert.notEqual(verify().status, 0);
     const bridgeServer = `ghcr.io/anstosa/weather-server@sha256:${"1".repeat(64)}`;
     const bridgeWeb = `ghcr.io/anstosa/weather-web@sha256:${"2".repeat(64)}`;
-    const control = "3".repeat(64);
+    const control = v16HandoffSourceControl;
     await writeEnvironment(source, {
       WEATHER_CONTROL_PLANE_SHA256: control,
       WEATHER_CONTROL_PLANE_VERSION: "15",
@@ -202,14 +204,25 @@ test("compatibility bridge and full source gates remain disjoint", async () => {
       WEATHER_SERVER_IMAGE: bridgeServer,
       WEATHER_WEB_IMAGE: bridgeWeb,
     });
-    await writeEnvironment(target, { WEATHER_RELEASE: "2026.10.09-3", WEATHER_CONTROL_PLANE_VERSION: "15" });
+    await writeEnvironment(target, {
+      WEATHER_RELEASE: "2026.10.09-3",
+      WEATHER_CONTROL_PLANE_VERSION: "16",
+    });
     const full = spawnSync("bash", ["-c", `source "$1"
 full_v14_source_server_image=$4
 full_v14_source_web_image=$5
 expected_control=$6
+expected_source=$3
+handoff_calls=0
 # return the isolated installed control identity
 control_plane_digest() { printf '%s\\n' "$expected_control"; }
-require_fixed_v14_source_identity "$2" "$3"`,
+# isolate the receipt validator while retaining its required source path
+require_v16_control_plane_handoff() {
+  [[ "$1" == "$expected_source" ]] || return 1
+  handoff_calls=$((handoff_calls + 1))
+}
+require_fixed_v14_source_identity "$2" "$3"
+[[ "$handoff_calls" == 1 ]]`,
     "v14-full-source-test", update, target, source, bridgeServer, bridgeWeb, control], { encoding: "utf8" });
     assert.equal(full.status, 0, full.stderr);
     const bytes = await readFile(update, "utf8");
@@ -655,7 +668,7 @@ test("generic recovery repairs an authorized full ledger with source-two health"
   const environment = join(releases, "2026.10.09-2.env");
   const authorization = join(releases, "2026.10.09-3.migration-authorization");
   const history = "6".repeat(64);
-  const control = "7".repeat(64);
+  const control = v16HandoffSourceControl;
   await mkdir(state);
   await mkdir(releases);
   await writeFile(join(state, "current-release"), "2026.10.09-2\n", { mode: 0o600 });
@@ -692,6 +705,8 @@ transcript=$3
 fixture_history=$4
 expected_control=$5
 control_plane_digest() { printf '%s\\n' "$expected_control"; }
+# isolate the retained handoff receipt from recovery classification
+require_v16_control_plane_handoff() { printf 'handoff:%s\\n' "$1" >>"$transcript"; }
 require_v14_compatibility_bridge_receipt() { :; }
 require_v14_compatibility_bridge_settings() { :; }
 require_fixed_v14_migration_ledger() { :; }
@@ -712,7 +727,9 @@ main recover`;
     assert.equal(result.status, 0, result.stderr);
     assert.equal(await readFile(join(state, "schema-release"), "utf8"), "2026.10.09-3\n");
     assert.equal(await readFile(join(state, "current-release"), "utf8"), "2026.10.09-2\n");
-    assert.match(await readFile(transcript, "utf8"),
+    const recoveryTranscript = await readFile(transcript, "utf8");
+    assert.match(recoveryTranscript, /handoff:.*2026\.10\.09-2\.env/u);
+    assert.match(recoveryTranscript,
       new RegExp(`postgres[\\s\\S]*apply-acl[\\s\\S]*verify-acl[\\s\\S]*runtime:2026\\.10\\.09-2:${history}`, "u"));
   } finally {
     await rm(root, { force: true, recursive: true });

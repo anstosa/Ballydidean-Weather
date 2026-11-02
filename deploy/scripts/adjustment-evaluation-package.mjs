@@ -369,7 +369,8 @@ const ADJUSTMENT_FULL_V14_SOURCE_REFERENCES = new Map([
   ["web", "ghcr.io/anstosa/weather-web@sha256:34d824b03c5f84289b8f38028e751f183a953565fc929260c09b07c9e64f15ba"],
 ]);
 export const DASHBOARD_WEB_RELEASE_CAPACITY_VERSION = "dashboard-web-release-capacity/v1";
-export const NORMAL_RELEASE_CAPACITY_SCHEMA_VERSION = "normal-capacity-v1";
+export const NORMAL_RELEASE_CAPACITY_SCHEMA_VERSION = "normal-capacity-v2";
+export const NORMAL_STAGE_IMAGE_PROOF_VERSION = "normal-stage-image-proof/v1";
 const DASHBOARD_WEB_RELEASE_INVENTORY_VERSION = "dashboard-web-release-inventory/v1";
 const DASHBOARD_WEB_RELEASE_COMPENSATION_SCOPE = "fixed-core-web-only-source-restore";
 const DASHBOARD_WEB_RELEASE_CORE_COMMIT = "56b327d9c750946f6f6963b6fe1fa5c9bba791ca";
@@ -409,6 +410,8 @@ const NORMAL_CAPACITY_SCRATCH_BYTES = 256 * 1_024 * 1_024;
 const NORMAL_CAPACITY_INODE_FLOOR = 32_768;
 const NORMAL_CAPACITY_FIXTURE_INODES = 4_096;
 const NORMAL_CAPACITY_BACKUP_HEADROOM_BYTES = 1_024 * 1_024 * 1_024;
+const NORMAL_CAPACITY_INPUT_MAXIMUM_BYTES = 16 * 1_024;
+const NORMAL_STAGE_IMAGE_PROOF_MAXIMUM_BYTES = 1 * 1_024 * 1_024;
 const NORMAL_CAPACITY_SOURCE_LEDGER_SHA256 =
   "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424";
 const NORMAL_CAPACITY_TARGET_LEDGER_SHA256 =
@@ -1040,6 +1043,212 @@ function validateNormalStageImageReferences(imageReferences) {
   });
 }
 
+// validate one immutable normal-stage image proof request
+function validateNormalStageImageProofRequest(input) {
+  requireExactKeys(input, ["imageReferences", "operationId", "sourceEnvSha256",
+    "sourceRelease", "targetEnvSha256", "targetRelease"],
+  "normal stage image proof request");
+
+  // bind only the transaction identity needed by immutable registry evidence
+  if (!NORMAL_CAPACITY_OPERATION_ID_PATTERN.test(input.operationId) ||
+    typeof input.sourceRelease !== "string" ||
+    !/^\d{4}\.\d{2}\.\d{2}-[1-9]\d*$/u.test(input.sourceRelease) ||
+    typeof input.targetRelease !== "string" ||
+    !/^\d{4}\.\d{2}\.\d{2}-[1-9]\d*$/u.test(input.targetRelease) ||
+    input.sourceRelease === input.targetRelease ||
+    !HASH_PATTERN.test(input.sourceEnvSha256) || !HASH_PATTERN.test(input.targetEnvSha256)) {
+    throw new Error("normal stage image proof identity is invalid");
+  }
+  validateNormalStageImageReferences(input.imageReferences);
+  return input;
+}
+
+// project the transaction identity carried by one immutable proof
+function normalStageImageProofRequest(value) {
+  return {
+    imageReferences: value.imageReferences,
+    operationId: value.operationId,
+    sourceEnvSha256: value.sourceEnvSha256,
+    sourceRelease: value.sourceRelease,
+    targetEnvSha256: value.targetEnvSha256,
+    targetRelease: value.targetRelease,
+  };
+}
+
+// project proof images into the existing release-capacity formula
+function normalStageProofCapacityImages(images) {
+  const projected = images.map((image) => ({
+    digest: image.manifestDigest,
+    layers: image.layers.map((layer) => ({ ...layer })),
+    metadataBytes: image.metadataBytes,
+    role: image.role,
+    runtime: image.runtime,
+  }));
+
+  // retain source images as the normal transaction compensation set
+  for (const runtime of ADJUSTMENT_RELEASE_RUNTIMES) {
+    const source = projected.find((image) => image.role === "source" &&
+      image.runtime === runtime);
+    projected.push({ ...structuredClone(source), role: "compensating" });
+  }
+  return projected;
+}
+
+// validate one canonical immutable normal-stage image proof
+export function validateNormalStageImageProof(value, expectedIdentity = null) {
+  const proof = requireObject(value, "normal stage image proof");
+  requireExactKeys(proof, ["contractVersion", "imageReferences", "images", "operationId",
+    "proofSha256", "sourceEnvSha256", "sourceRelease", "targetEnvSha256",
+    "targetRelease", "verifiedAt"], "normal stage image proof");
+  const request = validateNormalStageImageProofRequest(normalStageImageProofRequest(proof));
+  normalCapacityInstant(proof.verifiedAt, "verifiedAt");
+
+  // reject another transaction before consuming any proof measurements
+  if (expectedIdentity !== null && (["operationId", "sourceEnvSha256", "sourceRelease",
+    "targetEnvSha256", "targetRelease"].some(
+    (name) => expectedIdentity[name] !== request[name]) ||
+    canonicalJson(expectedIdentity.imageReferences) !== canonicalJson(request.imageReferences))) {
+    throw new Error("normal stage image proof identity differs");
+  }
+
+  // require the exact closed proof version and four-image shape
+  if (proof.contractVersion !== NORMAL_STAGE_IMAGE_PROOF_VERSION ||
+    !Array.isArray(proof.images) || proof.images.length !== 4 ||
+    !HASH_PATTERN.test(proof.proofSha256)) {
+    throw new Error("normal stage image proof contract is invalid");
+  }
+  const expectedReferences = new Map(request.imageReferences.map(
+    (image) => [`${image.role}/${image.runtime}`, image.reference],
+  ));
+  const roles = new Set();
+
+  // validate every normalized image and its complete layer chain
+  for (const image of proof.images) {
+    requireExactKeys(image, ["configDigest", "layers", "manifestDigest", "metadataBytes",
+      "reference", "role", "runtime"], "normal stage proof image");
+    const role = `${image.role}/${image.runtime}`;
+    const reference = ADJUSTMENT_RELEASE_REFERENCE.exec(image.reference);
+    if (roles.has(role) || expectedReferences.get(role) !== image.reference ||
+      reference?.[1] !== image.runtime || `sha256:${reference?.[2]}` !== image.manifestDigest ||
+      !ADJUSTMENT_RELEASE_DIGEST.test(image.configDigest) ||
+      adjustmentReleaseAllocated(image.metadataBytes) !== image.metadataBytes ||
+      !Array.isArray(image.layers) || image.layers.length < 1 || image.layers.length > 128) {
+      throw new Error("normal stage proof image is invalid");
+    }
+    roles.add(role);
+    const diffIds = [];
+
+    // bind each normalized measurement to its recomputed parent chain
+    for (const layer of image.layers) {
+      requireExactKeys(layer, ["blobDigest", "chainId", "compressedBytes", "diffId",
+        "entryInodes", "unpackedBytes"], "normal stage proof layer");
+      diffIds.push(layer.diffId);
+      if (!ADJUSTMENT_RELEASE_DIGEST.test(layer.blobDigest) ||
+        !ADJUSTMENT_RELEASE_DIGEST.test(layer.diffId) ||
+        layer.chainId !== dockerChainIdentity(diffIds) ||
+        !Number.isSafeInteger(layer.compressedBytes) || layer.compressedBytes < 1 ||
+        layer.compressedBytes > ADJUSTMENT_RELEASE_MAXIMUM_COMPRESSED_IMAGE_BYTES ||
+        adjustmentReleaseAllocated(layer.unpackedBytes) !== layer.unpackedBytes ||
+        layer.unpackedBytes > ADJUSTMENT_RELEASE_MAXIMUM_UNPACKED_LAYER_BYTES ||
+        !Number.isSafeInteger(layer.entryInodes) || layer.entryInodes < 1 ||
+        layer.entryInodes > ADJUSTMENT_RELEASE_MAXIMUM_LAYER_INODES) {
+        throw new Error("normal stage proof layer is invalid");
+      }
+    }
+  }
+
+  // require every exact source and target role once
+  if (roles.size !== expectedReferences.size) {
+    throw new Error("normal stage proof image roles are incomplete");
+  }
+
+  // reuse the reviewed capacity validator for shared-layer consistency
+  evaluateAdjustmentReleaseCapacity({
+    engineMetadataBytes: ADJUSTMENT_RELEASE_ENGINE_METADATA_BYTES,
+    freeBytes: 0,
+    freeInodes: 0,
+    futureStateBytes: ADJUSTMENT_RELEASE_FUTURE_STATE_BYTES,
+    images: normalStageProofCapacityImages(proof.images),
+    inventory: [],
+    maximumOwnedBytes: ADJUSTMENT_RELEASE_CONTROL_MAX_BYTES,
+    measuredAt: proof.verifiedAt,
+    nextStateInodes: 1_004,
+    pullScratchBytes: ADJUSTMENT_RELEASE_PULL_SCRATCH_BYTES,
+    retainedControlBytes: 0,
+    runtimePackageBytes: 0,
+  });
+  const body = { ...proof };
+  delete body.proofSha256;
+  const bodyBytes = Buffer.from(canonicalJson(body));
+
+  // close the normalized proof without assigning live freshness
+  if (Buffer.byteLength(canonicalJson(proof)) > NORMAL_STAGE_IMAGE_PROOF_MAXIMUM_BYTES ||
+    sha256(bodyBytes) !== proof.proofSha256) {
+    throw new Error("normal stage image proof differs");
+  }
+  return proof;
+}
+
+// collect one remote-only immutable normal-stage image proof
+export async function collectNormalStageImageProof(input, options = {}) {
+  const request = validateNormalStageImageProofRequest(input);
+  const collectRemote = options.collectRemote ?? inspectRemoteReleaseImage;
+  const clock = options.clock ?? (() => new Date());
+  const layerMeasurements = new Map();
+  const remoteImages = [];
+
+  // complete every remote integrity check before assigning audit time
+  for (const image of request.imageReferences) {
+    const remote = await collectRemote(image.reference, layerMeasurements);
+
+    // reject collector substitution before normalizing its measurements
+    if (remote?.reference !== image.reference) {
+      throw new Error("normal stage remote image reference differs");
+    }
+    remoteImages.push({ ...remote, role: image.role, runtime: image.runtime });
+  }
+  const verifiedAt = normalCapacityTrustedInstant(clock());
+  const sourceImages = remoteImages.filter((image) => image.role === "source");
+  const inventory = collectReleaseCapacityInventory({
+    compensationScope: "normal-schema-release-source-restore",
+    freeBytes: 0,
+    freeInodes: 0,
+    images: [
+      ...remoteImages,
+      ...sourceImages.map((image) => ({ ...structuredClone(image), role: "compensating" })),
+    ],
+    inventory: [],
+    measuredAt: verifiedAt,
+    retainedControlBytes: 0,
+    runtimePackageBytes: 0,
+    sourceRelease: request.sourceRelease,
+    version: "normal-stage-release-inventory/v1",
+  }, "normal");
+  const images = inventory.images.slice(0, 4).map((image, index) => ({
+    configDigest: JSON.parse(remoteImages[index].manifestBytes).config.digest,
+    layers: image.layers,
+    manifestDigest: image.digest,
+    metadataBytes: image.metadataBytes,
+    reference: remoteImages[index].reference,
+    role: remoteImages[index].role,
+    runtime: remoteImages[index].runtime,
+  }));
+  const body = {
+    contractVersion: NORMAL_STAGE_IMAGE_PROOF_VERSION,
+    imageReferences: structuredClone(request.imageReferences),
+    images,
+    operationId: request.operationId,
+    sourceEnvSha256: request.sourceEnvSha256,
+    sourceRelease: request.sourceRelease,
+    targetEnvSha256: request.targetEnvSha256,
+    targetRelease: request.targetRelease,
+    verifiedAt,
+  };
+  const proof = Object.freeze({ ...body, proofSha256: sha256(Buffer.from(canonicalJson(body))) });
+  validateNormalStageImageProof(proof, request);
+  return proof;
+}
+
 // require one evaluator-owned capacity clock
 function normalCapacityTrustedInstant(value) {
   // accept only a finite real Date supplied by the caller's trusted boundary
@@ -1092,9 +1301,9 @@ function closeNormalCapacityReceipt(
 export function evaluateNormalStageCapacity(input, trustedNow = new Date()) {
   const keys = [
     "activeDatabaseBytes", "captureReserveBytes", "capturedAt",
-    "fixtureInodes", "freeBytes", "freeInodes", "imagePullPeakBytes",
-    "imageReferences", "inodeFloor", "largestSourceIndexBytes", "maxWalBytes",
-    "newImageInodes", "operationId", "persistentImageGrowthBytes", "phase",
+    "fixtureInodes", "freeBytes", "freeInodes", "imageProofSha256",
+    "imagePullPeakBytes", "imageReferences", "inodeFloor", "largestSourceIndexBytes",
+    "maxWalBytes", "newImageInodes", "operationId", "persistentImageGrowthBytes", "phase",
     "postgresComposeProject", "postgresContainerId", "postgresContainerImageId",
     "postgresContainerImageReference", "postgresDataDirectory",
     "postgresDataFilesystemDevice", "protectedFloorBytes",
@@ -1109,7 +1318,8 @@ export function evaluateNormalStageCapacity(input, trustedNow = new Date()) {
   const evaluatedAt = validateNormalCapacityClock(input, trustedNow);
 
   // require the reviewed fixed reserves and zero speculative deletion credit
-  if (!["pre_pull", "post_pull"].includes(input.phase) ||
+  if (!["pre_pull", "post_pull", "post_cleanup"].includes(input.phase) ||
+    !HASH_PATTERN.test(input.imageProofSha256) ||
     input.protectedFloorBytes !== BLUEBERRY_PROTECTED_FREE_BYTES ||
     input.captureReserveBytes !== BLUEBERRY_NEXT_CAPTURE_BYTES ||
     input.scratchBytes !== NORMAL_CAPACITY_SCRATCH_BYTES ||
@@ -1139,7 +1349,7 @@ export function evaluateNormalStageCapacity(input, trustedNow = new Date()) {
       input.persistentImageGrowthBytes,
       migrationPeakBytes,
     ))
-    : migrationPeakBytes;
+    : input.phase === "post_pull" ? migrationPeakBytes : 0;
   const requiredBytes = adjustmentReleaseSum(
     input.protectedFloorBytes,
     input.captureReserveBytes,
@@ -1148,8 +1358,8 @@ export function evaluateNormalStageCapacity(input, trustedNow = new Date()) {
   const requiredInodes = adjustmentReleaseSum(
     input.inodeFloor,
     input.phase === "pre_pull" ? input.newImageInodes : 0,
-    input.sourceDatabaseFileCount,
-    input.fixtureInodes,
+    input.phase === "post_cleanup" ? 0 : input.sourceDatabaseFileCount,
+    input.phase === "post_cleanup" ? 0 : input.fixtureInodes,
   );
   const reasons = [];
 
@@ -1171,7 +1381,7 @@ export function evaluateNormalStageCapacity(input, trustedNow = new Date()) {
 
 // evaluate the bounded-backup normal release activation envelope
 export function evaluateNormalActivationCapacity(input, trustedNow = new Date()) {
-  const keys = [
+  const commonKeys = [
     "actualBackupBytes", "backupHeadroomBytes", "boundedBackupCeilingBytes",
     "captureReserveBytes", "capturedAt", "fixtureInodes", "freeBytes",
     "freeInodes", "inodeFloor", "liveDatabaseBytes", "measuredMigrationPeakBytes",
@@ -1184,6 +1394,9 @@ export function evaluateNormalActivationCapacity(input, trustedNow = new Date())
     "targetLedgerSha256", "targetRelease", "targetSchemaVersion", "weatherPostgresDir",
     "weatherPostgresDirFilesystemDevice",
   ];
+  const keys = input.phase === "post_backup"
+    ? [...commonKeys, "actualBackupAllocatedBytes", "preBackupReceiptSha256"]
+    : commonKeys;
   requireExactKeys(input, keys, "normal activation capacity input");
   validateNormalCapacityIdentity(input);
   const evaluatedAt = validateNormalCapacityClock(input, trustedNow);
@@ -1204,14 +1417,18 @@ export function evaluateNormalActivationCapacity(input, trustedNow = new Date())
     "measuredMigrationPeakInodes"]) {
     normalCapacityInteger(input[name], name, name === "liveDatabaseBytes" ? 1 : 0);
   }
-  const expectedBackupCeiling = adjustmentReleaseSum(
-    input.liveDatabaseBytes,
-    input.backupHeadroomBytes,
-  );
+  const expectedBackupCeiling = input.phase === "pre_backup"
+    ? adjustmentReleaseSum(input.liveDatabaseBytes, input.backupHeadroomBytes)
+    : input.boundedBackupCeilingBytes;
 
-  // prohibit a lowered ceiling or a fabricated pre-backup allocation
+  // prohibit a rebased pre ceiling or malformed phase-specific backup evidence
   if (input.boundedBackupCeilingBytes !== expectedBackupCeiling ||
-    (input.phase === "pre_backup" && input.actualBackupBytes !== 0)) {
+    (input.phase === "pre_backup" && input.actualBackupBytes !== 0) ||
+    (input.phase === "post_backup" &&
+      (input.boundedBackupCeilingBytes < 1 ||
+        !HASH_PATTERN.test(input.preBackupReceiptSha256) ||
+        normalCapacityInteger(input.actualBackupAllocatedBytes,
+          "actualBackupAllocatedBytes", 1) < 1 || input.actualBackupBytes < 1))) {
     throw new Error("normal activation backup envelope is invalid");
   }
   const backupCeilingExceeded = input.actualBackupBytes > input.boundedBackupCeilingBytes;
@@ -1219,9 +1436,9 @@ export function evaluateNormalActivationCapacity(input, trustedNow = new Date())
 
   // reserve only the unconsumed backup ceiling after the measured backup exists
   if (input.phase === "post_backup") {
-    remainingBackupBytes = backupCeilingExceeded
+    remainingBackupBytes = input.actualBackupAllocatedBytes >= input.boundedBackupCeilingBytes
       ? 0
-      : input.boundedBackupCeilingBytes - input.actualBackupBytes;
+      : input.boundedBackupCeilingBytes - input.actualBackupAllocatedBytes;
   }
   const requiredBytes = adjustmentReleaseSum(
     input.protectedFloorBytes,
@@ -1255,19 +1472,16 @@ export function evaluateNormalActivationCapacity(input, trustedNow = new Date())
   );
 }
 
-// revalidate one stored normal capacity receipt and every echoed input fact
-export function validateNormalCapacityReceipt(value, trustedNow = new Date()) {
+// replay one stored normal capacity receipt without assigning current authority
+export function verifyNormalCapacityReceipt(value) {
   const receipt = requireObject(value, "normal capacity receipt");
+
+  // prohibit legacy formula reinterpretation under the successor contract
+  if (receipt.schemaVersion !== NORMAL_RELEASE_CAPACITY_SCHEMA_VERSION) {
+    throw new Error("normal capacity receipt schema differs");
+  }
   const input = { ...receipt };
   const evaluatedAt = normalCapacityInstant(receipt.evaluatedAt, "evaluatedAt");
-  const trustedAt = Date.parse(normalCapacityTrustedInstant(trustedNow));
-  const receiptAge = trustedAt - evaluatedAt;
-
-  // reject a stored evaluation outside the real caller-owned current-time window
-  if (receiptAge > NORMAL_CAPACITY_MAXIMUM_AGE_MILLISECONDS ||
-    receiptAge < -NORMAL_CAPACITY_MAXIMUM_FUTURE_MILLISECONDS) {
-    throw new Error("normal capacity receipt is stale");
-  }
 
   // remove only the derived receipt fields before exact input validation
   for (const name of ["evaluatedAt", "operation", "reasons", "receiptSha256", "requiredBytes",
@@ -1285,6 +1499,21 @@ export function validateNormalCapacityReceipt(value, trustedNow = new Date()) {
     throw new Error("normal capacity receipt differs");
   }
   return expected;
+}
+
+// revalidate one stored receipt within its current action-authority window
+export function validateNormalCapacityReceipt(value, trustedNow = new Date()) {
+  const receipt = verifyNormalCapacityReceipt(value);
+  const evaluatedAt = normalCapacityInstant(receipt.evaluatedAt, "evaluatedAt");
+  const trustedAt = Date.parse(normalCapacityTrustedInstant(trustedNow));
+  const receiptAge = trustedAt - evaluatedAt;
+
+  // reject historical evidence outside the real caller-owned current-time window
+  if (receiptAge > NORMAL_CAPACITY_MAXIMUM_AGE_MILLISECONDS ||
+    receiptAge < -NORMAL_CAPACITY_MAXIMUM_FUTURE_MILLISECONDS) {
+    throw new Error("normal capacity receipt is stale");
+  }
+  return receipt;
 }
 
 // read one bounded PostgreSQL data_directory from the exact running container
@@ -1391,20 +1620,66 @@ export function collectNormalDatabaseFilesystemCapacity(input, options = {}) {
   };
 }
 
-// derive image growth from exact registry manifests and local Docker layers
-async function collectNormalStageImageCapacity(input) {
-  const [sourceServer, sourceWeb, targetServer, targetWeb] =
-    validateNormalStageImageReferences(input.imageReferences);
-  const record = await collectLiteralReleaseCapacity([
-    sourceServer, sourceWeb, targetServer, targetWeb, sourceServer, sourceWeb,
-  ]);
-  const inventory = collectReleaseCapacityInventory({
-    ...record,
-    compensationScope: "normal-schema-release-source-restore",
-    sourceRelease: input.sourceRelease,
-    version: "normal-stage-release-inventory/v1",
-  }, "normal");
-  const measured = evaluateAdjustmentReleaseCapacity(inventory);
+// derive image growth from immutable proof and fresh local Docker inventory
+export async function collectNormalStageImageCapacity(input, imageProof, options = {}) {
+  const proof = validateNormalStageImageProof(imageProof, input);
+  const inspectLocal = options.inspectLocal ?? inspectLocalReleaseProofImage;
+  const inventoryByChain = new Map();
+
+  // require sources always and targets after the pull boundary
+  for (const image of proof.images) {
+    const local = await inspectLocal(image.reference, image);
+    const required = image.role === "source" || input.phase !== "pre_pull";
+
+    // refuse absent images required by the current phase
+    if (required && local.length === 0) {
+      throw new Error(`normal stage ${image.role} image is not locally measurable`);
+    }
+
+    // bind every present local image to its complete proof chain
+    if (local.length !== 0 && local.length !== image.layers.length) {
+      throw new Error("normal stage local image layer count differs");
+    }
+
+    // accept only exact proof-bound chain allocation measurements
+    for (const [index, layer] of local.entries()) {
+      requireExactKeys(layer, ["allocatedBytes", "chainId"],
+        "normal stage local image layer");
+      if (layer.chainId !== image.layers[index].chainId ||
+        adjustmentReleaseAllocated(layer.allocatedBytes) !== layer.allocatedBytes) {
+        throw new Error("normal stage local image layer differs");
+      }
+      const old = inventoryByChain.get(layer.chainId);
+
+      // reject inconsistent allocation for one shared physical chain
+      if (old !== undefined && old !== layer.allocatedBytes) {
+        throw new Error("normal stage local layer allocation differs");
+      }
+      inventoryByChain.set(layer.chainId, layer.allocatedBytes);
+    }
+  }
+
+  // preserve the existing bounded local inventory policy
+  if (inventoryByChain.size > 256) {
+    throw new Error("normal stage local image inventory exceeds its bound");
+  }
+  const measured = evaluateAdjustmentReleaseCapacity({
+    engineMetadataBytes: ADJUSTMENT_RELEASE_ENGINE_METADATA_BYTES,
+    freeBytes: 0,
+    freeInodes: 0,
+    futureStateBytes: ADJUSTMENT_RELEASE_FUTURE_STATE_BYTES,
+    images: normalStageProofCapacityImages(proof.images),
+    inventory: [...inventoryByChain.entries()].map(([chainId, allocatedBytes]) => ({
+      allocatedBytes,
+      chainId,
+    })),
+    maximumOwnedBytes: ADJUSTMENT_RELEASE_CONTROL_MAX_BYTES,
+    measuredAt: proof.verifiedAt,
+    nextStateInodes: 1_004,
+    pullScratchBytes: ADJUSTMENT_RELEASE_PULL_SCRATCH_BYTES,
+    retainedControlBytes: 0,
+    runtimePackageBytes: 0,
+  });
   return {
     imagePullPeakBytes: measured.pullPeakGrowthBytes,
     newImageInodes: adjustmentReleaseSum(
@@ -1419,8 +1694,8 @@ async function collectNormalStageImageCapacity(input) {
 export async function collectNormalStageCapacity(input, options = {}) {
   const keys = [
     "activeDatabaseBytes", "captureReserveBytes", "capturedAt", "fixtureInodes",
-    "imageReferences", "inodeFloor", "largestSourceIndexBytes", "maxWalBytes",
-    "operationId", "phase", "postgresComposeProject", "postgresContainerId",
+    "imageProofSha256", "imageReferences", "inodeFloor", "largestSourceIndexBytes",
+    "maxWalBytes", "operationId", "phase", "postgresComposeProject", "postgresContainerId",
     "protectedFloorBytes", "retirementCreditBytes", "scratchBytes",
     "sourceDatabaseFileCount", "sourceDatabaseOid", "sourceEnvSha256",
     "sourceLedgerSha256", "sourceRelease", "sourceSchemaVersion", "systemIdentifier",
@@ -1428,26 +1703,73 @@ export async function collectNormalStageCapacity(input, options = {}) {
     "weatherPostgresDir",
   ];
   requireExactKeys(input, keys, "normal stage capacity collection input");
-  const trustedNow = options.trustedNow ?? new Date();
   validateNormalCapacityReleaseIdentity(input);
-  validateNormalCapacityClock(input, trustedNow);
   validateNormalStageImageReferences(input.imageReferences);
+  const proof = validateNormalStageImageProof(options.imageProof, input);
+
+  // bind the caller request to the exact canonical proof file identity
+  if (proof.proofSha256 !== input.imageProofSha256) {
+    throw new Error("normal stage image proof hash differs");
+  }
+
+  // reject unknown phase or clock framing before live host inspection
+  if (!["pre_pull", "post_pull", "post_cleanup"].includes(input.phase)) {
+    throw new Error("normal stage capacity phase is invalid");
+  }
+  normalCapacityInstant(input.capturedAt, "capturedAt");
   const collectFilesystem = options.collectFilesystem ?? collectNormalDatabaseFilesystemCapacity;
   const collectImages = options.collectImages ?? collectNormalStageImageCapacity;
+  const clock = options.clock ?? (() => new Date());
   const filesystem = await collectFilesystem(input);
-  const images = await collectImages(input);
+  const images = await collectImages(input, proof);
   requireExactKeys(filesystem, ["freeBytes", "freeInodes", "postgresContainerImageId",
     "postgresContainerImageReference", "postgresDataDirectory",
     "postgresDataFilesystemDevice", "weatherPostgresDirFilesystemDevice"],
   "normal stage filesystem collection");
   requireExactKeys(images, ["imagePullPeakBytes", "newImageInodes",
     "persistentImageGrowthBytes"], "normal stage image collection");
-  return evaluateNormalStageCapacity({ ...input, ...filesystem, ...images }, trustedNow);
+  return evaluateNormalStageCapacity({ ...input, ...filesystem, ...images }, clock());
+}
+
+// validate a post-backup input against its historical pre-backup authority
+function validateNormalActivationPredecessor(input, value) {
+  const pre = verifyNormalCapacityReceipt(value);
+  const capturedAt = normalCapacityInstant(input.capturedAt, "capturedAt");
+  const identityNames = ["operationId", "sourceRelease", "targetRelease", "sourceEnvSha256",
+    "targetEnvSha256", "sourceLedgerSha256", "targetLedgerSha256", "sourceSchemaVersion",
+    "targetSchemaVersion", "systemIdentifier", "sourceDatabaseOid", "stageReceiptSha256",
+    "postgresComposeProject", "postgresContainerId", "weatherPostgresDir",
+    "backupHeadroomBytes", "protectedFloorBytes", "captureReserveBytes", "inodeFloor",
+    "fixtureInodes", "retirementCreditBytes", "measuredMigrationPeakBytes",
+    "measuredMigrationPeakInodes"];
+
+  // bind the completed backup to one ready predecessor and unchanged ceiling
+  if (pre.operation !== "activation" || pre.phase !== "pre_backup" ||
+    pre.state !== "capacity_ready" || pre.reasons.length !== 0 ||
+    input.preBackupReceiptSha256 !== pre.receiptSha256 ||
+    input.boundedBackupCeilingBytes !== pre.boundedBackupCeilingBytes ||
+    capturedAt <= Date.parse(pre.evaluatedAt) ||
+    identityNames.some((name) => input[name] !== pre[name])) {
+    throw new Error("normal activation pre-backup receipt differs");
+  }
+  return pre;
+}
+
+// bind fresh filesystem identity to the historical pre-backup receipt
+function validateNormalActivationPredecessorFilesystem(pre, filesystem) {
+  const names = ["postgresContainerImageId", "postgresContainerImageReference",
+    "postgresDataDirectory", "postgresDataFilesystemDevice",
+    "weatherPostgresDirFilesystemDevice"];
+
+  // prohibit container, mount, or filesystem drift across backup creation
+  if (names.some((name) => filesystem[name] !== pre[name])) {
+    throw new Error("normal activation pre-backup filesystem differs");
+  }
 }
 
 // collect authoritative activation facts before applying the pure reviewed formula
 export async function collectNormalActivationCapacity(input, options = {}) {
-  const keys = [
+  const commonKeys = [
     "actualBackupBytes", "backupHeadroomBytes", "boundedBackupCeilingBytes",
     "captureReserveBytes", "capturedAt", "fixtureInodes", "inodeFloor",
     "liveDatabaseBytes", "measuredMigrationPeakBytes", "measuredMigrationPeakInodes",
@@ -1457,17 +1779,31 @@ export async function collectNormalActivationCapacity(input, options = {}) {
     "stageReceiptSha256", "systemIdentifier", "targetEnvSha256", "targetLedgerSha256",
     "targetRelease", "targetSchemaVersion", "weatherPostgresDir",
   ];
+  const keys = input.phase === "post_backup"
+    ? [...commonKeys, "actualBackupAllocatedBytes", "preBackupReceiptSha256"]
+    : commonKeys;
   requireExactKeys(input, keys, "normal activation capacity collection input");
-  const trustedNow = options.trustedNow ?? new Date();
   validateNormalCapacityReleaseIdentity(input);
-  validateNormalCapacityClock(input, trustedNow);
+
+  // reject unknown phase or clock framing before live host inspection
+  if (!["pre_backup", "post_backup"].includes(input.phase)) {
+    throw new Error("normal activation capacity phase is invalid");
+  }
+  normalCapacityInstant(input.capturedAt, "capturedAt");
+  const pre = input.phase === "post_backup"
+    ? validateNormalActivationPredecessor(input, options.preBackupReceipt)
+    : null;
   const collectFilesystem = options.collectFilesystem ?? collectNormalDatabaseFilesystemCapacity;
+  const clock = options.clock ?? (() => new Date());
   const filesystem = await collectFilesystem(input);
   requireExactKeys(filesystem, ["freeBytes", "freeInodes", "postgresContainerImageId",
     "postgresContainerImageReference", "postgresDataDirectory",
     "postgresDataFilesystemDevice", "weatherPostgresDirFilesystemDevice"],
   "normal activation filesystem collection");
-  return evaluateNormalActivationCapacity({ ...input, ...filesystem }, trustedNow);
+
+  // compare live filesystem identity only after collecting its exact facts
+  if (pre !== null) validateNormalActivationPredecessorFilesystem(pre, filesystem);
+  return evaluateNormalActivationCapacity({ ...input, ...filesystem }, clock());
 }
 
 const MODEL_ACTION_CONTRACT_VERSION = "forecast-adjustment-model-action/v1";
@@ -5806,6 +6142,43 @@ async function readNoFollowBoundedFile(path, maximumBytes, description) {
   }
 }
 
+// read one stable private canonical JSON control file
+async function readNormalCapacityControlFile(path, maximumBytes, description) {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+
+  try {
+    const before = await handle.stat({ bigint: true });
+    const expectedUid = BigInt(process.geteuid());
+
+    // reject aliases, extra writers, and unbounded allocations before reading
+    if (!before.isFile() || before.nlink !== 1n || before.uid !== expectedUid ||
+      (before.mode & 0o777n) !== 0o600n || before.size < 2n ||
+      before.size > BigInt(maximumBytes)) {
+      throw new Error(`${description} is unsafe`);
+    }
+    const bytes = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    const linked = await lstat(path, { bigint: true });
+
+    // reject in-place mutation and path replacement across the bounded read
+    if (!linked.isFile() || linked.isSymbolicLink() || linked.nlink !== 1n ||
+      before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs ||
+      before.dev !== linked.dev || before.ino !== linked.ino) {
+      throw new Error(`${description} changed while reading`);
+    }
+    const value = JSON.parse(bytes.toString("utf8"));
+
+    // require one exact canonical frame without whitespace or trailing data
+    if (!bytes.equals(Buffer.from(canonicalJson(value)))) {
+      throw new Error(`${description} is not canonical`);
+    }
+    return value;
+  } finally {
+    await handle.close();
+  }
+}
+
 // validate one package manifest and its fixed contracts
 async function readPackageManifest(packageRoot) {
   const manifestBytes = await readNoFollowBoundedFile(
@@ -9406,9 +9779,11 @@ function measureReleasePath(path) {
   return { bytes: adjustmentReleaseAllocated(bytes), inodes };
 }
 
-// collect actual local Docker parent-chain allocation for one retained image
-function inspectLocalReleaseImage(reference, remoteImage) {
+// collect exact local Docker parent-chain allocation for one image identity
+function inspectLocalReleaseImageIdentity(reference, configDigest, expectedDiffIds) {
   let output;
+
+  // treat an absent local image as an empty inventory observation
   try {
     output = execFileSync("docker", ["image", "inspect", "--format", "{{json .}}", reference], {
       encoding: "utf8",
@@ -9422,16 +9797,15 @@ function inspectLocalReleaseImage(reference, remoteImage) {
     throw new Error("local Docker image inspection exceeds its bound");
   }
   const inspected = JSON.parse(output);
-  const config = JSON.parse(remoteImage.configBytes);
   const paths = [];
   const lower = inspected.GraphDriver?.Data?.LowerDir;
   const upper = inspected.GraphDriver?.Data?.UpperDir;
 
   // bind local identity, platform and diff-id sequence to registry config
-  if (inspected.Id !== JSON.parse(remoteImage.manifestBytes).config.digest ||
+  if (inspected.Id !== configDigest ||
     inspected.Architecture !== "arm64" || inspected.Os !== "linux" ||
     inspected.GraphDriver?.Name !== "overlay2" ||
-    JSON.stringify(inspected.RootFS?.Layers) !== JSON.stringify(config.rootfs.diff_ids)) {
+    JSON.stringify(inspected.RootFS?.Layers) !== JSON.stringify(expectedDiffIds)) {
     throw new Error("local Docker image identity differs from registry config");
   }
   if (typeof lower === "string" && lower.length > 0) {
@@ -9440,7 +9814,7 @@ function inspectLocalReleaseImage(reference, remoteImage) {
   if (typeof upper === "string" && upper.length > 0) {
     paths.push(upper);
   }
-  if (paths.length !== config.rootfs.diff_ids.length ||
+  if (paths.length !== expectedDiffIds.length ||
     paths.some((path) => !path.startsWith("/var/lib/docker/overlay2/") || !path.endsWith("/diff"))) {
     throw new Error("local Docker layer paths are unavailable or unsupported");
   }
@@ -9448,7 +9822,7 @@ function inspectLocalReleaseImage(reference, remoteImage) {
   const diffIds = [];
 
   // measure each literal parent chain once
-  for (const [index, diffId] of config.rootfs.diff_ids.entries()) {
+  for (const [index, diffId] of expectedDiffIds.entries()) {
     diffIds.push(diffId);
     const measured = measureReleasePath(paths[index]);
     inventory.push({
@@ -9457,6 +9831,26 @@ function inspectLocalReleaseImage(reference, remoteImage) {
     });
   }
   return inventory;
+}
+
+// adapt one raw registry image to the local identity collector
+function inspectLocalReleaseImage(reference, remoteImage) {
+  const manifest = JSON.parse(remoteImage.manifestBytes);
+  const config = JSON.parse(remoteImage.configBytes);
+  return inspectLocalReleaseImageIdentity(
+    reference,
+    manifest.config.digest,
+    config.rootfs.diff_ids,
+  );
+}
+
+// adapt one normalized proof image to the local identity collector
+function inspectLocalReleaseProofImage(reference, image) {
+  return inspectLocalReleaseImageIdentity(
+    reference,
+    image.configDigest,
+    image.layers.map((layer) => layer.diffId),
+  );
 }
 
 // measure fixed release/control state without following symlinks
@@ -9770,19 +10164,52 @@ async function main() {
     return;
   }
 
-  // evaluate one canonical normal stage or activation capacity document
-  if (command === "normal-stage-capacity" || command === "normal-activation-capacity") {
-    if (argumentsList.length !== 0) throw new Error(`${command} takes no arguments`);
-    const bytes = await readBoundedScheduleMetadata(16 * 1_024);
-    const input = JSON.parse(bytes.toString("utf8"));
-
-    // reject noncanonical or multiply framed capacity evidence
-    if (!bytes.equals(Buffer.from(canonicalJson(input)))) {
-      throw new Error("normal capacity input is not canonical");
+  // collect one remote-only normal-stage image proof
+  if (command === "normal-stage-image-proof") {
+    if (argumentsList.length !== 1) {
+      throw new Error("normal-stage-image-proof requires REQUEST_PATH");
     }
-    const receipt = command === "normal-stage-capacity"
-      ? await collectNormalStageCapacity(input)
-      : await collectNormalActivationCapacity(input);
+    const request = await readNormalCapacityControlFile(argumentsList[0],
+      NORMAL_CAPACITY_INPUT_MAXIMUM_BYTES, "normal stage image proof request");
+    process.stdout.write(canonicalJson(await collectNormalStageImageProof(request)));
+    return;
+  }
+
+  // evaluate one path-bound normal stage capacity document
+  if (command === "normal-stage-capacity") {
+    if (argumentsList.length !== 2) {
+      throw new Error("normal-stage-capacity requires INPUT_PATH PROOF_PATH");
+    }
+    const input = await readNormalCapacityControlFile(argumentsList[0],
+      NORMAL_CAPACITY_INPUT_MAXIMUM_BYTES, "normal stage capacity input");
+    const imageProof = await readNormalCapacityControlFile(argumentsList[1],
+      NORMAL_STAGE_IMAGE_PROOF_MAXIMUM_BYTES, "normal stage image proof");
+    const receipt = await collectNormalStageCapacity(input, { imageProof });
+    process.stdout.write(canonicalJson(receipt));
+
+    // preserve the complete refusal receipt while returning a failing gate
+    if (receipt.state !== "capacity_ready") process.exitCode = 3;
+    return;
+  }
+
+  // evaluate one path-bound normal activation capacity document
+  if (command === "normal-activation-capacity") {
+    if (argumentsList.length < 1 || argumentsList.length > 2) {
+      throw new Error("normal-activation-capacity requires INPUT_PATH [PRE_RECEIPT_PATH]");
+    }
+    const input = await readNormalCapacityControlFile(argumentsList[0],
+      NORMAL_CAPACITY_INPUT_MAXIMUM_BYTES, "normal activation capacity input");
+    const needsPredecessor = input.phase === "post_backup";
+
+    // require historical predecessor evidence only for the completed backup phase
+    if (argumentsList.length !== (needsPredecessor ? 2 : 1)) {
+      throw new Error("normal activation predecessor path differs from its phase");
+    }
+    const preBackupReceipt = needsPredecessor
+      ? await readNormalCapacityControlFile(argumentsList[1],
+        NORMAL_CAPACITY_INPUT_MAXIMUM_BYTES, "normal activation pre-backup receipt")
+      : undefined;
+    const receipt = await collectNormalActivationCapacity(input, { preBackupReceipt });
     process.stdout.write(canonicalJson(receipt));
 
     // preserve the complete refusal receipt while returning a failing gate

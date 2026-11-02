@@ -2036,6 +2036,12 @@ test("normal stage qualification rejects over-envelope and low-water samples", a
   const update = join(repoRoot, "deploy/scripts/update.sh");
   const { evaluateNormalStageCapacity } = await import(evaluatorPath);
   const now = new Date();
+  const sourceEnv = join(directory, "source.env");
+  const targetEnv = join(directory, "target.env");
+  const sourceEnvBytes = "WEATHER_RELEASE=2026.10.09-3\n";
+  const targetEnvBytes = "WEATHER_RELEASE=2026.10.29-1\n";
+  await writeFile(sourceEnv, sourceEnvBytes, { mode: 0o600 });
+  await writeFile(targetEnv, targetEnvBytes, { mode: 0o600 });
   const digest = (character) => `sha256:${character.repeat(64)}`;
   const base = {
     activeDatabaseBytes: 1_000_000_000,
@@ -2045,6 +2051,7 @@ test("normal stage qualification rejects over-envelope and low-water samples", a
     freeBytes: 40_000_000_000,
     freeInodes: 100_000,
     imagePullPeakBytes: 100_000_000,
+    imageProofSha256: "4".repeat(64),
     imageReferences: [
       { reference: `ghcr.io/anstosa/weather-server@${digest("a")}`, role: "source", runtime: "server" },
       { reference: `ghcr.io/anstosa/weather-web@${digest("b")}`, role: "source", runtime: "web" },
@@ -2068,20 +2075,30 @@ test("normal stage qualification rejects over-envelope and low-water samples", a
     scratchBytes: 268_435_456,
     sourceDatabaseFileCount: 10_000,
     sourceDatabaseOid: 16_384,
-    sourceEnvSha256: "2".repeat(64),
+    sourceEnvSha256: createHash("sha256").update(sourceEnvBytes).digest("hex"),
     sourceLedgerSha256: "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
     sourceRelease: "2026.10.09-3",
     sourceSchemaVersion: 21,
     systemIdentifier: "123456789",
-    targetEnvSha256: "3".repeat(64),
+    targetEnvSha256: createHash("sha256").update(targetEnvBytes).digest("hex"),
     targetLedgerSha256: "c8b43b714eb555027ea7439a813831ab7326ad951b800362f35b2343330da81f",
     targetRelease: "2026.10.29-1",
     targetSchemaVersion: 23,
     weatherPostgresDir: "/var/lib/weather/postgres",
     weatherPostgresDirFilesystemDevice: 1,
   };
-  const pre = evaluateNormalStageCapacity({ ...base, phase: "pre_pull" }, now);
+  const preAt = new Date(now.getTime() - 1);
+  const pre = evaluateNormalStageCapacity({
+    ...base, capturedAt: preAt.toISOString(), phase: "pre_pull",
+  }, preAt);
   const post = evaluateNormalStageCapacity({ ...base, phase: "post_pull" }, now);
+  const cleanupAt = new Date(now.getTime() + 10);
+  // close the completed sample interval with a fresh terminal witness
+  const cleanup = evaluateNormalStageCapacity({
+    ...base,
+    capturedAt: cleanupAt.toISOString(),
+    phase: "post_cleanup",
+  }, cleanupAt);
   const canonical = (value) => Array.isArray(value)
     ? `[${value.map(canonical).join(",")}]`
     : value !== null && typeof value === "object"
@@ -2089,13 +2106,16 @@ test("normal stage qualification rejects over-envelope and low-water samples", a
       : JSON.stringify(value);
   const prePath = join(directory, "pre.json");
   const postPath = join(directory, "post.json");
+  const cleanupPath = join(directory, "cleanup.json");
   const samplesPath = join(directory, "samples.json");
   const outputPath = join(directory, "qualification.json");
-  await writeFile(prePath, canonical(pre), { mode: 0o600 });
-  await writeFile(postPath, canonical(post), { mode: 0o600 });
+  await writeFile(prePath, `${canonical(pre)}\n`, { mode: 0o600 });
+  await writeFile(postPath, `${canonical(post)}\n`, { mode: 0o600 });
+  await writeFile(cleanupPath, `${canonical(cleanup)}\n`, { mode: 0o600 });
   const runSeal = () => spawnSync("bash", ["-c",
-    'source "$1"; write_normal_stage_qualification_receipt source.env target.env "$2" "$3" "$4" "$5"',
-    "weather-normal-stage-envelope", update, prePath, postPath, samplesPath, outputPath],
+    'source "$1"; write_normal_stage_qualification_receipt "$2" "$3" "$4" "$5" "$6" "$7" "$8"',
+    "weather-normal-stage-envelope", update, sourceEnv, targetEnv,
+    prePath, postPath, cleanupPath, samplesPath, outputPath],
   { encoding: "utf8" });
 
   try {
@@ -2128,7 +2148,7 @@ test("normal stage qualification rejects over-envelope and low-water samples", a
       };
       const samples = { ...body,
         receiptSha256: createHash("sha256").update(canonical(body)).digest("hex") };
-      await writeFile(samplesPath, canonical(samples), { mode: 0o600 });
+      await writeFile(samplesPath, `${canonical(samples)}\n`, { mode: 0o600 });
       const result = runSeal();
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, /exceeds its post-pull capacity envelope/u);
@@ -2156,10 +2176,10 @@ test("normal stage qualification rejects over-envelope and low-water samples", a
         { capturedAtMilliseconds: now.getTime() + 1, freeBytes: 9_999_000_000, freeInodes: 99_000, sequence: 2 },
       ],
     };
-    await writeFile(samplesPath, canonical({
+    await writeFile(samplesPath, `${canonical({
       ...gapBody,
       receiptSha256: createHash("sha256").update(canonical(gapBody)).digest("hex"),
-    }), { mode: 0o600 });
+    })}\n`, { mode: 0o600 });
     const gap = runSeal();
     assert.notEqual(gap.status, 0);
     assert.match(gap.stderr, /exceeds its post-pull capacity envelope/u);
@@ -2188,10 +2208,10 @@ test("normal stage qualification rejects over-envelope and low-water samples", a
         { capturedAtMilliseconds: now.getTime() + 3, freeBytes: 38_000_000_000, freeInodes: 99_000, sequence: 3 },
       ],
     };
-    await writeFile(samplesPath, canonical({
+    await writeFile(samplesPath, `${canonical({
       ...cloneBody,
       receiptSha256: createHash("sha256").update(canonical(cloneBody)).digest("hex"),
-    }), { mode: 0o600 });
+    })}\n`, { mode: 0o600 });
     const clone = runSeal();
     assert.equal(clone.status, 0, clone.stderr);
     const qualification = JSON.parse(await readFile(outputPath, "utf8"));

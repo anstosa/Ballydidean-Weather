@@ -135,7 +135,7 @@ async function refreshArchive(fixture) {
 }
 
 // create one full or partial v15 installation fixture
-async function createFixture({ partial = false, actualCandidate = false } = {}) {
+async function createFixture({ partial = false, actualCandidate = false, frozenCandidate = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "weather-maintenance-v15-"));
   const baseline = join(root, "baseline");
   const installed = join(root, "installed");
@@ -153,9 +153,17 @@ async function createFixture({ partial = false, actualCandidate = false } = {}) 
   await cp(join(baseline, "deploy"), join(installed, "deploy"), { recursive: true });
   await cp(join(baseline, "deploy"), join(candidate, "deploy"), { recursive: true });
 
-  // overlay either the actual partial worktree slice or all reviewed changes
+  // retain the historical v15 candidate independently of later worktree versions
   for (const relativePath of partial ? partialPaths : changedPaths) {
-    if (partial || actualCandidate) {
+    // select only published bytes for the retired installer
+    if (frozenCandidate) {
+      const bytes = execFileSync("git", [
+        "show", `d308ff4072ff623df6ef37ca6bc16cab5a6d4412:${relativePath}`,
+      ], { cwd: repoRoot });
+      await writeFile(join(candidate, relativePath), bytes);
+      const identity = identities.find((entry) => entry.relativePath === relativePath);
+      await chmod(join(candidate, relativePath), identity.mode);
+    } else if (partial || actualCandidate) {
       await cp(join(repoRoot, relativePath), join(candidate, relativePath));
       const identity = identities.find((entry) => entry.relativePath === relativePath);
       await chmod(join(candidate, relativePath), identity.mode);
@@ -397,12 +405,15 @@ test("v15 accepts exactly 10 changed paths and retains a complete recovery backu
   }
 });
 
-test("v15 installs the actual complete worktree candidate and recovers its predecessor", async () => {
-  const fixture = await createFixture({ actualCandidate: true });
+// retain the published v15 installation and recovery regression
+test("v15 installs the frozen published AF80 candidate and recovers its predecessor", async () => {
+  const fixture = await createFixture({ frozenCandidate: true });
   try {
+    assert.equal(fixture.candidateDigest,
+      "af80d5752590bf47f5b893ee69f04215132e80210993f4a8c78d8562d2ea9a52");
     const result = runInstaller(fixture);
     assert.equal(result.status, 0, result.stderr);
-    // verify every actual candidate byte rather than synthetic fixture comments
+    // verify every published candidate byte rather than synthetic fixture comments
     for (const relativePath of changedPaths) {
       assert.equal(
         await fileHash(join(fixture.installed, relativePath)),
@@ -414,6 +425,21 @@ test("v15 installs the actual complete worktree candidate and recovers its prede
     assert.equal(recovered.status, 0, recovered.stderr);
     assertPredecessor(fixture);
     await assertRuntimeState(fixture);
+  } finally {
+    await rm(fixture.root, { force: true, recursive: true });
+  }
+});
+
+// keep the frozen installer closed to later control-plane generations
+test("v15 rejects the actual v16 worktree candidate without mutation", async () => {
+  const fixture = await createFixture({ actualCandidate: true });
+  try {
+    const result = runInstaller(fixture);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /candidate control version is not fifteen/u);
+    assertPredecessor(fixture);
+    await assertRuntimeState(fixture);
+    await assert.rejects(readdir(fixture.backups), { code: "ENOENT" });
   } finally {
     await rm(fixture.root, { force: true, recursive: true });
   }

@@ -192,25 +192,41 @@ control_plane_digest() {
 
 # evaluate one bounded canonical normal-release capacity document
 normal_release_capacity_receipt() {
+  (($# >= 2 && $# <= 3)) || die "normal capacity requires an input and at most one proof path"
   local command=$1
   local input_path=$2
-  local input_mode input_size
+  local proof_path=${3-}
+  local input_size
+  local -a arguments=("$command" "$input_path")
 
-  # admit only the two reviewed formula domains
-  if [[ "$command" != normal-stage-capacity &&
-    "$command" != normal-activation-capacity ]]; then
-    die "invalid normal release capacity command"
-  fi
+  # close the immutable proof and live admission argument shapes
+  case "$command" in
+    normal-stage-image-proof)
+      (($# == 2)) || die "normal image proof takes only its request path"
+      ;;
+    normal-stage-capacity)
+      (($# == 3)) && [[ -n "$proof_path" ]] || die "normal stage capacity requires its image proof"
+      ;;
+    normal-activation-capacity)
+      (($# == 2)) || [[ -n "$proof_path" ]] || die "normal activation predecessor path is empty"
+      ;;
+    *) die "invalid normal release capacity command" ;;
+  esac
   require_file "$input_path"
   [[ ! -L "$input_path" ]] || die "normal release capacity input must not be a symbolic link"
-  input_mode=$(stat -c '%a' "$input_path")
   input_size=$(stat -c '%s' "$input_path")
 
-  # keep measured host facts owner-private and inside the fixed parser bound
-  if (( (8#$input_mode & 077) != 0 || input_size < 2 || input_size > 16384 )); then
+  # bind one private unaliased caller-owned request inside the fixed parser bound
+  if [[ "$(stat -c '%u:%a:%h' "$input_path")" != "$EUID:600:1" ]] ||
+    ((input_size < 2 || input_size > 16384)); then
     die "normal release capacity input is invalid"
   fi
-  node "$deploy_dir/scripts/adjustment-evaluation-package.mjs" "$command" <"$input_path"
+
+  # let the package independently verify the optional proof file and its phase role
+  if [[ -n "$proof_path" ]]; then
+    arguments+=("$proof_path")
+  fi
+  node "$deploy_dir/scripts/adjustment-evaluation-package.mjs" "${arguments[@]}"
 }
 
 # apply the versioned runtime ACL contract

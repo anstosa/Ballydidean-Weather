@@ -35,9 +35,12 @@ releases_dir="$deploy_dir/releases"
 state_dir="$deploy_dir/state"
 capacity_evidence=/var/lib/weather/preflight-latest.json
 v13_resource_evidence=/var/lib/weather/preflight-v13-resource.json
-control_plane_version=15
+control_plane_version=16
 recurring_previous_release=2026.10.09-1
 recurring_previous_control_plane_sha256=603eb8f488ba78be3d7ecf76b0d587346d1c36432255d390d86d2b768c8fecba
+v16_handoff_source_release=2026.10.09-2
+v16_handoff_source_control_version=15
+v16_handoff_source_control_sha256=af80d5752590bf47f5b893ee69f04215132e80210993f4a8c78d8562d2ea9a52
 v14_compatibility_bridge_release=2026.10.09-2
 v14_compatibility_bridge_commit=f6daa89d135661eb60dd5479c5d0d6c23e7198a9
 full_v14_release=2026.10.09-3
@@ -46,6 +49,10 @@ full_v14_source_server_image=ghcr.io/anstosa/weather-server@sha256:587dd0d34ed19
 full_v14_source_web_image=ghcr.io/anstosa/weather-web@sha256:34d824b03c5f84289b8f38028e751f183a953565fc929260c09b07c9e64f15ba
 v14_compatibility_bridge_state="$state_dir/v14-compatibility-bridge-v1"
 v14_compatibility_bridge_pending="$state_dir/.v14-compatibility-bridge-v1.pending"
+v16_control_plane_handoff="$state_dir/control-plane-handoff-v16-v1.json"
+v16_source_environment_sha256=97368a14e368dcf7fd3f3f179cd222df2f848695e1cd993abf8892e69c30d4e7
+v16_bridge_state_sha256=c944a152f3129d7bf3bf3b2dcd2b4d230ca58c64719360e22351eb8043779c62
+v16_predecessor_manifest_sha256=d1f64bf6c03fa35d198d6e9edc58b9d9ac4225e829e2c41e68761fe5ca827536
 historical_v14_rehearsal_receipt="$state_dir/historical-v14-18-21-rehearsal-v1.json"
 historical_v14_rehearsal_samples="$state_dir/historical-v14-18-21-rehearsal-samples-v1.json"
 normal_activation_journal="$state_dir/normal-activation-v1.env"
@@ -141,7 +148,90 @@ require_retained_maintenance_source() {
     die "v13 deployment source must be the exact active release environment"
 }
 
-# select only the exact active v15 core and schema environment
+# emit the exact normalized v16 control identity manifest
+control_plane_identity_manifest_v16() {
+  local file relative mode count=0
+  local -a files
+  mapfile -d '' -t files < <(
+    find "$deploy_dir/scripts" "$deploy_dir/postgres" "$deploy_dir/systemd" \
+      "$deploy_dir/sudoers" -type f -print0 | LC_ALL=C sort -z
+  )
+  ((${#files[@]} == 41)) || die "v16 control plane file count differs"
+
+  # keep Compose first and every other control path sorted
+  for file in "$deploy_dir/compose.yaml" "${files[@]}"; do
+    [[ -f "$file" && ! -L "$file" && "$(stat -c '%u:%g:%h' "$file")" == 0:0:1 ]] ||
+      die "v16 control plane file metadata differs: $file"
+    relative=${file#"$repo_root/"}
+    mode=$((8#$(stat -c '%a' "$file")))
+    printf '%s 0 0 %04o %s\n' "$(sha256sum "$file" | awk '{print $1}')" \
+      "$mode" "$relative"
+    count=$((count + 1))
+  done
+  ((count == 42)) || die "v16 control plane identity manifest is incomplete"
+}
+
+# verify the exact AF80-to-v16 installed handoff
+require_v16_control_plane_handoff() {
+  local source_env=$1 current_digest candidate_manifest_sha256
+  require_file "$source_env"
+  [[ ! -L "$source_env" && "$(stat -c '%u:%g:%a:%h' "$source_env")" == 0:0:600:1 &&
+    "$(sha256sum "$source_env" | awk '{print $1}')" == "$v16_source_environment_sha256" ]] ||
+    die "v16 handoff source environment differs"
+  [[ -f "$v14_compatibility_bridge_state" && ! -L "$v14_compatibility_bridge_state" &&
+    "$(stat -c '%u:%g:%a:%h' "$v14_compatibility_bridge_state")" == 0:0:600:1 &&
+    "$(sha256sum "$v14_compatibility_bridge_state" | awk '{print $1}')" == \
+      "$v16_bridge_state_sha256" ]] || die "v16 handoff bridge state differs"
+  [[ -f "$v16_control_plane_handoff" && ! -L "$v16_control_plane_handoff" &&
+    "$(stat -c '%u:%g:%a:%h' "$v16_control_plane_handoff")" == 0:0:600:1 &&
+    "$(stat -c '%s' "$v16_control_plane_handoff")" -le 4096 ]] ||
+    die "v16 handoff receipt metadata differs"
+  current_digest=$(control_plane_digest)
+  candidate_manifest_sha256=$(control_plane_identity_manifest_v16 | sha256sum | awk '{print $1}')
+  node --input-type=module - "$v16_control_plane_handoff" "$current_digest" \
+    "$candidate_manifest_sha256" "$v16_predecessor_manifest_sha256" \
+    "$v16_bridge_state_sha256" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+const [path, successor, candidateManifest, predecessorManifest, bridgeState] =
+  process.argv.slice(2);
+const raw = readFileSync(path);
+const value = JSON.parse(raw);
+const keys = ["bridgeStateSha256", "candidateIdentityManifestSha256", "contractVersion",
+  "installedAt", "predecessorIdentityManifestSha256", "receiptSha256",
+  "sourceControlSha256", "sourceControlVersion", "sourceRelease",
+  "successorControlSha256", "successorControlVersion"];
+const canonical = (input) => Array.isArray(input)
+  ? `[${input.map(canonical).join(",")}]`
+  : input !== null && typeof input === "object"
+    ? `{${Object.keys(input).sort().map(
+      (key) => `${JSON.stringify(key)}:${canonical(input[key])}`,
+    ).join(",")}}`
+    : JSON.stringify(input);
+const body = { ...value };
+delete body.receiptSha256;
+const receiptSha256 = createHash("sha256").update(`${canonical(body)}\n`).digest("hex");
+
+// require one canonical self-hashed successor receipt
+if (raw.at(-1) !== 0x0a || !raw.equals(Buffer.from(`${canonical(value)}\n`)) ||
+  Object.keys(value).sort().join("\n") !== keys.sort().join("\n") ||
+  value.contractVersion !== "weather-control-plane-handoff/v16-v1" ||
+  !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u.test(value.installedAt) ||
+  !Number.isFinite(Date.parse(value.installedAt)) || value.sourceRelease !== "2026.10.09-2" ||
+  value.sourceControlVersion !== 15 ||
+  value.sourceControlSha256 !== "af80d5752590bf47f5b893ee69f04215132e80210993f4a8c78d8562d2ea9a52" ||
+  value.predecessorIdentityManifestSha256 !== predecessorManifest ||
+  value.bridgeStateSha256 !== bridgeState || value.successorControlVersion !== 16 ||
+  value.successorControlSha256 !== successor ||
+  value.candidateIdentityManifestSha256 !== candidateManifest ||
+  value.receiptSha256 !== receiptSha256) {
+  throw new Error("v16 control-plane handoff receipt differs");
+}
+NODE
+}
+
+# select only the exact active current or handed-off source environment
 normal_release_source_env() {
   local current schema source expected_link installed_digest
   current=$(read_release_state "$state_dir/current-release")
@@ -156,9 +246,14 @@ normal_release_source_env() {
   validate_release_env "$source" "$current"
   require_control_plane_compatibility "$source"
   installed_digest=$(control_plane_digest)
-  [[ "$(env_value "$source" WEATHER_CONTROL_PLANE_VERSION)" == "$control_plane_version" &&
-    "$(env_value "$source" WEATHER_CONTROL_PLANE_SHA256)" == "$installed_digest" ]] ||
-    die "normal release source is not the exact installed v15 contract"
+  [[ ( "$(env_value "$source" WEATHER_CONTROL_PLANE_VERSION)" == "$control_plane_version" &&
+      "$(env_value "$source" WEATHER_CONTROL_PLANE_SHA256)" == "$installed_digest" ) ||
+    ( "$(env_value "$source" WEATHER_CONTROL_PLANE_VERSION)" == \
+        "$v16_handoff_source_control_version" &&
+      "$(env_value "$source" WEATHER_CONTROL_PLANE_SHA256)" == \
+        "$v16_handoff_source_control_sha256" &&
+      "$(env_value "$source" WEATHER_RELEASE)" == "$v16_handoff_source_release" ) ]] ||
+    die "normal release source is not the exact installed or handed-off contract"
   printf '%s\n' "$source"
 }
 
@@ -840,7 +935,7 @@ require_literal_full_v14_release_capacity() (
 
   # admit only the reviewed bridge-to-full transition
   [[ "$source_release" == "$v14_compatibility_bridge_release" &&
-    "$target_version" == 15 ]] ||
+    "$target_version" == "$control_plane_version" ]] ||
     die "literal full v14 capacity is unsupported outside the fixed bridge handoff"
 
   # retain the exact database and tunnel infrastructure across the handoff
@@ -1530,12 +1625,22 @@ require_control_plane_compatibility() {
     return
   fi
 
-  # accept only the complete pinned recurring-maintenance predecessor
+  # retain only the historical inert v14 predecessor
   if [[ "$expected_version" == 13 &&
     "$expected_digest" == "$recurring_previous_control_plane_sha256" ]]; then
     expected_release=$(env_value "$env_file" WEATHER_RELEASE)
     [[ "$expected_release" == "$recurring_previous_release" ]] ||
       die "deployment control-plane identity is unsupported without an exact versioned allowlisted handoff"
+    return
+  fi
+
+  # admit AF80 only through the complete installed v16 handoff
+  if [[ "$expected_version" == "$v16_handoff_source_control_version" &&
+    "$expected_digest" == "$v16_handoff_source_control_sha256" ]]; then
+    expected_release=$(env_value "$env_file" WEATHER_RELEASE)
+    [[ "$expected_release" == "$v16_handoff_source_release" ]] ||
+      die "deployment control-plane identity is unsupported without an exact versioned allowlisted handoff"
+    require_v16_control_plane_handoff "$env_file"
     return
   fi
 
@@ -1803,15 +1908,105 @@ if (!fullyPassing && !reviewedStorageFailure) {
 NODE
 }
 
+# render one canonical immutable image-proof request
+write_normal_stage_image_proof_request() {
+  local source_env=$1
+  local target_env=$2
+  local output=$3
+  local source_release target_release source_env_sha256 target_env_sha256
+  source_release=$(env_value "$source_env" WEATHER_RELEASE)
+  target_release=$(env_value "$target_env" WEATHER_RELEASE)
+  source_env_sha256=$(sha256sum "$source_env" | awk '{print $1}')
+  target_env_sha256=$(sha256sum "$target_env" | awk '{print $1}')
+  node --input-type=module - "$output" \
+    "normal-${source_release//./-}-to-${target_release//./-}" \
+    "$source_release" "$target_release" "$source_env_sha256" "$target_env_sha256" \
+    "$(env_value "$source_env" WEATHER_SERVER_IMAGE)" \
+    "$(env_value "$source_env" WEATHER_WEB_IMAGE)" \
+    "$(env_value "$target_env" WEATHER_SERVER_IMAGE)" \
+    "$(env_value "$target_env" WEATHER_WEB_IMAGE)" <<'NODE'
+import { writeFileSync } from "node:fs";
+
+const [output, operationId, sourceRelease, targetRelease, sourceEnvSha256,
+  targetEnvSha256, sourceServer, sourceWeb, targetServer, targetWeb] = process.argv.slice(2);
+const request = {
+  imageReferences: [
+    { reference: sourceServer, role: "source", runtime: "server" },
+    { reference: sourceWeb, role: "source", runtime: "web" },
+    { reference: targetServer, role: "target", runtime: "server" },
+    { reference: targetWeb, role: "target", runtime: "web" },
+  ],
+  operationId,
+  sourceEnvSha256,
+  sourceRelease,
+  targetEnvSha256,
+  targetRelease,
+};
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+writeFileSync(output, `${canonical(request)}\n`, { mode: 0o600 });
+NODE
+  chmod 600 "$output"
+}
+
+# collect one remote-only immutable image proof
+require_normal_stage_image_proof() {
+  local source_env=$1
+  local target_env=$2
+  local request=$3
+  local proof=$4
+  write_normal_stage_image_proof_request "$source_env" "$target_env" "$request"
+  # fail closed on any incomplete remote proof
+  if ! normal_release_capacity_receipt normal-stage-image-proof "$request" >"$proof"; then
+    cat "$proof" >&2
+    die "normal stage image proof collection failed"
+  fi
+  chmod 600 "$proof"
+  node --input-type=module - "$deploy_dir/scripts/adjustment-evaluation-package.mjs" \
+    "$request" "$proof" <<'NODE'
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const [modulePath, requestPath, proofPath] = process.argv.slice(2);
+const { validateNormalStageImageProof } = await import(pathToFileURL(modulePath));
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+
+// require canonical newline-framed request and proof files
+const readCanonical = (path, maximum, description) => {
+  const bytes = readFileSync(path);
+  const value = JSON.parse(bytes);
+  // close the exact bounded canonical frame
+  if (bytes.length < 2 || bytes.length > maximum ||
+    !bytes.equals(Buffer.from(`${canonical(value)}\n`))) {
+    throw new Error(`${description} is not canonical`);
+  }
+  return value;
+};
+const request = readCanonical(requestPath, 16_384, "normal stage image proof request");
+const proof = readCanonical(proofPath, 1_048_576, "normal stage image proof");
+validateNormalStageImageProof(proof, request);
+NODE
+}
+
 # render one canonical measured normal-stage capacity request
 write_normal_stage_capacity_input() {
   local source_env=$1
   local target_env=$2
-  local phase=$3
-  local output=$4
-  local database_name postgres_dir source_release target_release source_history
+  local image_proof=$3
+  local phase=$4
+  local output=$5
+  local captured_at database_name postgres_dir source_release target_release source_history
   local system_identifier database_oid database_bytes largest_index_bytes max_wal_bytes
   local postgres_container_id source_database_file_count source_env_sha256 target_env_sha256
+  local image_proof_sha256
+  captured_at=$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
   database_name=$(env_value "$source_env" WEATHER_DATABASE_NAME)
   postgres_dir=$(env_value "$source_env" WEATHER_POSTGRES_DIR)
   source_release=$(env_value "$source_env" WEATHER_RELEASE)
@@ -1834,28 +2029,39 @@ write_normal_stage_capacity_input() {
     die "normal capacity database file count is invalid"
   source_env_sha256=$(sha256sum "$source_env" | awk '{print $1}')
   target_env_sha256=$(sha256sum "$target_env" | awk '{print $1}')
-  node --input-type=module - "$output" "$phase" \
+  image_proof_sha256=$(node --input-type=module - "$image_proof" <<'NODE'
+import { readFileSync } from "node:fs";
+const proof = JSON.parse(readFileSync(process.argv[2]));
+// reject an unclosed proof identity before SQL collection
+if (!/^[a-f0-9]{64}$/u.test(proof.proofSha256)) {
+  throw new Error("normal stage image proof hash is invalid");
+}
+process.stdout.write(proof.proofSha256);
+NODE
+  )
+  node --input-type=module - "$output" "$phase" "$captured_at" \
     "normal-${source_release//./-}-to-${target_release//./-}" \
     "$source_release" "$target_release" "$source_env_sha256" "$target_env_sha256" \
-    "$system_identifier" "$database_oid" "$database_bytes" "$largest_index_bytes" \
-    "$max_wal_bytes" "$source_database_file_count" "$postgres_dir" \
-    "${WEATHER_COMPOSE_PROJECT_NAME:-weather}" "$postgres_container_id" \
+    "$image_proof_sha256" "$system_identifier" "$database_oid" "$database_bytes" \
+    "$largest_index_bytes" "$max_wal_bytes" "$source_database_file_count" \
+    "$postgres_dir" "${WEATHER_COMPOSE_PROJECT_NAME:-weather}" "$postgres_container_id" \
     "$(env_value "$source_env" WEATHER_SERVER_IMAGE)" \
     "$(env_value "$source_env" WEATHER_WEB_IMAGE)" \
     "$(env_value "$target_env" WEATHER_SERVER_IMAGE)" \
     "$(env_value "$target_env" WEATHER_WEB_IMAGE)" <<'NODE'
 import { writeFileSync } from "node:fs";
 
-const [output, phase, operationId, sourceRelease, targetRelease, sourceEnvSha256,
-  targetEnvSha256, systemIdentifier, sourceDatabaseOid, activeDatabaseBytes,
-  largestSourceIndexBytes, maxWalBytes, sourceDatabaseFileCount, weatherPostgresDir,
-  postgresComposeProject, postgresContainerId, sourceServer, sourceWeb, targetServer,
-  targetWeb] = process.argv.slice(2);
+const [output, phase, capturedAt, operationId, sourceRelease, targetRelease,
+  sourceEnvSha256, targetEnvSha256, imageProofSha256, systemIdentifier,
+  sourceDatabaseOid, activeDatabaseBytes, largestSourceIndexBytes, maxWalBytes,
+  sourceDatabaseFileCount, weatherPostgresDir, postgresComposeProject,
+  postgresContainerId, sourceServer, sourceWeb, targetServer, targetWeb] = process.argv.slice(2);
 const input = {
   activeDatabaseBytes: Number(activeDatabaseBytes),
   captureReserveBytes: 4_112_384,
-  capturedAt: new Date().toISOString(),
+  capturedAt,
   fixtureInodes: 4_096,
+  imageProofSha256,
   imageReferences: [
     { reference: sourceServer, role: "source", runtime: "server" },
     { reference: sourceWeb, role: "source", runtime: "web" },
@@ -1890,7 +2096,7 @@ const canonical = (value) => Array.isArray(value)
   : value !== null && typeof value === "object"
     ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
     : JSON.stringify(value);
-writeFileSync(output, canonical(input), { mode: 0o600 });
+writeFileSync(output, `${canonical(input)}\n`, { mode: 0o600 });
 NODE
   chmod 600 "$output"
 }
@@ -1901,7 +2107,10 @@ require_normal_capacity_receipt_binding() {
   local receipt=$2
   local operation=$3
   local phase=$4
-  [[ -f "$receipt" && ! -L "$receipt" && "$(stat -c '%u:%a' "$receipt")" == "$EUID:600" &&
+  [[ -f "$input" && ! -L "$input" && "$(stat -c '%u:%a:%h' "$input")" == "$EUID:600:1" &&
+    "$(stat -c '%s' "$input")" -ge 2 && "$(stat -c '%s' "$input")" -le 16384 ]] ||
+    die "normal capacity input metadata is invalid"
+  [[ -f "$receipt" && ! -L "$receipt" && "$(stat -c '%u:%a:%h' "$receipt")" == "$EUID:600:1" &&
     "$(stat -c '%s' "$receipt")" -ge 2 && "$(stat -c '%s' "$receipt")" -le 16384 ]] ||
     die "normal capacity receipt metadata is invalid"
   node --input-type=module - "$deploy_dir/scripts/adjustment-evaluation-package.mjs" \
@@ -1922,8 +2131,8 @@ const canonical = (value) => Array.isArray(value)
     : JSON.stringify(value);
 
 // bind the immutable helper output to every exact request fact
-if (!inputBytes.equals(Buffer.from(canonical(input))) ||
-  !receiptBytes.equals(Buffer.from(canonical(receipt))) ||
+if (!inputBytes.equals(Buffer.from(`${canonical(input)}\n`)) ||
+  !receiptBytes.equals(Buffer.from(`${canonical(receipt)}\n`)) ||
   receipt.operation !== operation || receipt.phase !== phase ||
   receipt.state !== "capacity_ready" || receipt.reasons?.length !== 0 ||
   Object.keys(input).some((name) => canonical(receipt[name]) !== canonical(input[name]))) {
@@ -1937,11 +2146,15 @@ NODE
 require_normal_stage_capacity() {
   local source_env=$1
   local target_env=$2
-  local phase=$3
-  local input=$4
-  local receipt=$5
-  write_normal_stage_capacity_input "$source_env" "$target_env" "$phase" "$input"
-  if ! normal_release_capacity_receipt normal-stage-capacity "$input" >"$receipt"; then
+  local image_proof=$3
+  local phase=$4
+  local input=$5
+  local receipt=$6
+  write_normal_stage_capacity_input "$source_env" "$target_env" "$image_proof" \
+    "$phase" "$input"
+  # preserve the complete refusal before stopping
+  if ! normal_release_capacity_receipt normal-stage-capacity "$input" \
+    "$image_proof" >"$receipt"; then
     cat "$receipt" >&2
     die "normal stage capacity is blocked"
   fi
@@ -1949,42 +2162,117 @@ require_normal_stage_capacity() {
   require_normal_capacity_receipt_binding "$input" "$receipt" stage "$phase"
 }
 
-# seal the completed full-copy qualification for later activation
-write_normal_stage_qualification_receipt() {
-  local source_env=$1
-  local target_env=$2
-  local pre_pull_receipt=$3
-  local post_pull_receipt=$4
-  local peak_output=$5
-  local output=$6
+# validate or seal one complete normal-stage qualification
+normal_stage_qualification_document() {
+  local mode=$1
+  local source_env=$2
+  local target_env=$3
+  local image_proof=$4
+  local pre_pull_receipt=$5
+  local post_pull_receipt=$6
+  local post_cleanup_receipt=$7
+  local samples=$8
+  local qualification=$9
   node --input-type=module - "$deploy_dir/scripts/adjustment-evaluation-package.mjs" \
-    "$pre_pull_receipt" "$post_pull_receipt" "$peak_output" \
-    "$output" <<'NODE'
+    "$mode" "$source_env" "$target_env" "$image_proof" "$pre_pull_receipt" \
+    "$post_pull_receipt" "$post_cleanup_receipt" "$samples" "$qualification" <<'NODE'
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const [modulePath, prePath, postPath, samplesPath, output] = process.argv.slice(2);
-const { validateNormalCapacityReceipt } = await import(pathToFileURL(modulePath));
-const pre = JSON.parse(readFileSync(prePath, "utf8"));
-const post = JSON.parse(readFileSync(postPath, "utf8"));
-const samplesBytes = readFileSync(samplesPath);
-const samples = JSON.parse(samplesBytes);
-const trustedNow = new Date();
-validateNormalCapacityReceipt(pre, trustedNow);
-validateNormalCapacityReceipt(post, trustedNow);
-const bound = ["operationId", "sourceRelease", "targetRelease", "sourceEnvSha256",
-  "targetEnvSha256", "systemIdentifier", "sourceDatabaseOid", "sourceLedgerSha256",
-  "targetLedgerSha256", "sourceSchemaVersion", "targetSchemaVersion",
-  "postgresContainerId", "postgresContainerImageId", "postgresContainerImageReference",
-  "weatherPostgresDir", "postgresDataDirectory"];
+const [modulePath, mode, sourceEnvPath, targetEnvPath, proofPath, prePath, postPath,
+  cleanupPath, samplesPath, qualificationPath] = process.argv.slice(2);
+const { validateNormalCapacityReceipt, validateNormalStageImageProof,
+  verifyNormalCapacityReceipt } = await import(pathToFileURL(modulePath));
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-// require the post-pull receipt to retain every immutable pre-pull binding
-if (pre.operation !== "stage" || post.operation !== "stage" ||
-  pre.phase !== "pre_pull" || post.phase !== "post_pull" ||
-  pre.state !== "capacity_ready" || post.state !== "capacity_ready" ||
-  bound.some((name) => pre[name] !== post[name])) {
-  throw new Error("normal stage capacity receipts are not one transaction");
+// read one newline-framed canonical artifact
+const readCanonical = (path, maximum, description) => {
+  const bytes = readFileSync(path);
+  const value = JSON.parse(bytes);
+  if (bytes.length < 2 || bytes.length > maximum ||
+    !bytes.equals(Buffer.from(`${canonical(value)}\n`))) {
+    throw new Error(`${description} is not canonical`);
+  }
+  return { bytes, value };
+};
+
+// read the exact release identity without sourcing executable text
+const readEnvironment = (path) => {
+  const values = new Map();
+  // parse only assignments needed for immutable identity
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    if (line.length === 0 || line.startsWith("#")) continue;
+    const match = /^([A-Z][A-Z0-9_]*)=(.*)$/u.exec(line);
+    // reject malformed or duplicated identity fields
+    if (match === null || values.has(match[1])) throw new Error("release environment is invalid");
+    values.set(match[1], match[2]);
+  }
+  return values;
+};
+const sourceEnvBytes = readFileSync(sourceEnvPath);
+const targetEnvBytes = readFileSync(targetEnvPath);
+const sourceEnv = readEnvironment(sourceEnvPath);
+const targetEnv = readEnvironment(targetEnvPath);
+const sourceIdentity = {
+  sourceEnvSha256: hash(sourceEnvBytes),
+  sourceRelease: sourceEnv.get("WEATHER_RELEASE"),
+  targetEnvSha256: hash(targetEnvBytes),
+  targetRelease: targetEnv.get("WEATHER_RELEASE"),
+};
+const sampleArtifact = readCanonical(samplesPath, 1_048_576,
+  "normal stage capacity samples");
+const samples = sampleArtifact.value;
+let pre;
+let post;
+let cleanup;
+let existing = null;
+
+// select fresh temporary receipts or the embedded historical triplet
+if (mode === "seal") {
+  pre = readCanonical(prePath, 16_384, "normal stage pre-pull receipt").value;
+  post = readCanonical(postPath, 16_384, "normal stage post-pull receipt").value;
+  cleanup = readCanonical(cleanupPath, 16_384, "normal stage post-cleanup receipt").value;
+} else if (mode === "read") {
+  existing = readCanonical(qualificationPath, 65_536,
+    "normal stage qualification").value;
+  pre = existing.prePullReceipt;
+  post = existing.postPullReceipt;
+  cleanup = existing.postCleanupReceipt;
+} else {
+  throw new Error("normal stage qualification mode is invalid");
+}
+pre = verifyNormalCapacityReceipt(pre);
+post = verifyNormalCapacityReceipt(post);
+cleanup = mode === "seal"
+  ? validateNormalCapacityReceipt(cleanup, new Date())
+  : verifyNormalCapacityReceipt(cleanup);
+const immutableNames = ["operationId", "sourceRelease", "targetRelease",
+  "sourceEnvSha256", "targetEnvSha256", "sourceLedgerSha256", "targetLedgerSha256",
+  "sourceSchemaVersion", "targetSchemaVersion", "systemIdentifier", "sourceDatabaseOid",
+  "postgresComposeProject", "postgresContainerId", "postgresContainerImageId",
+  "postgresContainerImageReference", "weatherPostgresDir", "postgresDataDirectory",
+  "weatherPostgresDirFilesystemDevice", "postgresDataFilesystemDevice",
+  "imageProofSha256", "protectedFloorBytes", "captureReserveBytes", "scratchBytes",
+  "inodeFloor", "fixtureInodes", "retirementCreditBytes"];
+
+// require one ordered three-phase transaction without freezing changing physical facts
+if (pre.operation !== "stage" || post.operation !== "stage" || cleanup.operation !== "stage" ||
+  pre.phase !== "pre_pull" || post.phase !== "post_pull" || cleanup.phase !== "post_cleanup" ||
+  [pre, post, cleanup].some((receipt) => receipt.state !== "capacity_ready" ||
+    receipt.reasons.length !== 0) ||
+  immutableNames.some((name) => pre[name] !== post[name] || pre[name] !== cleanup[name]) ||
+  canonical(pre.imageReferences) !== canonical(post.imageReferences) ||
+  canonical(pre.imageReferences) !== canonical(cleanup.imageReferences) ||
+  Date.parse(pre.evaluatedAt) >= Date.parse(post.evaluatedAt) ||
+  Date.parse(post.evaluatedAt) >= Date.parse(cleanup.evaluatedAt) ||
+  Object.entries(sourceIdentity).some(([name, value]) => pre[name] !== value)) {
+  throw new Error("normal stage capacity receipts are not one ordered transaction");
 }
 const sampleKeys = ["contractVersion", "initialFreeBytes", "initialFreeInodes",
   "minimumFreeBytes", "minimumFreeInodes", "peakGrowthBytes", "peakGrowthInodes",
@@ -1995,211 +2283,15 @@ const sampleKeys = ["contractVersion", "initialFreeBytes", "initialFreeInodes",
 const sampleBody = { ...samples };
 delete sampleBody.receiptSha256;
 const integer = (value) => Number.isSafeInteger(value) && value >= 0;
-const sampleDigest = createHash("sha256").update(canonical(sampleBody)).digest("hex");
+const sampleDigest = hash(Buffer.from(canonical(sampleBody)));
 const byteHeadroom = post.freeBytes - post.protectedFloorBytes - post.captureReserveBytes;
 const inodeHeadroom = post.freeInodes - post.inodeFloor;
 const imagePullConsumedBytes = Math.max(0, pre.freeBytes - post.freeBytes);
 const imagePullConsumedInodes = Math.max(0, pre.freeInodes - post.freeInodes);
 let sampleSeriesValid = Array.isArray(samples.samples) && samples.samples.length >= 2 &&
   samples.samples.length <= 4_096;
+
 // reject missing or reordered samples even when the outer digest was recomputed
-if (sampleSeriesValid) {
-  for (let index = 0; index < samples.samples.length; index += 1) {
-    const sample = samples.samples[index];
-    if (Object.keys(sample).sort().join("\n") !==
-      ["capturedAtMilliseconds", "freeBytes", "freeInodes", "sequence"].sort().join("\n") ||
-      sample.sequence !== index || !integer(sample.capturedAtMilliseconds) ||
-      !integer(sample.freeBytes) || !integer(sample.freeInodes) ||
-      (index > 0 && sample.capturedAtMilliseconds <
-        samples.samples[index - 1].capturedAtMilliseconds)) {
-      sampleSeriesValid = false;
-      break;
-    }
-  }
-}
-const observedMinimumBytes = sampleSeriesValid
-  ? Math.min(...samples.samples.map((sample) => sample.freeBytes)) : -1;
-const observedMinimumInodes = sampleSeriesValid
-  ? Math.min(...samples.samples.map((sample) => sample.freeInodes)) : -1;
-const phaseIndicesValid = integer(samples.migrationPhaseStartIndex) &&
-  integer(samples.migrationPhaseEndIndex) &&
-  samples.migrationPhaseStartIndex < samples.migrationPhaseEndIndex &&
-  samples.migrationPhaseEndIndex < samples.samples.length;
-const migrationSamples = phaseIndicesValid
-  ? samples.samples.slice(samples.migrationPhaseStartIndex,
-    samples.migrationPhaseEndIndex + 1) : [];
-const observedMigrationMinimumBytes = phaseIndicesValid
-  ? Math.min(...migrationSamples.map((sample) => sample.freeBytes)) : -1;
-const observedMigrationMinimumInodes = phaseIndicesValid
-  ? Math.min(...migrationSamples.map((sample) => sample.freeInodes)) : -1;
-const wholeStagePeakBytes = sampleSeriesValid
-  ? Math.max(post.freeBytes, samples.initialFreeBytes) - observedMinimumBytes : -1;
-const wholeStagePeakInodes = sampleSeriesValid
-  ? Math.max(post.freeInodes, samples.initialFreeInodes) - observedMinimumInodes : -1;
-
-// close the measured full-copy peak inside the admitted post-pull envelope
-if (Object.keys(samples).sort().join("\n") !== sampleKeys.sort().join("\n") ||
-  samples.contractVersion !== "normal-stage-capacity-samples/v1" ||
-  !sampleSeriesValid || samples.receiptSha256 !== sampleDigest ||
-  ![samples.initialFreeBytes, samples.initialFreeInodes, samples.minimumFreeBytes,
-    samples.minimumFreeInodes, samples.peakGrowthBytes,
-    samples.peakGrowthInodes, samples.migrationDurationMilliseconds,
-    samples.migrationMinimumFreeBytes, samples.migrationMinimumFreeInodes,
-    samples.migrationPeakGrowthBytes, samples.migrationPeakGrowthInodes,
-    samples.migrationPhaseStartTimestamp, samples.migrationPhaseEndTimestamp].every(integer) ||
-  !phaseIndicesValid ||
-  samples.migrationDurationMilliseconds > 60_000 ||
-  samples.minimumFreeBytes < post.protectedFloorBytes + post.captureReserveBytes ||
-  samples.minimumFreeInodes < post.inodeFloor || byteHeadroom < 0 || inodeHeadroom < 0 ||
-  samples.minimumFreeBytes !== observedMinimumBytes ||
-  samples.minimumFreeInodes !== observedMinimumInodes ||
-  samples.initialFreeBytes !== samples.samples[0]?.freeBytes ||
-  samples.initialFreeInodes !== samples.samples[0]?.freeInodes ||
-  samples.peakGrowthBytes !== samples.initialFreeBytes - observedMinimumBytes ||
-  samples.peakGrowthInodes !== samples.initialFreeInodes - observedMinimumInodes ||
-  samples.migrationPhaseStartTimestamp !==
-    samples.samples[samples.migrationPhaseStartIndex]?.capturedAtMilliseconds ||
-  samples.migrationPhaseEndTimestamp !==
-    samples.samples[samples.migrationPhaseEndIndex]?.capturedAtMilliseconds ||
-  samples.migrationMinimumFreeBytes !== observedMigrationMinimumBytes ||
-  samples.migrationMinimumFreeInodes !== observedMigrationMinimumInodes ||
-  samples.migrationPeakGrowthBytes !==
-    samples.samples[samples.migrationPhaseStartIndex]?.freeBytes - observedMigrationMinimumBytes ||
-  samples.migrationPeakGrowthInodes !==
-    samples.samples[samples.migrationPhaseStartIndex]?.freeInodes - observedMigrationMinimumInodes ||
-  imagePullConsumedBytes > pre.imagePullPeakBytes ||
-  imagePullConsumedInodes > pre.newImageInodes ||
-  wholeStagePeakBytes > byteHeadroom || wholeStagePeakInodes > inodeHeadroom) {
-  throw new Error("normal compatibility peak exceeds its post-pull capacity envelope");
-}
-const body = {
-  capacitySamplesSha256: createHash("sha256").update(samplesBytes).digest("hex"),
-  capacitySamplesReceiptSha256: samples.receiptSha256,
-  capacitySampleCount: samples.samples.length,
-  cleanupConfirmed: true,
-  contractVersion: "normal-stage-qualification/v1",
-  createdAt: new Date().toISOString(),
-  imagePullConsumedBytes,
-  imagePullConsumedInodes,
-  measuredMigrationPeakBytes: samples.migrationPeakGrowthBytes,
-  measuredMigrationPeakInodes: samples.migrationPeakGrowthInodes,
-  migrationMinimumFreeBytesObserved: samples.migrationMinimumFreeBytes,
-  migrationMinimumFreeInodesObserved: samples.migrationMinimumFreeInodes,
-  migrationPhaseEndIndex: samples.migrationPhaseEndIndex,
-  migrationPhaseEndTimestamp: samples.migrationPhaseEndTimestamp,
-  migrationPhaseStartIndex: samples.migrationPhaseStartIndex,
-  migrationPhaseStartTimestamp: samples.migrationPhaseStartTimestamp,
-  migrationDurationMilliseconds: samples.migrationDurationMilliseconds,
-  minimumFreeBytesObserved: samples.minimumFreeBytes,
-  minimumFreeInodesObserved: samples.minimumFreeInodes,
-  operationId: post.operationId,
-  postPullReceiptSha256: post.receiptSha256,
-  postPullFreeBytes: post.freeBytes,
-  postPullFreeInodes: post.freeInodes,
-  prePullReceiptSha256: pre.receiptSha256,
-  sourceDatabaseOid: post.sourceDatabaseOid,
-  sourceEnvSha256: post.sourceEnvSha256,
-  sourceLedgerSha256: post.sourceLedgerSha256,
-  sourceRelease: post.sourceRelease,
-  sourceSchemaVersion: post.sourceSchemaVersion,
-  systemIdentifier: post.systemIdentifier,
-  targetEnvSha256: post.targetEnvSha256,
-  targetLedgerSha256: post.targetLedgerSha256,
-  targetRelease: post.targetRelease,
-  targetSchemaVersion: post.targetSchemaVersion,
-  wholeStagePeakBytes,
-  wholeStagePeakInodes,
-};
-function canonical(value) {
-  return Array.isArray(value)
-  ? `[${value.map(canonical).join(",")}]`
-  : value !== null && typeof value === "object"
-    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
-    : JSON.stringify(value);
-}
-const receipt = { ...body,
-  receiptSha256: createHash("sha256").update(canonical(body)).digest("hex") };
-writeFileSync(output, canonical(receipt), { mode: 0o600 });
-NODE
-  chmod 600 "$output"
-}
-
-# validate one immutable cleanup-confirmed stage qualification against live source identity
-read_normal_stage_qualification() {
-  local source_env=$1
-  local target_env=$2
-  local receipt=$3
-  local database_name source_env_sha256 target_env_sha256 system_identifier database_oid
-  local capacity_samples
-  database_name=$(env_value "$source_env" WEATHER_DATABASE_NAME)
-  require_canonical_descendant "$receipt" "$releases_dir" "normal stage qualification"
-  require_file "$receipt"
-  [[ ! -L "$receipt" && "$(stat -c '%u:%a' "$receipt")" == "$EUID:600" &&
-    "$(stat -c '%s' "$receipt")" -le 16384 ]] ||
-    die "normal stage qualification metadata is invalid"
-  source_env_sha256=$(sha256sum "$source_env" | awk '{print $1}')
-  target_env_sha256=$(sha256sum "$target_env" | awk '{print $1}')
-  capacity_samples="$releases_dir/$(env_value "$target_env" WEATHER_RELEASE).normal-stage-samples.json"
-  require_canonical_descendant "$capacity_samples" "$releases_dir" \
-    "normal stage capacity samples"
-  require_file "$capacity_samples"
-  [[ ! -L "$capacity_samples" && "$(stat -c '%u:%a' "$capacity_samples")" == "$EUID:600" &&
-    "$(stat -c '%s' "$capacity_samples")" -le 1048576 ]] ||
-    die "normal stage capacity sample artifact is invalid"
-  read -r system_identifier database_oid < <(
-    WEATHER_ENV_FILE=$source_env compose exec -T postgres \
-      psql --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
-        --tuples-only --no-align --field-separator=' ' --command \
-        "SELECT (SELECT system_identifier FROM pg_control_system()), (SELECT oid FROM pg_database WHERE datname = current_database())")
-  node --input-type=module - "$receipt" "$capacity_samples" \
-    "$source_env_sha256" "$target_env_sha256" \
-    "$system_identifier" "$database_oid" \
-    "$(env_value "$source_env" WEATHER_RELEASE)" \
-    "$(env_value "$target_env" WEATHER_RELEASE)" <<'NODE'
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-
-const [path, samplesPath, sourceEnvSha256, targetEnvSha256, systemIdentifier, databaseOid,
-  sourceRelease, targetRelease] = process.argv.slice(2);
-const receipt = JSON.parse(readFileSync(path, "utf8"));
-const samplesBytes = readFileSync(samplesPath);
-const samples = JSON.parse(samplesBytes);
-const keys = ["capacitySampleCount", "capacitySamplesReceiptSha256",
-  "capacitySamplesSha256", "cleanupConfirmed", "contractVersion", "createdAt",
-  "imagePullConsumedBytes", "imagePullConsumedInodes",
-  "measuredMigrationPeakBytes", "measuredMigrationPeakInodes", "operationId",
-  "migrationDurationMilliseconds", "migrationMinimumFreeBytesObserved",
-  "migrationMinimumFreeInodesObserved", "migrationPhaseEndIndex",
-  "migrationPhaseEndTimestamp", "migrationPhaseStartIndex",
-  "migrationPhaseStartTimestamp",
-  "minimumFreeBytesObserved", "minimumFreeInodesObserved",
-  "postPullFreeBytes", "postPullFreeInodes", "postPullReceiptSha256",
-  "prePullReceiptSha256", "receiptSha256",
-  "sourceDatabaseOid", "sourceEnvSha256", "sourceLedgerSha256", "sourceRelease",
-  "sourceSchemaVersion", "systemIdentifier", "targetEnvSha256", "targetLedgerSha256",
-  "targetRelease", "targetSchemaVersion", "wholeStagePeakBytes", "wholeStagePeakInodes"];
-const body = { ...receipt };
-delete body.receiptSha256;
-const canonical = (value) => Array.isArray(value)
-  ? `[${value.map(canonical).join(",")}]`
-  : value !== null && typeof value === "object"
-    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
-    : JSON.stringify(value);
-const digest = createHash("sha256").update(canonical(body)).digest("hex");
-const integer = (value) => Number.isSafeInteger(value) && value >= 0;
-const sampleBody = { ...samples };
-delete sampleBody.receiptSha256;
-const sampleDigest = createHash("sha256").update(canonical(sampleBody)).digest("hex");
-const sampleKeys = ["contractVersion", "initialFreeBytes", "initialFreeInodes",
-  "minimumFreeBytes", "minimumFreeInodes", "migrationDurationMilliseconds",
-  "migrationMinimumFreeBytes", "migrationMinimumFreeInodes", "migrationPeakGrowthBytes",
-  "migrationPeakGrowthInodes", "migrationPhaseEndIndex", "migrationPhaseEndTimestamp",
-  "migrationPhaseStartIndex", "migrationPhaseStartTimestamp", "peakGrowthBytes",
-  "peakGrowthInodes", "receiptSha256", "samples"];
-let sampleSeriesValid = Object.keys(samples).sort().join("\n") ===
-  sampleKeys.sort().join("\n") && Array.isArray(samples.samples) &&
-  samples.samples.length >= 2 && samples.samples.length <= 4_096;
-// rederive every phase boundary and peak from the retained complete series
 if (sampleSeriesValid) {
   for (let index = 0; index < samples.samples.length; index += 1) {
     const sample = samples.samples[index];
@@ -2229,66 +2321,176 @@ const wholeMinimumFreeBytes = sampleSeriesValid
   ? Math.min(...samples.samples.map((sample) => sample.freeBytes)) : -1;
 const wholeMinimumFreeInodes = sampleSeriesValid
   ? Math.min(...samples.samples.map((sample) => sample.freeInodes)) : -1;
-if (Object.keys(receipt).sort().join("\n") !== keys.sort().join("\n") ||
-  receipt.contractVersion !== "normal-stage-qualification/v1" ||
-  receipt.cleanupConfirmed !== true || receipt.sourceEnvSha256 !== sourceEnvSha256 ||
-  receipt.targetEnvSha256 !== targetEnvSha256 ||
-  receipt.systemIdentifier !== systemIdentifier ||
-  receipt.sourceDatabaseOid !== Number(databaseOid) ||
-  receipt.sourceRelease !== sourceRelease || receipt.targetRelease !== targetRelease ||
-  receipt.sourceLedgerSha256 !== "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424" ||
-  receipt.targetLedgerSha256 !== "c8b43b714eb555027ea7439a813831ab7326ad951b800362f35b2343330da81f" ||
-  receipt.sourceSchemaVersion !== 21 || receipt.targetSchemaVersion !== 23 ||
-  !integer(receipt.measuredMigrationPeakBytes) ||
-  !integer(receipt.measuredMigrationPeakInodes) ||
-  !integer(receipt.migrationDurationMilliseconds) ||
-  receipt.migrationDurationMilliseconds > 60_000 ||
-  !integer(receipt.imagePullConsumedBytes) ||
-  !integer(receipt.imagePullConsumedInodes) ||
-  !integer(receipt.postPullFreeBytes) ||
-  !integer(receipt.postPullFreeInodes) ||
-  !integer(receipt.minimumFreeBytesObserved) ||
-  !integer(receipt.minimumFreeInodesObserved) ||
-  !integer(receipt.capacitySampleCount) ||
-  !sampleSeriesValid || !phaseIndicesValid ||
-  receipt.capacitySampleCount !== samples.samples?.length ||
-  receipt.capacitySamplesSha256 !== createHash("sha256").update(samplesBytes).digest("hex") ||
-  receipt.capacitySamplesReceiptSha256 !== samples.receiptSha256 ||
-  samples.receiptSha256 !== sampleDigest ||
-  receipt.measuredMigrationPeakBytes !== samples.migrationPeakGrowthBytes ||
-  receipt.measuredMigrationPeakInodes !== samples.migrationPeakGrowthInodes ||
-  receipt.migrationMinimumFreeBytesObserved !== migrationMinimumFreeBytes ||
-  receipt.migrationMinimumFreeInodesObserved !== migrationMinimumFreeInodes ||
-  receipt.migrationPhaseStartIndex !== samples.migrationPhaseStartIndex ||
-  receipt.migrationPhaseEndIndex !== samples.migrationPhaseEndIndex ||
-  receipt.migrationPhaseStartTimestamp !==
+const wholeStagePeakBytes = sampleSeriesValid
+  ? Math.max(post.freeBytes, samples.initialFreeBytes) - wholeMinimumFreeBytes : -1;
+const wholeStagePeakInodes = sampleSeriesValid
+  ? Math.max(post.freeInodes, samples.initialFreeInodes) - wholeMinimumFreeInodes : -1;
+const firstSampleAt = sampleSeriesValid ? samples.samples[0].capturedAtMilliseconds : -1;
+const lastSampleAt = sampleSeriesValid ? samples.samples.at(-1).capturedAtMilliseconds : -1;
+
+// close the continuous full-copy series inside the admitted post-pull envelope
+if (Object.keys(samples).sort().join("\n") !== sampleKeys.sort().join("\n") ||
+  samples.contractVersion !== "normal-stage-capacity-samples/v1" ||
+  !sampleSeriesValid || samples.receiptSha256 !== sampleDigest || !phaseIndicesValid ||
+  ![samples.initialFreeBytes, samples.initialFreeInodes, samples.minimumFreeBytes,
+    samples.minimumFreeInodes, samples.peakGrowthBytes, samples.peakGrowthInodes,
+    samples.migrationDurationMilliseconds, samples.migrationMinimumFreeBytes,
+    samples.migrationMinimumFreeInodes, samples.migrationPeakGrowthBytes,
+    samples.migrationPeakGrowthInodes, samples.migrationPhaseStartTimestamp,
+    samples.migrationPhaseEndTimestamp].every(integer) ||
+  samples.migrationDurationMilliseconds > 60_000 ||
+  firstSampleAt < Date.parse(post.evaluatedAt) || lastSampleAt > Date.parse(cleanup.capturedAt) ||
+  samples.minimumFreeBytes < post.protectedFloorBytes + post.captureReserveBytes ||
+  samples.minimumFreeInodes < post.inodeFloor || byteHeadroom < 0 || inodeHeadroom < 0 ||
+  samples.minimumFreeBytes !== wholeMinimumFreeBytes ||
+  samples.minimumFreeInodes !== wholeMinimumFreeInodes ||
+  samples.initialFreeBytes !== samples.samples[0]?.freeBytes ||
+  samples.initialFreeInodes !== samples.samples[0]?.freeInodes ||
+  samples.peakGrowthBytes !== samples.initialFreeBytes - wholeMinimumFreeBytes ||
+  samples.peakGrowthInodes !== samples.initialFreeInodes - wholeMinimumFreeInodes ||
+  samples.migrationPhaseStartTimestamp !==
     samples.samples[samples.migrationPhaseStartIndex]?.capturedAtMilliseconds ||
-  receipt.migrationPhaseEndTimestamp !==
+  samples.migrationPhaseEndTimestamp !==
     samples.samples[samples.migrationPhaseEndIndex]?.capturedAtMilliseconds ||
-  samples.migrationPhaseStartTimestamp !== receipt.migrationPhaseStartTimestamp ||
-  samples.migrationPhaseEndTimestamp !== receipt.migrationPhaseEndTimestamp ||
   samples.migrationMinimumFreeBytes !== migrationMinimumFreeBytes ||
   samples.migrationMinimumFreeInodes !== migrationMinimumFreeInodes ||
   samples.migrationPeakGrowthBytes !==
     samples.samples[samples.migrationPhaseStartIndex]?.freeBytes - migrationMinimumFreeBytes ||
   samples.migrationPeakGrowthInodes !==
     samples.samples[samples.migrationPhaseStartIndex]?.freeInodes - migrationMinimumFreeInodes ||
-  receipt.wholeStagePeakBytes !==
-    Math.max(receipt.postPullFreeBytes, samples.initialFreeBytes) - wholeMinimumFreeBytes ||
-  receipt.wholeStagePeakInodes !==
-    Math.max(receipt.postPullFreeInodes, samples.initialFreeInodes) - wholeMinimumFreeInodes ||
-  samples.minimumFreeBytes !== wholeMinimumFreeBytes ||
-  samples.minimumFreeInodes !== wholeMinimumFreeInodes ||
-  samples.peakGrowthBytes !== samples.initialFreeBytes - wholeMinimumFreeBytes ||
-  samples.peakGrowthInodes !== samples.initialFreeInodes - wholeMinimumFreeInodes ||
-  receipt.migrationDurationMilliseconds !== samples.migrationDurationMilliseconds ||
-  receipt.minimumFreeBytesObserved !== samples.minimumFreeBytes ||
-  receipt.minimumFreeInodesObserved !== samples.minimumFreeInodes ||
-  receipt.receiptSha256 !== digest) {
-  throw new Error("normal stage qualification differs from the live source");
+  imagePullConsumedBytes > pre.imagePullPeakBytes ||
+  imagePullConsumedInodes > pre.newImageInodes || wholeStagePeakBytes > byteHeadroom ||
+  wholeStagePeakInodes > inodeHeadroom) {
+  throw new Error("normal compatibility peak exceeds its post-pull capacity envelope");
 }
-process.stdout.write(`${receipt.measuredMigrationPeakBytes} ${receipt.measuredMigrationPeakInodes} ${receipt.receiptSha256}\n`);
+const createdAt = existing?.createdAt ?? new Date().toISOString();
+
+// retain one canonical seal time after the terminal live admission
+if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(createdAt) ||
+  !Number.isFinite(Date.parse(createdAt)) ||
+  Date.parse(createdAt) < Date.parse(cleanup.evaluatedAt)) {
+  throw new Error("normal stage qualification time is invalid");
+}
+const body = {
+  capacitySampleCount: samples.samples.length,
+  capacitySamplesReceiptSha256: samples.receiptSha256,
+  capacitySamplesSha256: hash(sampleArtifact.bytes),
+  cleanupConfirmed: true,
+  contractVersion: "normal-stage-qualification/v2",
+  createdAt,
+  imageProofSha256: pre.imageProofSha256,
+  imagePullConsumedBytes,
+  imagePullConsumedInodes,
+  measuredMigrationPeakBytes: samples.migrationPeakGrowthBytes,
+  measuredMigrationPeakInodes: samples.migrationPeakGrowthInodes,
+  migrationDurationMilliseconds: samples.migrationDurationMilliseconds,
+  migrationMinimumFreeBytesObserved: migrationMinimumFreeBytes,
+  migrationMinimumFreeInodesObserved: migrationMinimumFreeInodes,
+  migrationPhaseEndIndex: samples.migrationPhaseEndIndex,
+  migrationPhaseEndTimestamp: samples.migrationPhaseEndTimestamp,
+  migrationPhaseStartIndex: samples.migrationPhaseStartIndex,
+  migrationPhaseStartTimestamp: samples.migrationPhaseStartTimestamp,
+  minimumFreeBytesObserved: wholeMinimumFreeBytes,
+  minimumFreeInodesObserved: wholeMinimumFreeInodes,
+  operationId: pre.operationId,
+  postCleanupReceipt: cleanup,
+  postCleanupReceiptSha256: cleanup.receiptSha256,
+  postPullFreeBytes: post.freeBytes,
+  postPullFreeInodes: post.freeInodes,
+  postPullReceipt: post,
+  postPullReceiptSha256: post.receiptSha256,
+  prePullReceipt: pre,
+  prePullReceiptSha256: pre.receiptSha256,
+  sourceDatabaseOid: pre.sourceDatabaseOid,
+  sourceEnvSha256: pre.sourceEnvSha256,
+  sourceLedgerSha256: pre.sourceLedgerSha256,
+  sourceRelease: pre.sourceRelease,
+  sourceSchemaVersion: pre.sourceSchemaVersion,
+  systemIdentifier: pre.systemIdentifier,
+  targetEnvSha256: pre.targetEnvSha256,
+  targetLedgerSha256: pre.targetLedgerSha256,
+  targetRelease: pre.targetRelease,
+  targetSchemaVersion: pre.targetSchemaVersion,
+  wholeStagePeakBytes,
+  wholeStagePeakInodes,
+};
+const qualification = {
+  ...body,
+  receiptSha256: hash(Buffer.from(`${canonical(body)}\n`)),
+};
+const qualificationBytes = Buffer.from(`${canonical(qualification)}\n`);
+
+// retain the complete embedded evidence inside its publication bound
+if (qualificationBytes.length > 65_536) {
+  throw new Error("normal stage qualification exceeds its byte bound");
+}
+
+// validate the published proof only on historical read
+if (mode === "read") {
+  const proofArtifact = readCanonical(proofPath, 1_048_576, "normal stage image proof");
+  const proof = validateNormalStageImageProof(proofArtifact.value, {
+    imageReferences: pre.imageReferences,
+    operationId: pre.operationId,
+    sourceEnvSha256: pre.sourceEnvSha256,
+    sourceRelease: pre.sourceRelease,
+    targetEnvSha256: pre.targetEnvSha256,
+    targetRelease: pre.targetRelease,
+  });
+  // bind the separately published proof to the sealed transaction
+  if (proof.proofSha256 !== qualification.imageProofSha256 ||
+    canonical(existing) !== canonical(qualification) ||
+    hash(Buffer.from(`${canonical(body)}\n`)) !== existing.receiptSha256) {
+    throw new Error("normal stage qualification differs from its published proof");
+  }
+} else {
+  writeFileSync(qualificationPath, qualificationBytes, { mode: 0o600 });
+}
+process.stdout.write(`${qualification.measuredMigrationPeakBytes} ${qualification.measuredMigrationPeakInodes} ${qualification.receiptSha256}\n`);
 NODE
+}
+
+# seal the completed full-copy qualification for later activation
+write_normal_stage_qualification_receipt() {
+  local source_env=$1
+  local target_env=$2
+  local pre_pull_receipt=$3
+  local post_pull_receipt=$4
+  local post_cleanup_receipt=$5
+  local samples=$6
+  local output=$7
+  normal_stage_qualification_document seal "$source_env" "$target_env" /dev/null \
+    "$pre_pull_receipt" "$post_pull_receipt" "$post_cleanup_receipt" \
+    "$samples" "$output" >/dev/null
+  chmod 600 "$output"
+}
+
+# validate one immutable stage qualification and its separately published proof
+read_normal_stage_qualification() {
+  local source_env=$1
+  local target_env=$2
+  local receipt=$3
+  local release image_proof capacity_samples
+  release=$(env_value "$target_env" WEATHER_RELEASE)
+  image_proof="$releases_dir/$release.normal-stage-image-proof.json"
+  capacity_samples="$releases_dir/$release.normal-stage-samples.json"
+  require_canonical_descendant "$receipt" "$releases_dir" "normal stage qualification"
+  require_canonical_descendant "$image_proof" "$releases_dir" "normal stage image proof"
+  require_canonical_descendant "$capacity_samples" "$releases_dir" \
+    "normal stage capacity samples"
+  require_file "$receipt"
+  require_file "$image_proof"
+  require_file "$capacity_samples"
+  [[ ! -L "$receipt" && "$(stat -c '%u:%a:%h' "$receipt")" == "$EUID:600:1" &&
+    "$(stat -c '%s' "$receipt")" -le 65536 ]] ||
+    die "normal stage qualification metadata is invalid"
+  [[ ! -L "$image_proof" && "$(stat -c '%u:%a:%h' "$image_proof")" == "$EUID:600:1" &&
+    "$(stat -c '%s' "$image_proof")" -le 1048576 ]] ||
+    die "normal stage image proof metadata is invalid"
+  [[ ! -L "$capacity_samples" && "$(stat -c '%u:%a:%h' "$capacity_samples")" == "$EUID:600:1" &&
+    "$(stat -c '%s' "$capacity_samples")" -le 1048576 ]] ||
+    die "normal stage capacity sample artifact is invalid"
+  normal_stage_qualification_document read "$source_env" "$target_env" "$image_proof" \
+    /dev/null /dev/null /dev/null "$capacity_samples" "$receipt"
 }
 
 # render one canonical measured activation-capacity request
@@ -2298,10 +2500,14 @@ write_normal_activation_capacity_input() {
   local stage_receipt=$3
   local phase=$4
   local actual_backup_bytes=$5
-  local output=$6
-  local database_name source_release target_release source_history
+  local actual_backup_allocated_bytes=$6
+  local pre_backup_receipt=$7
+  local output=$8
+  local captured_at database_name source_release target_release source_history
   local system_identifier database_oid live_database_bytes postgres_container_id
   local source_env_sha256 target_env_sha256 peak_bytes peak_inodes stage_receipt_sha256
+  local bounded_backup_ceiling_bytes pre_backup_receipt_sha256
+  captured_at=$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
   database_name=$(env_value "$source_env" WEATHER_DATABASE_NAME)
   source_release=$(env_value "$source_env" WEATHER_RELEASE)
   target_release=$(env_value "$target_env" WEATHER_RELEASE)
@@ -2320,27 +2526,50 @@ write_normal_activation_capacity_input() {
     die "normal activation PostgreSQL container identity is invalid"
   source_env_sha256=$(sha256sum "$source_env" | awk '{print $1}')
   target_env_sha256=$(sha256sum "$target_env" | awk '{print $1}')
-  node --input-type=module - "$output" "$phase" \
+  bounded_backup_ceiling_bytes=$((live_database_bytes + 1073741824))
+  pre_backup_receipt_sha256=
+
+  # retain the historical pre-backup ceiling for the completed backup
+  if [[ "$phase" == post_backup ]]; then
+    read -r bounded_backup_ceiling_bytes pre_backup_receipt_sha256 < <(
+      node --input-type=module - "$deploy_dir/scripts/adjustment-evaluation-package.mjs" \
+        "$pre_backup_receipt" <<'NODE'
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const [modulePath, receiptPath] = process.argv.slice(2);
+const { verifyNormalCapacityReceipt } = await import(pathToFileURL(modulePath));
+const receipt = verifyNormalCapacityReceipt(JSON.parse(readFileSync(receiptPath)));
+// accept only one ready historical pre-backup authority
+if (receipt.operation !== "activation" || receipt.phase !== "pre_backup" ||
+  receipt.state !== "capacity_ready") {
+  throw new Error("normal activation pre-backup receipt is invalid");
+}
+process.stdout.write(`${receipt.boundedBackupCeilingBytes} ${receipt.receiptSha256}\n`);
+NODE
+    )
+  fi
+  node --input-type=module - "$output" "$phase" "$captured_at" \
     "normal-${source_release//./-}-to-${target_release//./-}" "$source_release" \
     "$target_release" "$source_env_sha256" "$target_env_sha256" "$system_identifier" \
     "$database_oid" "$live_database_bytes" "$peak_bytes" "$peak_inodes" \
-    "$stage_receipt_sha256" "$actual_backup_bytes" \
+    "$stage_receipt_sha256" "$actual_backup_bytes" "$actual_backup_allocated_bytes" \
+    "$bounded_backup_ceiling_bytes" "$pre_backup_receipt_sha256" \
     "$(env_value "$source_env" WEATHER_POSTGRES_DIR)" \
     "${WEATHER_COMPOSE_PROJECT_NAME:-weather}" "$postgres_container_id" <<'NODE'
 import { writeFileSync } from "node:fs";
 
-const [output, phase, operationId, sourceRelease, targetRelease, sourceEnvSha256,
-  targetEnvSha256, systemIdentifier, sourceDatabaseOid, liveDatabaseBytes,
-  measuredMigrationPeakBytes, measuredMigrationPeakInodes, stageReceiptSha256,
-  actualBackupBytes, weatherPostgresDir, postgresComposeProject,
-  postgresContainerId] = process.argv.slice(2);
-const backupHeadroomBytes = 1_073_741_824;
+const [output, phase, capturedAt, operationId, sourceRelease, targetRelease,
+  sourceEnvSha256, targetEnvSha256, systemIdentifier, sourceDatabaseOid,
+  liveDatabaseBytes, measuredMigrationPeakBytes, measuredMigrationPeakInodes,
+  stageReceiptSha256, actualBackupBytes, actualBackupAllocatedBytes,
+  boundedBackupCeilingBytes, preBackupReceiptSha256, weatherPostgresDir,
+  postgresComposeProject, postgresContainerId] = process.argv.slice(2);
 const input = {
   actualBackupBytes: Number(actualBackupBytes),
-  backupHeadroomBytes,
-  boundedBackupCeilingBytes: Number(liveDatabaseBytes) + backupHeadroomBytes,
+  backupHeadroomBytes: 1_073_741_824,
+  boundedBackupCeilingBytes: Number(boundedBackupCeilingBytes),
   captureReserveBytes: 4_112_384,
-  capturedAt: new Date().toISOString(),
+  capturedAt,
   fixtureInodes: 4_096,
   inodeFloor: 32_768,
   liveDatabaseBytes: Number(liveDatabaseBytes),
@@ -2365,12 +2594,18 @@ const input = {
   targetSchemaVersion: 23,
   weatherPostgresDir,
 };
+
+// add only completed-backup evidence to the post phase
+if (phase === "post_backup") {
+  input.actualBackupAllocatedBytes = Number(actualBackupAllocatedBytes);
+  input.preBackupReceiptSha256 = preBackupReceiptSha256;
+}
 const canonical = (value) => Array.isArray(value)
   ? `[${value.map(canonical).join(",")}]`
   : value !== null && typeof value === "object"
     ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
     : JSON.stringify(value);
-writeFileSync(output, canonical(input), { mode: 0o600 });
+writeFileSync(output, `${canonical(input)}\n`, { mode: 0o600 });
 NODE
   chmod 600 "$output"
 }
@@ -2382,11 +2617,23 @@ require_normal_activation_capacity() {
   local stage_receipt=$3
   local phase=$4
   local actual_backup_bytes=$5
-  local input=$6
-  local receipt=$7
+  local actual_backup_allocated_bytes=$6
+  local pre_backup_receipt=$7
+  local input=$8
+  local receipt=$9
   write_normal_activation_capacity_input "$source_env" "$target_env" "$stage_receipt" \
-    "$phase" "$actual_backup_bytes" "$input"
-  if ! normal_release_capacity_receipt normal-activation-capacity "$input" >"$receipt"; then
+    "$phase" "$actual_backup_bytes" "$actual_backup_allocated_bytes" \
+    "$pre_backup_receipt" "$input"
+  # forward predecessor authority only for the post phase
+  if [[ "$phase" == post_backup ]]; then
+    # preserve one complete post-backup refusal
+    if ! normal_release_capacity_receipt normal-activation-capacity "$input" \
+      "$pre_backup_receipt" >"$receipt"; then
+      cat "$receipt" >&2
+      die "normal activation capacity is blocked"
+    fi
+  elif ! normal_release_capacity_receipt normal-activation-capacity \
+    "$input" >"$receipt"; then
     cat "$receipt" >&2
     die "normal activation capacity is blocked"
   fi
@@ -2400,35 +2647,55 @@ require_normal_activation_capacity_pair() {
   local post_receipt=$2
   local archive=$3
   local checksum=$4
-  local allocated_bytes
+  local archive_bytes allocated_bytes
+  require_canonical_descendant "$archive" /var/lib/weather/backups \
+    "bounded activation backup"
+  require_canonical_descendant "$checksum" /var/lib/weather/backups \
+    "bounded activation backup checksum"
+  [[ -f "$archive" && ! -L "$archive" &&
+    "$(stat -c '%u:%g:%a:%h' "$archive")" == 0:0:600:1 ]] ||
+    die "bounded activation backup metadata differs"
+  [[ -f "$checksum" && ! -L "$checksum" &&
+    "$(stat -c '%u:%g:%a:%h' "$checksum")" == 0:0:600:1 ]] ||
+    die "bounded activation backup checksum metadata differs"
+  archive_bytes=$(stat -c '%s' "$archive")
   allocated_bytes=$((( $(stat -c '%b' "$archive") + $(stat -c '%b' "$checksum") ) * 512))
   node --input-type=module - "$deploy_dir/scripts/adjustment-evaluation-package.mjs" \
-    "$pre_receipt" "$post_receipt" "$allocated_bytes" <<'NODE'
+    "$pre_receipt" "$post_receipt" "$archive_bytes" "$allocated_bytes" <<'NODE'
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const [modulePath, prePath, postPath, allocatedBytes] = process.argv.slice(2);
-const { validateNormalCapacityReceipt } = await import(pathToFileURL(modulePath));
-const trustedNow = new Date();
-const pre = JSON.parse(readFileSync(prePath, "utf8"));
-const post = JSON.parse(readFileSync(postPath, "utf8"));
-validateNormalCapacityReceipt(pre, trustedNow);
-validateNormalCapacityReceipt(post, trustedNow);
+const [modulePath, prePath, postPath, archiveBytes, allocatedBytes] = process.argv.slice(2);
+const { validateNormalCapacityReceipt, verifyNormalCapacityReceipt } =
+  await import(pathToFileURL(modulePath));
+const pre = verifyNormalCapacityReceipt(JSON.parse(readFileSync(prePath)));
+const post = validateNormalCapacityReceipt(JSON.parse(readFileSync(postPath)), new Date());
 const bound = ["operationId", "sourceRelease", "targetRelease", "sourceEnvSha256",
-  "targetEnvSha256", "sourceLedgerSha256", "targetLedgerSha256", "systemIdentifier",
-  "sourceDatabaseOid", "stageReceiptSha256", "postgresContainerId",
-  "postgresContainerImageId", "postgresContainerImageReference", "weatherPostgresDir",
-  "postgresDataDirectory"];
+  "targetEnvSha256", "sourceLedgerSha256", "targetLedgerSha256", "sourceSchemaVersion",
+  "targetSchemaVersion", "systemIdentifier", "sourceDatabaseOid", "stageReceiptSha256",
+  "postgresComposeProject", "postgresContainerId", "postgresContainerImageId",
+  "postgresContainerImageReference", "weatherPostgresDir", "postgresDataDirectory",
+  "weatherPostgresDirFilesystemDevice", "postgresDataFilesystemDevice",
+  "backupHeadroomBytes", "protectedFloorBytes", "captureReserveBytes", "inodeFloor",
+  "fixtureInodes", "retirementCreditBytes", "measuredMigrationPeakBytes",
+  "measuredMigrationPeakInodes"];
 const consumedBytes = Math.max(0, pre.freeBytes - post.freeBytes);
 const consumedInodes = Math.max(0, pre.freeInodes - post.freeInodes);
 
-// refuse identity drift or unrelated storage consumption across backup publication
-if (pre.phase !== "pre_backup" || post.phase !== "post_backup" ||
+// refuse identity, predecessor, ceiling, ordering, or physical backup drift
+if (pre.operation !== "activation" || post.operation !== "activation" ||
+  pre.phase !== "pre_backup" || post.phase !== "post_backup" ||
   pre.state !== "capacity_ready" || post.state !== "capacity_ready" ||
+  pre.reasons.length !== 0 || post.reasons.length !== 0 ||
   bound.some((name) => pre[name] !== post[name]) ||
-  consumedBytes > Number(allocatedBytes) + 8_192 || consumedInodes > 2) {
+  post.preBackupReceiptSha256 !== pre.receiptSha256 ||
+  post.boundedBackupCeilingBytes !== pre.boundedBackupCeilingBytes ||
+  Date.parse(post.capturedAt) <= Date.parse(pre.evaluatedAt) ||
+  post.actualBackupBytes !== Number(archiveBytes) ||
+  post.actualBackupAllocatedBytes !== Number(allocatedBytes)) {
   throw new Error("normal activation capacity changed outside the bounded backup");
 }
+process.stderr.write(`normal activation backup delta diagnostic: bytes=${consumedBytes} inodes=${consumedInodes} allocated=${allocatedBytes}\n`);
 NODE
 }
 
@@ -2561,7 +2828,7 @@ require_v14_compatibility_bridge_release_pair() {
   local source_env=$2
   local key installed_control
   require_v14_compatibility_bridge_source_identity "$target_env" "$source_env"
-  installed_control=$(control_plane_digest)
+  installed_control=$v16_handoff_source_control_sha256
   validate_image_reference "$full_v14_source_server_image"
   validate_image_reference "$full_v14_source_web_image"
   [[ "$(env_value "$target_env" WEATHER_CONTROL_PLANE_SHA256)" == "$installed_control" ]] ||
@@ -2584,7 +2851,7 @@ require_v14_compatibility_bridge_release_pair() {
 require_fixed_v14_source_identity() {
   local target_env=$1
   local source_env=$2
-  local installed_control source_control source_control_version source_release source_server source_web
+  local source_control source_control_version source_release source_server source_web
   local target_release target_version
   source_control=$(env_value "$source_env" WEATHER_CONTROL_PLANE_SHA256)
   source_control_version=$(env_value "$source_env" WEATHER_CONTROL_PLANE_VERSION)
@@ -2593,20 +2860,22 @@ require_fixed_v14_source_identity() {
   source_web=$(env_value "$source_env" WEATHER_WEB_IMAGE)
   target_release=$(env_value "$target_env" WEATHER_RELEASE)
   target_version=$(env_value "$target_env" WEATHER_CONTROL_PLANE_VERSION)
-  installed_control=$(control_plane_digest)
 
   # refuse activation until the two published bridge manifests are frozen
   validate_image_reference "$full_v14_source_server_image"
   validate_image_reference "$full_v14_source_web_image"
   [[ "$source_release" == "$v14_compatibility_bridge_release" ]] ||
     die "full v14 source release differs"
-  [[ "$source_control_version" == 15 && "$source_control" == "$installed_control" ]] ||
+  [[ "$source_control_version" == "$v16_handoff_source_control_version" &&
+    "$source_control" == "$v16_handoff_source_control_sha256" ]] ||
     die "full v14 source control-plane identity differs"
+  require_v16_control_plane_handoff "$source_env"
   [[ "$source_server" == "$full_v14_source_server_image" ]] ||
     die "full v14 source server image identity differs"
   [[ "$source_web" == "$full_v14_source_web_image" ]] ||
     die "full v14 source web image identity differs"
-  [[ "$target_version" == 15 && "$target_release" == "$full_v14_release" ]] ||
+  [[ "$target_version" == "$control_plane_version" &&
+    "$target_release" == "$full_v14_release" ]] ||
     die "full v14 target identity differs"
 }
 
@@ -2642,7 +2911,8 @@ require_v14_compatibility_bridge_state_file() {
     "$(env_value "$path" WEATHER_V14_BRIDGE_SOURCE_RELEASE)" == "$recurring_previous_release" &&
     "$(env_value "$path" WEATHER_V14_BRIDGE_TARGET_RELEASE)" == "$v14_compatibility_bridge_release" &&
     "$(env_value "$path" WEATHER_V14_BRIDGE_TARGET_COMMIT)" == "$v14_compatibility_bridge_commit" &&
-    "$(env_value "$path" WEATHER_V14_BRIDGE_CONTROL_SHA256)" == "$(control_plane_digest)" ]] ||
+    "$(env_value "$path" WEATHER_V14_BRIDGE_CONTROL_SHA256)" == \
+      "$v16_handoff_source_control_sha256" ]] ||
     die "v14 compatibility bridge state identity differs"
   [[ "$(env_value "$path" WEATHER_V14_BRIDGE_SOURCE_HISTORY_SHA256)" =~ ^[a-f0-9]{64}$ &&
     "$(env_value "$path" WEATHER_V14_BRIDGE_SETTINGS_INODE)" =~ ^[0-9]+:[0-9]+$ &&
@@ -2736,7 +3006,7 @@ publish_v14_compatibility_bridge_state() {
     "WEATHER_V14_BRIDGE_SOURCE_RELEASE=$recurring_previous_release" \
     "WEATHER_V14_BRIDGE_TARGET_RELEASE=$v14_compatibility_bridge_release" \
     "WEATHER_V14_BRIDGE_TARGET_COMMIT=$v14_compatibility_bridge_commit" \
-    "WEATHER_V14_BRIDGE_CONTROL_SHA256=$(control_plane_digest)" \
+    "WEATHER_V14_BRIDGE_CONTROL_SHA256=$v16_handoff_source_control_sha256" \
     "WEATHER_V14_BRIDGE_SOURCE_HISTORY_SHA256=$history_sha256" \
     "WEATHER_V14_BRIDGE_SETTINGS_INODE=$settings_inode" \
     "WEATHER_V14_BRIDGE_SETTINGS_SHA256=$settings_sha256" \
@@ -2990,8 +3260,8 @@ initialize_adjustment_rain_fixed_gauge_target_sources_v1() (
   [[ "$EUID" == 0 ]] || die "rain target source initialization requires root"
   validate_release_env "$environment" "$(env_value "$environment" WEATHER_RELEASE)"
   require_control_plane_compatibility "$environment"
-  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 15 ]] ||
-    die "rain target source initialization requires v15"
+  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == "$control_plane_version" ]] ||
+    die "rain target source initialization requires the current control plane"
   require_deployment_secrets
   database=$(env_value "$environment" WEATHER_DATABASE_NAME)
   validate_database_name "$database"
@@ -3030,8 +3300,8 @@ initialize_adjustment_registration_schedule_v3() (
   environment=$(release_env "$current")
   validate_release_env "$environment" "$current"
   require_control_plane_compatibility "$environment"
-  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 15 ]] ||
-    die "registration schedule requires the current v14 control plane"
+  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == "$control_plane_version" ]] ||
+    die "registration schedule requires the current control plane"
   require_deployment_secrets
   database=$(env_value "$environment" WEATHER_DATABASE_NAME)
   validate_database_name "$database"
@@ -3062,8 +3332,8 @@ read_adjustment_registration_lifecycle_status_v4() (
   environment=$(release_env "$current")
   validate_release_env "$environment" "$current"
   require_control_plane_compatibility "$environment"
-  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 15 ]] ||
-    die "registration lifecycle status requires v15"
+  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == "$control_plane_version" ]] ||
+    die "registration lifecycle status requires the current control plane"
   require_deployment_secrets
   database=$(env_value "$environment" WEATHER_DATABASE_NAME)
   validate_database_name "$database"
@@ -3096,7 +3366,8 @@ run_adjustment_owner_operation_v3() (
   environment=$(release_env "$current")
   validate_release_env "$environment" "$current"
   require_control_plane_compatibility "$environment"
-  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 15 ]] || die "adjustment owner operation requires v15"
+  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == "$control_plane_version" ]] ||
+    die "adjustment owner operation requires the current control plane"
   require_deployment_secrets
   database=$(env_value "$environment" WEATHER_DATABASE_NAME)
   validate_database_name "$database"
@@ -3123,8 +3394,8 @@ finalize_adjustment_shadow_metadata_custody_v1() (
   environment=$(release_env "$current")
   validate_release_env "$environment" "$current"
   require_control_plane_compatibility "$environment"
-  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == 15 ]] ||
-    die "shadow metadata custody finalization requires v15"
+  [[ "$(env_value "$environment" WEATHER_CONTROL_PLANE_VERSION)" == "$control_plane_version" ]] ||
+    die "shadow metadata custody finalization requires the current control plane"
   require_deployment_secrets
   database=$(env_value "$environment" WEATHER_DATABASE_NAME)
   validate_database_name "$database"
@@ -3917,7 +4188,7 @@ const canonical = (value) => Array.isArray(value)
     : JSON.stringify(value);
 const receipt = { ...body,
   receiptSha256: createHash("sha256").update(canonical(body)).digest("hex") };
-writeFileSync(output, canonical(receipt), { mode: 0o600 });
+writeFileSync(output, `${canonical(receipt)}\n`, { mode: 0o600 });
 NODE
         then
           status=1
@@ -6992,7 +7263,7 @@ start_release() (
   local target=$1
   local activation_env current current_env authorization_path schema_release stage_receipt
   local pre_capacity_input pre_capacity_receipt post_capacity_input post_capacity_receipt
-  local backup_output backup_archive backup_bytes backup_ceiling
+  local backup_output backup_archive backup_bytes backup_allocated_bytes backup_ceiling
   local backup_checksum
   local migration_container_name migration_container_id migration_status actual_history
   local target_history=1db25d8a515e85b4c71c3a3dbe4a1f61ebdfdf14e095a24b307daa039dfb5201
@@ -7061,7 +7332,7 @@ start_release() (
   # recreate only PostgreSQL before measuring the exact backup boundary
   start_postgres "$current_env"
   require_normal_activation_capacity "$current_env" "$activation_env" "$stage_receipt" \
-    pre_backup 0 "$pre_capacity_input" "$pre_capacity_receipt"
+    pre_backup 0 0 "" "$pre_capacity_input" "$pre_capacity_receipt"
   backup_ceiling=$(node --input-type=module - "$pre_capacity_input" <<'NODE'
 import { readFileSync } from "node:fs";
 const input = JSON.parse(readFileSync(process.argv[2], "utf8"));
@@ -7093,8 +7364,11 @@ NODE
   (cd /var/lib/weather/backups && sha256sum --check --status \
     "$(basename "$backup_checksum")") || die "bounded activation backup checksum differs"
   backup_bytes=$(stat -c '%s' "$backup_archive")
+  backup_allocated_bytes=$((( $(stat -c '%b' "$backup_archive") + \
+    $(stat -c '%b' "$backup_checksum") ) * 512))
   require_normal_activation_capacity "$current_env" "$activation_env" "$stage_receipt" \
-    post_backup "$backup_bytes" "$post_capacity_input" "$post_capacity_receipt"
+    post_backup "$backup_bytes" "$backup_allocated_bytes" "$pre_capacity_receipt" \
+    "$post_capacity_input" "$post_capacity_receipt"
   require_normal_activation_capacity_pair "$pre_capacity_receipt" \
     "$post_capacity_receipt" "$backup_archive" "$backup_checksum"
 
@@ -7359,15 +7633,16 @@ case "$action" in
     require_command node
     current=$(read_release_state "$state_dir/current-release")
     previous_env=$source_env
-    require_normal_release_resource_gate
     mkdir -p "$releases_dir"
     target=$(release_env "$release")
     authorization=$(migration_authorization "$release")
     stage_receipt="$releases_dir/$release.normal-stage-receipt.json"
     stage_samples="$releases_dir/$release.normal-stage-samples.json"
+    stage_image_proof="$releases_dir/$release.normal-stage-image-proof.json"
     [[ ! -e "$target" && ! -L "$target" && ! -e "$authorization" &&
       ! -L "$authorization" && ! -e "$stage_receipt" && ! -L "$stage_receipt" &&
-      ! -e "$stage_samples" && ! -L "$stage_samples" ]] ||
+      ! -e "$stage_samples" && ! -L "$stage_samples" &&
+      ! -e "$stage_image_proof" && ! -L "$stage_image_proof" ]] ||
       die "release is already staged: $release"
     server_source="$(image_repository "$(env_value "$source_env" WEATHER_SERVER_IMAGE)"):$release"
     web_source="$(image_repository "$(env_value "$source_env" WEATHER_WEB_IMAGE)"):$release"
@@ -7378,19 +7653,26 @@ case "$action" in
     temporary=$(mktemp "$releases_dir/.${release}.XXXXXX.env.partial")
     temporary_authorization=
     published_authorization=
+    image_proof_request=$(mktemp "$releases_dir/.${release}.XXXXXX.image-proof-request")
+    temporary_image_proof=$(mktemp "$releases_dir/.${release}.XXXXXX.image-proof")
     pre_capacity_input=$(mktemp "$releases_dir/.${release}.XXXXXX.pre-capacity-input")
     pre_capacity_receipt=$(mktemp "$releases_dir/.${release}.XXXXXX.pre-capacity-receipt")
     post_capacity_input=$(mktemp "$releases_dir/.${release}.XXXXXX.post-capacity-input")
     post_capacity_receipt=$(mktemp "$releases_dir/.${release}.XXXXXX.post-capacity-receipt")
+    cleanup_capacity_input=$(mktemp "$releases_dir/.${release}.XXXXXX.cleanup-capacity-input")
+    cleanup_capacity_receipt=$(mktemp "$releases_dir/.${release}.XXXXXX.cleanup-capacity-receipt")
     migration_peak=$(mktemp "$releases_dir/.${release}.XXXXXX.migration-peak")
     temporary_stage_receipt=$(mktemp "$releases_dir/.${release}.XXXXXX.stage-receipt.partial")
+    published_image_proof=
     published_stage_receipt=
     published_stage_samples=
-    chmod 600 "$pre_capacity_input" "$pre_capacity_receipt" "$post_capacity_input" \
-      "$post_capacity_receipt" "$migration_peak" "$temporary_stage_receipt"
+    chmod 600 "$image_proof_request" "$temporary_image_proof" \
+      "$pre_capacity_input" "$pre_capacity_receipt" "$post_capacity_input" \
+      "$post_capacity_receipt" "$cleanup_capacity_input" "$cleanup_capacity_receipt" \
+      "$migration_peak" "$temporary_stage_receipt"
 
     # remove failed stage state
-    trap 'rm -f "$temporary" "$pre_capacity_input" "$pre_capacity_receipt" "$post_capacity_input" "$post_capacity_receipt" "$migration_peak" "$temporary_stage_receipt" ${temporary_authorization:+"$temporary_authorization"} ${published_authorization:+"$published_authorization"} ${published_stage_receipt:+"$published_stage_receipt"} ${published_stage_samples:+"$published_stage_samples"}' EXIT
+    trap 'rm -f "$temporary" "$image_proof_request" "$temporary_image_proof" "$pre_capacity_input" "$pre_capacity_receipt" "$post_capacity_input" "$post_capacity_receipt" "$cleanup_capacity_input" "$cleanup_capacity_receipt" "$migration_peak" "$temporary_stage_receipt" ${temporary_authorization:+"$temporary_authorization"} ${published_authorization:+"$published_authorization"} ${published_image_proof:+"$published_image_proof"} ${published_stage_receipt:+"$published_stage_receipt"} ${published_stage_samples:+"$published_stage_samples"}' EXIT
     write_release_env "$source_env" "$temporary" "$release" \
       "$server_image" "$web_image" "$postgres_image" "$cloudflared_image"
     WEATHER_ENV_FILE=$temporary compose config --quiet
@@ -7402,13 +7684,17 @@ case "$action" in
       validate_image_reference "$image"
     done
 
-    require_normal_stage_capacity "$source_env" "$temporary" pre_pull \
-      "$pre_capacity_input" "$pre_capacity_receipt"
+    # finish remote proof before collecting any live SQL or filesystem fact
+    require_normal_stage_image_proof "$source_env" "$temporary" \
+      "$image_proof_request" "$temporary_image_proof"
+    require_normal_release_resource_gate
+    require_normal_stage_capacity "$source_env" "$temporary" "$temporary_image_proof" \
+      pre_pull "$pre_capacity_input" "$pre_capacity_receipt"
     cleanup_obsolete_weather_images "$source_env" "$temporary"
     require_image_pull_capacity_floor
     WEATHER_ENV_FILE=$temporary compose pull
-    require_normal_stage_capacity "$source_env" "$temporary" post_pull \
-      "$post_capacity_input" "$post_capacity_receipt"
+    require_normal_stage_capacity "$source_env" "$temporary" "$temporary_image_proof" \
+      post_pull "$post_capacity_input" "$post_capacity_receipt"
 
     # require the exact full-copy schema-21 to schema-23 compatibility proof
     require_deployment_secrets
@@ -7417,6 +7703,8 @@ case "$action" in
     verify_previous_image_compatibility \
       "$temporary" "$previous_env" "$temporary_authorization" normal-21-23 \
       "$migration_peak"
+    require_normal_stage_capacity "$source_env" "$temporary" "$temporary_image_proof" \
+      post_cleanup "$cleanup_capacity_input" "$cleanup_capacity_receipt"
 
     # publish authorization before the release commit marker
     if [[ -n "$temporary_authorization" ]]; then
@@ -7425,38 +7713,46 @@ case "$action" in
       temporary_authorization=
     fi
 
-    # publish the retained sample series before its cleanup-confirmed qualification
-    ln "$migration_peak" "$stage_samples" ||
-      die "normal stage capacity samples already exist or could not be published"
-    sync -f "$stage_samples" "$releases_dir"
-    published_stage_samples=$stage_samples
-
-    # seal and publish the cleanup-confirmed stage qualification
+    # seal all historical capacity evidence before publication
     [[ "$(normal_release_source_env)" == "$source_env" ]] ||
       die "normal stage source changed during compatibility rehearsal"
     write_normal_stage_qualification_receipt "$source_env" "$temporary" \
-      "$pre_capacity_receipt" "$post_capacity_receipt" "$migration_peak" \
-      "$temporary_stage_receipt"
-    read_normal_stage_qualification \
-      "$source_env" "$temporary" "$temporary_stage_receipt" >/dev/null
+      "$pre_capacity_receipt" "$post_capacity_receipt" "$cleanup_capacity_receipt" \
+      "$migration_peak" "$temporary_stage_receipt"
+
+    # publish proof and samples before their qualification
+    ln "$temporary_image_proof" "$stage_image_proof" ||
+      die "normal stage image proof already exists or could not be published"
+    published_image_proof=$stage_image_proof
+    rm -f -- "$temporary_image_proof"
+    temporary_image_proof=
+    sync -f "$stage_image_proof" "$releases_dir"
+    ln "$migration_peak" "$stage_samples" ||
+      die "normal stage capacity samples already exist or could not be published"
+    published_stage_samples=$stage_samples
+    rm -f -- "$migration_peak"
+    migration_peak=
+    sync -f "$stage_samples" "$releases_dir"
     ln "$temporary_stage_receipt" "$stage_receipt" ||
       die "normal stage receipt already exists or could not be published"
-    sync -f "$stage_receipt" "$releases_dir"
     published_stage_receipt=$stage_receipt
     rm -f -- "$temporary_stage_receipt"
     temporary_stage_receipt=
+    sync -f "$stage_receipt" "$releases_dir"
+    read_normal_stage_qualification "$source_env" "$temporary" "$stage_receipt" >/dev/null
 
     # clean failed release publication
     if ! mv "$temporary" "$target"; then
-      # remove orphaned authorization
-      rm -f "$authorization" "$stage_receipt" "$stage_samples"
+      rm -f "$authorization" "$stage_image_proof" "$stage_receipt" "$stage_samples"
       exit 1
     fi
     published_authorization=
+    published_image_proof=
     published_stage_receipt=
     published_stage_samples=
-    rm -f "$pre_capacity_input" "$pre_capacity_receipt" "$post_capacity_input" \
-      "$post_capacity_receipt" "$migration_peak"
+    rm -f "$image_proof_request" "$pre_capacity_input" "$pre_capacity_receipt" \
+      "$post_capacity_input" "$post_capacity_receipt" "$cleanup_capacity_input" \
+      "$cleanup_capacity_receipt"
     trap - EXIT
     printf 'Release %s staged without changing running services or the active database.\n' "$release"
     ;;

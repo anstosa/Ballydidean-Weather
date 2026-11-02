@@ -1357,7 +1357,8 @@ test("normal activation cleanup removes private evidence after exact-ledger rest
   );
 });
 
-test("release operations accept only current v15 and the exact reviewed predecessor", async () => {
+// enforce the installed generation and exact historical predecessor
+test("release operations accept only current v16 and the exact reviewed predecessor", async () => {
   const directory = await mkdtemp(join(tmpdir(), "weather-control-plane-"));
   const release = join(directory, "release.env");
 
@@ -1368,7 +1369,7 @@ test("release operations accept only current v15 and the exact reviewed predeces
       [
         "WEATHER_RELEASE=2026.10.08-1",
         `WEATHER_CONTROL_PLANE_SHA256=${digest}`,
-        "WEATHER_CONTROL_PLANE_VERSION=15",
+        "WEATHER_CONTROL_PLANE_VERSION=16",
         "",
       ].join("\n"),
     );
@@ -1410,6 +1411,7 @@ test("release operations accept only current v15 and the exact reviewed predeces
         "11",
       ],
       ["2026.10.08-1", digest, "12"],
+      ["2026.10.08-1", digest, "15"],
       ["2026.10.08-1", "a".repeat(64), "13"],
     ];
 
@@ -1435,7 +1437,7 @@ test("release operations accept only current v15 and the exact reviewed predeces
       );
     }
 
-    await writeFile(release, "WEATHER_CONTROL_PLANE_VERSION=15\n");
+    await writeFile(release, "WEATHER_CONTROL_PLANE_VERSION=16\n");
     const incomplete = runBash(
       'source "$1"; require_control_plane_compatibility "$2"',
       [release],
