@@ -14,6 +14,7 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const deployRoot = join(repoRoot, "deploy");
 const runIntegration = process.env.WEATHER_RUN_DEPLOY_INTEGRATION === "1";
 const baselineServerRelease = "2026.09.01-9";
+const lifecycleControlPlaneVersion = "16";
 const fixedV13SourceRevision = "072af3f880431ff9020a2ec2ada222210e45f00b";
 // retain the exact immutable published source-one commit
 const fixedV13TargetRevision = "56b327d9c750946f6f6963b6fe1fa5c9bba791ca";
@@ -488,6 +489,21 @@ secrets:
   ${secret("weather_postgres_admin_password")}  ${secret("weather_postgres_owner_password")}  ${secret("weather_migration_owner_password")}  ${secret("weather_postgres_api_password")}  ${secret("weather_api_password")}  ${secret("weather_postgres_ingest_password")}  ${secret("weather_postgres_training_export_password")}  ${secret("weather_worker_ingest_password")}  ${secret("weather_tempest_api_key")}  ${secret("weather_xweather_client_id")}  ${secret("weather_xweather_client_secret")}  ${secret("cloudflare_tunnel_token")}`,
   );
 }
+
+// keep the rollback fixture on the updater's exact current contract
+test("local lifecycle fixture tracks the current control plane", async () => {
+  const result = await executeFile(
+    "bash",
+    [
+      "-c",
+      'source "$1"; printf "%s\\n" "$control_plane_version"',
+      "weather-compose-control-version",
+      join(deployRoot, "scripts/update.sh"),
+    ],
+    { cwd: repoRoot },
+  );
+  assert.equal(result.stdout.trim(), lifecycleControlPlaneVersion);
+});
 
 test(
   "local Compose proves lifecycle, persistence, isolation, secrets, and encrypted restore",
@@ -1672,7 +1688,7 @@ verify_previous_image_compatibility "$compatibility_env" "$previous_compatibilit
             "WEATHER_FORECAST_ADJUSTMENT_WIND_CANARY_KILL_SWITCH=0",
             "WEATHER_FORECAST_ADJUSTMENT_TEMPERATURE_CANARY_KILL_SWITCH=1",
             `WEATHER_CONTROL_PLANE_SHA256=${controlPlane}`,
-            "WEATHER_CONTROL_PLANE_VERSION=15",
+            `WEATHER_CONTROL_PLANE_VERSION=${lifecycleControlPlaneVersion}`,
             "",
           ].join("\n"),
           { mode: 0o600 },
