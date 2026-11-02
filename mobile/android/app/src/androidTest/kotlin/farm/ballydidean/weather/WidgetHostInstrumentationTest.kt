@@ -184,25 +184,26 @@ class WidgetHostInstrumentationTest {
         }
         val activity = instrumentation.startActivitySync(intent) as FixtureHostActivity
         try {
-            val initial = waitForHostView(activity, FixtureVariant.RAW_MIXED, landscape = false)
-            // reject the pre-resize fixture as maximum-ready
-            assertFalse(FixtureHostActivity.matchesFixture(initial, FixtureVariant.MAXIMUM, landscape = true))
             val mixedGroups = DebugWidgetFixtures.fixture(FixtureVariant.RAW_MIXED).presentation.groups
-            assertEquals(listOf("39°", "49°", "65°", "75°", "85°"), mixedGroups.map { it.temperatureLabel })
-            assertEquals(
-                listOf(
-                    WidgetTemperatureTone.COLD,
-                    WidgetTemperatureTone.COLD,
-                    WidgetTemperatureTone.NEUTRAL,
-                    WidgetTemperatureTone.WARM,
-                    WidgetTemperatureTone.HOT,
-                ),
-                mixedGroups.map { it.temperatureTone },
-            )
-            assertTemperatureColors(
-                visibleSlotRoots(initial),
-                mixedGroups,
-            )
+            withReadyHostView(activity, FixtureVariant.RAW_MIXED, landscape = false) { initial ->
+                // reject the pre-resize fixture as maximum-ready
+                assertFalse(FixtureHostActivity.matchesFixture(initial, FixtureVariant.MAXIMUM, landscape = true))
+                assertEquals(listOf("39°", "49°", "65°", "75°", "85°"), mixedGroups.map { it.temperatureLabel })
+                assertEquals(
+                    listOf(
+                        WidgetTemperatureTone.COLD,
+                        WidgetTemperatureTone.COLD,
+                        WidgetTemperatureTone.NEUTRAL,
+                        WidgetTemperatureTone.WARM,
+                        WidgetTemperatureTone.HOT,
+                    ),
+                    mixedGroups.map { it.temperatureTone },
+                )
+                assertTemperatureColors(
+                    visibleSlotRoots(initial),
+                    mixedGroups,
+                )
+            }
             instrumentation.runOnMainSync {
                 activity.resizeWidget(
                     FixtureHostActivity.LANDSCAPE_WIDTH_DP,
@@ -210,29 +211,30 @@ class WidgetHostInstrumentationTest {
                     FixtureVariant.MAXIMUM,
                 )
             }
-            val resized = waitForHostView(activity, FixtureVariant.MAXIMUM, landscape = true)
-            // prove reused remoteviews reset warm and hot temperatures to cold and neutral
             val resetGroups = DebugWidgetFixtures.fixture(FixtureVariant.MAXIMUM).presentation.groups
-            assertEquals(
-                listOf(
-                    WidgetTemperatureTone.COLD,
-                    WidgetTemperatureTone.COLD,
-                    WidgetTemperatureTone.COLD,
-                    WidgetTemperatureTone.NEUTRAL,
-                    WidgetTemperatureTone.NEUTRAL,
-                ),
-                resetGroups.map { it.temperatureTone },
-            )
-            assertTemperatureColors(
-                visibleSlotRoots(resized),
-                resetGroups,
-            )
-            assertContentAllocation(
-                resized,
-                FixtureHostActivity.LANDSCAPE_WIDTH_DP,
-                FixtureHostActivity.LANDSCAPE_HEIGHT_DP,
-                activity.resources.displayMetrics.density,
-            )
+            withReadyHostView(activity, FixtureVariant.MAXIMUM, landscape = true) { resized ->
+                // prove reused remoteviews reset warm and hot temperatures to cold and neutral
+                assertEquals(
+                    listOf(
+                        WidgetTemperatureTone.COLD,
+                        WidgetTemperatureTone.COLD,
+                        WidgetTemperatureTone.COLD,
+                        WidgetTemperatureTone.NEUTRAL,
+                        WidgetTemperatureTone.NEUTRAL,
+                    ),
+                    resetGroups.map { it.temperatureTone },
+                )
+                assertTemperatureColors(
+                    visibleSlotRoots(resized),
+                    resetGroups,
+                )
+                assertContentAllocation(
+                    resized,
+                    FixtureHostActivity.LANDSCAPE_WIDTH_DP,
+                    FixtureHostActivity.LANDSCAPE_HEIGHT_DP,
+                    activity.resources.displayMetrics.density,
+                )
+            }
         } finally {
             instrumentation.runOnMainSync(activity::finish)
             instrumentation.waitForIdleSync()
@@ -366,74 +368,77 @@ class WidgetHostInstrumentationTest {
         }
         val activity = instrumentation.startActivitySync(intent) as FixtureHostActivity
         try {
-            var hostView = waitForHostView(activity, variant, landscape)
             // force one late real provider update through the flaky cutoff case
             if (variant == FixtureVariant.NEAR_CUTOFF) {
+                withReadyHostView(activity, variant, landscape) { }
                 val priorRestorations = activity.fixtureRestorationCount
                 instrumentation.runOnMainSync(activity::requestProviderUpdate)
                 waitForFixtureRestoration(activity, priorRestorations)
-                hostView = waitForHostView(activity, variant, landscape)
             }
-            val allViews = mutableListOf<View>()
-            collectViews(hostView, allViews)
             val fixtureDefinition = DebugWidgetFixtures.fixture(variant)
             val fixture = fixtureDefinition.presentation
             val density = activity.resources.displayMetrics.density
-            assertContentAllocation(hostView, widthDp, heightDp, density)
-            assertRootSurface(hostView, activity)
-            val slotRoots = allViews.filter { it.id == R.id.slot_root && it.visibility == View.VISIBLE }
-            assertEquals(expectedGroups, slotRoots.size)
-            // preserve every forecast interval exactly once in dense fixtures
-            if (expectedGroups == 5) {
-                assertEquals((0..20).toList(), fixtureDefinition.coveredIntervals)
-                assertEquals(listOf("Now", "1am", "4am", "7am", "2pm"), fixture.groups.map { it.hourLabel })
+            withReadyHostView(activity, variant, landscape) { hostView ->
+                val allViews = mutableListOf<View>()
+                collectViews(hostView, allViews)
+                assertContentAllocation(hostView, widthDp, heightDp, density)
+                assertRootSurface(hostView, activity)
+                val slotRoots = allViews.filter { it.id == R.id.slot_root && it.visibility == View.VISIBLE }
+                assertEquals(expectedGroups, slotRoots.size)
+                // preserve every forecast interval exactly once in dense fixtures
+                if (expectedGroups == 5) {
+                    assertEquals((0..20).toList(), fixtureDefinition.coveredIntervals)
+                    assertEquals(listOf("Now", "1am", "4am", "7am", "2pm"), fixture.groups.map { it.hourLabel })
+                }
+                // bind the first overnight fifth to every 4–8 PM weather interval
+                if (variant == FixtureVariant.OVERNIGHT_FIFTH) {
+                    assertEquals((17..20).toList(), fixtureDefinition.coveredIntervals)
+                    assertEquals(listOf("Now", "5pm", "6pm", "7pm"), fixture.groups.map { it.hourLabel })
+                }
+                // bind the near-cutoff fifth to the final 7–8 PM interval
+                if (variant == FixtureVariant.NEAR_CUTOFF) {
+                    assertEquals(listOf(20), fixtureDefinition.coveredIntervals)
+                    assertEquals(listOf("Now"), fixture.groups.map { it.hourLabel })
+                }
+                // keep only the leading segment on the white current panel
+                if (expectedGroups > 0) {
+                    assertTrue(fixture.groups.first().isNow)
+                    assertTrue(fixture.groups.drop(1).none { it.isNow })
+                }
+                assertTrue(slotRoots.all { it is FrameLayout })
+                assertEquals(
+                    fixture.groups.map { it.accessibilityLabel() },
+                    slotRoots.map { it.contentDescription?.toString() },
+                )
+                assertSlotHierarchy(slotRoots, compact = landscape)
+                assertTemperatureColors(slotRoots, fixture.groups)
+                // assert exact displayed start labels rather than fixture-only values
+                val expectedHourLabels = when (expectedGroups) {
+                    5 -> listOf("Now", "1am", "4am", "7am", "2pm")
+                    4 -> listOf("Now", "5pm", "6pm", "7pm")
+                    1 -> listOf("Now")
+                    else -> emptyList()
+                }
+                val visibleHourLabels = slotRoots.map {
+                    checkNotNull(it.findViewById<TextView>(R.id.slot_hour)).text.toString()
+                }
+                assertEquals(expectedHourLabels, visibleHourLabels)
+                assertVisibleTextWithinHost(hostView, allViews)
+                val bedtimeVisible = allViews.filterIsInstance<TextView>().any { it.text.toString() == "Overnight" }
+                assertEquals(expectedBedtime, bedtimeVisible)
+                assertMessageHierarchy(allViews, fixture, expectedBedtime, compact = landscape)
+                assertRowWidths(hostView, slotRoots, fixture)
+                assertPresentationSemantics(hostView, fixture, expectedGroups)
+                assertNoVisibleFooter(allViews, fixture)
+                assertPanelLayers(hostView, variant, activity)
+                assertHourTicks(hostView, fixture, compact = landscape, activity)
+                assertNoTextClipping(allViews, compact = landscape)
             }
-            // bind the first overnight fifth to every 4–8 PM weather interval
-            if (variant == FixtureVariant.OVERNIGHT_FIFTH) {
-                assertEquals((17..20).toList(), fixtureDefinition.coveredIntervals)
-                assertEquals(listOf("Now", "5pm", "6pm", "7pm"), fixture.groups.map { it.hourLabel })
-            }
-            // bind the near-cutoff fifth to the final 7–8 PM interval
-            if (variant == FixtureVariant.NEAR_CUTOFF) {
-                assertEquals(listOf(20), fixtureDefinition.coveredIntervals)
-                assertEquals(listOf("Now"), fixture.groups.map { it.hourLabel })
-            }
-            // keep only the leading segment on the white current panel
-            if (expectedGroups > 0) {
-                assertTrue(fixture.groups.first().isNow)
-                assertTrue(fixture.groups.drop(1).none { it.isNow })
-            }
-            assertTrue(slotRoots.all { it is FrameLayout })
-            assertEquals(
-                fixture.groups.map { it.accessibilityLabel() },
-                slotRoots.map { it.contentDescription?.toString() },
-            )
-            assertSlotHierarchy(slotRoots, compact = landscape)
-            assertTemperatureColors(slotRoots, fixture.groups)
-            // assert exact displayed start labels rather than fixture-only values
-            val expectedHourLabels = when (expectedGroups) {
-                5 -> listOf("Now", "1am", "4am", "7am", "2pm")
-                4 -> listOf("Now", "5pm", "6pm", "7pm")
-                1 -> listOf("Now")
-                else -> emptyList()
-            }
-            val visibleHourLabels = slotRoots.map { checkNotNull(it.findViewById<TextView>(R.id.slot_hour)).text.toString() }
-            assertEquals(expectedHourLabels, visibleHourLabels)
-            assertVisibleTextWithinHost(hostView, allViews)
-            val bedtimeVisible = allViews.filterIsInstance<TextView>().any { it.text.toString() == "Overnight" }
-            assertEquals(expectedBedtime, bedtimeVisible)
-            assertMessageHierarchy(allViews, fixture, expectedBedtime, compact = landscape)
-            assertRowWidths(hostView, slotRoots, fixture)
-            assertPresentationSemantics(hostView, fixture, expectedGroups)
-            assertNoVisibleFooter(allViews, fixture)
-            assertPanelLayers(hostView, variant, activity)
-            assertHourTicks(hostView, fixture, compact = landscape, activity)
             val fontScale = activity.resources.configuration.fontScale.toString().replace('.', '_')
             val nightMode = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
             // name the active day or night palette
             val appearance = if (nightMode == Configuration.UI_MODE_NIGHT_YES) "dark" else "light"
             captureScreenshot(activity, "${variant.name.lowercase()}-${widthDp}x${heightDp}-font${fontScale}-${appearance}")
-            assertNoTextClipping(allViews, compact = landscape)
             // prove update entrypoints coalesce named refresh work
             if (variant == FixtureVariant.MAXIMUM && !landscape) {
                 val workManager = WorkManager.getInstance(activity)
@@ -463,17 +468,19 @@ class WidgetHostInstrumentationTest {
         assertEquals(root.height + hostView.paddingTop + hostView.paddingBottom, hostView.height)
     }
 
-    // wait for appwidgethost to receive provider remoteviews
-    private fun waitForHostView(
+    // inspect one ready host state without exposing its mutable hierarchy
+    private fun withReadyHostView(
         activity: FixtureHostActivity,
         variant: FixtureVariant,
         landscape: Boolean,
-    ): View {
+        assertion: (View) -> Unit,
+    ) {
         var lastText = ""
         // wait through bounded host callbacks
         repeat(50) {
             instrumentation.waitForIdleSync()
-            var readyView: View? = null
+            var assertionCompleted = false
+            var assertionFailure: Throwable? = null
             // observe one atomic host state
             instrumentation.runOnMainSync {
                 val candidate = activity.renderedHostView
@@ -489,15 +496,24 @@ class WidgetHostInstrumentationTest {
                     matchesVariant(candidate, variant, landscape) &&
                     matchesTargetLayout(candidate, landscape)
                 ) {
-                    readyView = candidate
+                    // run assertions once against this exact ready hierarchy
+                    try {
+                        assertion(candidate)
+                        assertionCompleted = true
+                    } catch (failure: Throwable) {
+                        assertionFailure = failure
+                    }
                 }
             }
-            // return only the observed ready host
-            readyView?.let { return it }
+            // rethrow assertion failures without turning them into readiness retries
+            assertionFailure?.let { throw it }
+            // return only after the one-shot assertion completes
+            if (assertionCompleted) {
+                return
+            }
             SystemClock.sleep(100)
         }
         fail("AppWidgetHost did not render expected provider RemoteViews: $lastText")
-        error("unreachable")
     }
 
     // reject the provider's initial maximum update for alternate fixtures
