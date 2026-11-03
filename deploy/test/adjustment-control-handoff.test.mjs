@@ -11,7 +11,7 @@ const predecessorDigest = "603eb8f488ba78be3d7ecf76b0d587346d1c36432255d390d86d2
 const installedDigest = "a".repeat(64);
 
 // test the production handoff function without starting a release
-test("v16 accepts only its installed contract or pinned v13 predecessor without a handoff", async () => {
+test("v17 accepts only its installed contract or pinned v13 predecessor without a handoff", async () => {
   const directory = await mkdtemp(join(tmpdir(), "weather-v13-handoff-"));
   const envFile = join(directory, "release.env");
   const harness = `
@@ -35,9 +35,9 @@ require_control_plane_compatibility "$2"
   };
 
   try {
-    const installed = await check(16, installedDigest, "2026.10.09-2");
+    const installed = await check(17, installedDigest, "2026.10.09-2");
     assert.equal(installed.status, 0, installed.stderr);
-    const full = await check(16, installedDigest, "2026.10.09-3");
+    const full = await check(17, installedDigest, "2026.10.09-3");
     assert.equal(full.status, 0, full.stderr);
     const predecessor = await check(13, predecessorDigest, "2026.10.09-1");
     assert.equal(predecessor.status, 0, predecessor.stderr);

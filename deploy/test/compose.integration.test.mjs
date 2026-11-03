@@ -14,7 +14,7 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const deployRoot = join(repoRoot, "deploy");
 const runIntegration = process.env.WEATHER_RUN_DEPLOY_INTEGRATION === "1";
 const baselineServerRelease = "2026.09.01-9";
-const lifecycleControlPlaneVersion = "16";
+const lifecycleControlPlaneVersion = "17";
 const fixedV13SourceRevision = "072af3f880431ff9020a2ec2ada222210e45f00b";
 // retain the exact immutable published source-one commit
 const fixedV13TargetRevision = "56b327d9c750946f6f6963b6fe1fa5c9bba791ca";

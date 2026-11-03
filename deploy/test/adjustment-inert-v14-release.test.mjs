@@ -14,6 +14,20 @@ import {
 const update = resolve(import.meta.dirname, "../scripts/update.sh");
 const v16HandoffSourceControl =
   "af80d5752590bf47f5b893ee69f04215132e80210993f4a8c78d8562d2ea9a52";
+const v17HandoffSourceControl =
+  "e089e5c092fb336d0f8130cbf45320ed013a55af3b10957f2fd95a03265a2ed2";
+const stagedEnvironment = `WEATHER_RELEASE=2026.10.09-3
+WEATHER_SERVER_IMAGE=ghcr.io/anstosa/weather-server@sha256:5ebb1c9686e71053a56958ffe100436897082b7c41b3d072793303e73f508a64
+WEATHER_WEB_IMAGE=ghcr.io/anstosa/weather-web@sha256:b3ceecc4a5c14e1bac420f80702d46b99ae7a302d68cd1b7d6b69cb20ec22d8b
+POSTGRES_IMAGE=postgres@sha256:3aac91d19d5b7aff4c650dddfacc1a26c436459aafd4eb51ab0bf1748e990dbb
+CLOUDFLARED_IMAGE=cloudflare/cloudflared@sha256:a85d5a3d6f22cb3c7e78b2f0d05b0f0daeb72566e9426f656c60b357b7b89c95
+WEATHER_DATABASE_NAME=weather
+WEATHER_POSTGRES_DIR=/var/lib/weather/postgres
+WEATHER_FORECAST_ADJUSTMENT_WIND_CANARY_KILL_SWITCH=0
+WEATHER_FORECAST_ADJUSTMENT_TEMPERATURE_CANARY_KILL_SWITCH=0
+WEATHER_CONTROL_PLANE_SHA256=${v17HandoffSourceControl}
+WEATHER_CONTROL_PLANE_VERSION=16
+`;
 const sourceValues = {
   WEATHER_RELEASE: "2026.10.09-1",
   WEATHER_CONTROL_PLANE_VERSION: "13",
@@ -204,10 +218,7 @@ test("compatibility bridge and full source gates remain disjoint", async () => {
       WEATHER_SERVER_IMAGE: bridgeServer,
       WEATHER_WEB_IMAGE: bridgeWeb,
     });
-    await writeEnvironment(target, {
-      WEATHER_RELEASE: "2026.10.09-3",
-      WEATHER_CONTROL_PLANE_VERSION: "16",
-    });
+    await writeFile(target, stagedEnvironment, { mode: 0o600 });
     const full = spawnSync("bash", ["-c", `source "$1"
 full_v14_source_server_image=$4
 full_v14_source_web_image=$5
@@ -705,8 +716,8 @@ transcript=$3
 fixture_history=$4
 expected_control=$5
 control_plane_digest() { printf '%s\\n' "$expected_control"; }
-# isolate the retained handoff receipt from recovery classification
-require_v16_control_plane_handoff() { printf 'handoff:%s\\n' "$1" >>"$transcript"; }
+# isolate the retained handoff chain from recovery classification
+require_v17_control_plane_handoff() { printf 'handoff:%s\\n' "$1" >>"$transcript"; }
 require_v14_compatibility_bridge_receipt() { :; }
 require_v14_compatibility_bridge_settings() { :; }
 require_fixed_v14_migration_ledger() { :; }
