@@ -4812,9 +4812,20 @@ var RAIN_ORIGINAL_STABLE_GATE_IDS = deepFreeze([
 ]);
 
 // packages/forecast-adjustment/src/maintenance-capture-epoch.ts
-var MIGRATION_HISTORY_SHA256S = Object.freeze([
-  "c683c4f937c7f02b00f6ab49f75268eead81d2a221a8a9a23e38f9e4802a11b0",
-  "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424"
+var CAPTURE_EPOCH_IDENTITIES = Object.freeze([
+  {
+    controlPlaneVersion: "14",
+    databaseMigrationHistorySha256: "c683c4f937c7f02b00f6ab49f75268eead81d2a221a8a9a23e38f9e4802a11b0"
+  },
+  {
+    controlPlaneVersion: "14",
+    databaseMigrationHistorySha256: "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424"
+  },
+  {
+    controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+    controlPlaneVersion: "17",
+    databaseMigrationHistorySha256: "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf"
+  }
 ]);
 
 // packages/forecast-adjustment/src/rain-fixed-gauge-target.ts

@@ -32,7 +32,7 @@ const exportScript = join(repoRoot, "deploy/scripts/forecast-training-export.sh"
 const pullScript = join(repoRoot, "deploy/scripts/pull-forecast-training-export.sh");
 const sshRunScript = join(repoRoot, "deploy/scripts/ssh-run.sh");
 const runDeployIntegration = process.env.WEATHER_RUN_DEPLOY_INTEGRATION === "1";
-const publicValidatorSha256 = "32f6fc48dd191dc5ec6c778b38279ff22bf4ee85691907bfb64e315ef523eb90";
+const publicValidatorSha256 = "3604d41cb274fce8701215980ca085b43280faedd8c81f04199284c7713a1ca5";
 const publicValidatorForbiddenValueHit = String.raw`apps/web/src/adjustment-maintenance-contract.mjs:  /(?:^|[/\\])\.weather[/\\]model-evidence(?:[/\\]|$)/iu,` + "\n";
 
 // permit only the hash-bound validator's exact private-value rejection rule
