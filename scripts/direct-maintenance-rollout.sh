@@ -807,7 +807,7 @@ direct_finish_target() {
 
 # recover only an exact rollback or compatibility-proven commit
 direct_recover_inner() {
-  local classification outcome=1
+  local classification database authorization outcome=1
   set +e
   # never classify while container or transaction quiescence is uncertain
   if ! direct_quiesce_migration "$direct_target_env"; then
@@ -839,10 +839,15 @@ direct_recover_inner() {
     fi
   # use the old runtime on schema 23 only with the genuine proof and authorization
   elif [[ "$classification" == target ]]; then
+    database=$(env_value "$direct_target_env" WEATHER_DATABASE_NAME)
+    authorization=$(migration_authorization "$direct_target_release")
     if direct_validate_compatibility "$direct_compatibility_proof" &&
-      validate_migration_authorization "$(migration_authorization "$direct_target_release")" \
+      validate_migration_authorization "$authorization" \
         "$direct_source_release" "$direct_target_release" &&
-      restore_images "$direct_source_env" "$direct_source_release" "$direct_target_release"; then
+      apply_runtime_database_acl "$direct_target_env" "$database" &&
+      verify_runtime_database_acl "$direct_target_env" "$database" &&
+      with_restore_migration_authorization "$authorization" "$direct_source_release" \
+        "$direct_target_release" start_v14_compatibility_bridge_runtime "$direct_source_env"; then
       direct_journal recovered_compatible_source absent "${DIRECT_MIGRATION_EXIT:-unknown}"
       write_private_state "$state_dir/schema-release" "$direct_target_release"
       write_private_state "$state_dir/previous-release" "$direct_source_release"

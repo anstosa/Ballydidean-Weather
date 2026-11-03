@@ -197,6 +197,58 @@ direct_activate id "$(printf '%064d' 0)" /opt/weather/current/deploy/releases/20
   }
 });
 
+test("committed target recovery uses the proven pre-epoch runtime view", async () => {
+  const root = await mkdtemp(join(tmpdir(), "weather-direct-pre-epoch-recovery-"));
+  const log = join(root, "recovery.log");
+  const body = String.raw`
+log=$2
+state_dir=$3
+direct_target_env=/target.env
+direct_source_env=/source.env
+direct_source_history=$(printf '%064d' 1)
+direct_compatibility_proof=/proof.json
+DIRECT_MIGRATION_EXIT=9
+direct_quiesce_migration() { printf 'quiesced\n' >>"$log"; }
+start_postgres() { printf 'postgres\n' >>"$log"; }
+require_supported_writers_quiesced() { printf 'writers-quiesced\n' >>"$log"; }
+direct_require_database_quiesced() { printf 'database-quiesced\n' >>"$log"; }
+direct_classify() { printf 'target\n'; }
+direct_validate_compatibility() { printf 'compatibility:%s\n' "$1" >>"$log"; }
+migration_authorization() { printf '/authorization\n'; }
+validate_migration_authorization() { printf 'authorization:%s:%s:%s\n' "$1" "$2" "$3" >>"$log"; }
+env_value() { printf 'weather\n'; }
+apply_runtime_database_acl() { printf 'acl-apply:%s:%s\n' "$1" "$2" >>"$log"; }
+verify_runtime_database_acl() { printf 'acl-verify:%s:%s\n' "$1" "$2" >>"$log"; }
+with_restore_migration_authorization() {
+  printf 'override:%s:%s:%s:%s:%s\n' "$1" "$2" "$3" "$4" "$5" >>"$log"
+  shift 3
+  "$@"
+}
+start_v14_compatibility_bridge_runtime() { printf 'pre-epoch-runtime:%s\n' "$1" >>"$log"; }
+restore_images() { printf 'UNSAFE_ORDINARY_RESTORE\n' >>"$log"; return 1; }
+direct_journal() { printf 'journal:%s\n' "$1" >>"$log"; }
+write_private_state() { printf 'marker:%s:%s\n' "$(basename "$1")" "$2" >>"$log"; }
+write_active_symlink() { printf 'marker:active:%s\n' "$1" >>"$log"; }
+direct_recover_inner
+`;
+  try {
+    const result = runBash(body, [log, root]);
+    assert.equal(result.status, 0, result.stderr);
+    const events = await readFile(log, "utf8");
+    assert.match(events,
+      /authorization:\/authorization:2026\.10\.09-2:2026\.11\.03-2/u);
+    assert.match(events,
+      /override:\/authorization:2026\.10\.09-2:2026\.11\.03-2:start_v14_compatibility_bridge_runtime:\/source\.env/u);
+    assert.match(events, /acl-apply:\/target\.env:weather/u);
+    assert.match(events, /pre-epoch-runtime:\/source\.env/u);
+    assert.doesNotMatch(events, /UNSAFE_ORDINARY_RESTORE/u);
+    await assert.rejects(readFile(join(root, "adjustment-capture-epoch.json")),
+      { code: "ENOENT" });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("activation never overwrites a preserved journal", async () => {
   const root = await mkdtemp(join(tmpdir(), "weather-direct-journal-test-"));
   const journal = join(root, "activation-journal.json");
