@@ -2551,6 +2551,159 @@ test("revision capture epoch remains exact 0021 after the live 0022 advance", as
   }
 });
 
+// admit only the exact repaired 0023 capture identity
+test("revision capture epoch accepts the exact direct 0023 identity", async () => {
+  const root = await mkdtemp(join(tmpdir(), "weather-revision-direct-epoch-"));
+  try {
+    const migrationRoot = join(repoRoot, "packages/database/migrations");
+    const migrationNames = (await readdir(migrationRoot))
+      .filter((name) => name.endsWith(".sql")).sort();
+    const canonicalMigrationChecksums = [];
+    // hash the exact canonical artifacts in database order
+    for (const name of migrationNames) {
+      canonicalMigrationChecksums.push(createHash("sha256")
+        .update(await readFile(join(migrationRoot, name))).digest("hex"));
+    }
+    const migrationChecksums = [...canonicalMigrationChecksums];
+    migrationChecksums[migrationNames.indexOf("0020_adjustment_revision_frontier.sql")] =
+      "58d50e88fa767212865e222ec02e55283ceac5b00538aa2898b5ebc2873b28f6";
+    const migrationHistorySha256 = createHash("sha256").update(migrationNames.map(
+      // serialize the database manifest without a trailing line feed
+      (name, index) => `${name}:${migrationChecksums[index]}`,
+    ).join("\n")).digest("hex");
+    assert.equal(migrationHistorySha256,
+      "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf");
+    const epochAt = "2026-11-03T08:00:00.000Z";
+    const genesis = createHash("sha256")
+      .update("adjustment-revision-frontier/v1\n0\n").digest("hex");
+    const snapshot = {
+      archiveCommitOrdinal: "0",
+      contractVersion: "adjustment-revision-serving-snapshot/v1",
+      cutoffAt: epochAt,
+      entries: [],
+      entryCount: 0,
+      frontierSha256: genesis,
+      snapshotSha256: "",
+    };
+    snapshot.snapshotSha256 = createHash("sha256").update([
+      snapshot.contractVersion, snapshot.cutoffAt, "0", genesis, "",
+    ].join("\n")).digest("hex");
+    const directManifest = {
+      contract_version: "adjustment-evaluation-export-manifest/v1",
+      migration_checksums: migrationChecksums,
+      migration_history_sha256: migrationHistorySha256,
+      migration_names: migrationNames,
+      query_contract_sha256: "1".repeat(64),
+      query_contract_version: "adjustment-evaluation-export-query/v1",
+      row_schema_sha256: "2".repeat(64),
+      schema_migration: "0017_adjustment_evaluation_export.sql",
+      site_key: "ballydidean",
+      site_timezone: "America/Los_Angeles",
+    };
+    const transaction = {
+      created_at_utc: epochAt,
+      idle_in_transaction_session_timeout: "30s",
+      isolation_level: "repeatable read",
+      lock_timeout: "5s",
+      read_only: "on",
+      statement_timeout: "5min",
+    };
+    const directEnvelope = {
+      databaseManifest: directManifest,
+      payload: snapshot,
+      transaction,
+    };
+    const directDeployment = {
+      controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+      controlPlaneVersion: "17",
+      sourceCommit: "3".repeat(40),
+      sourceRelease: "2026.11.03-1",
+      sourceServerImageDigest: `sha256:${"4".repeat(64)}`,
+      sourceWebImageDigest: `sha256:${"5".repeat(64)}`,
+    };
+    const directRoot = join(root, "direct");
+    await mkdir(directRoot);
+    const directPath = join(directRoot, "adjustment-capture-epoch.json");
+    const witness = await writeAdjustmentRevisionCaptureEpochWitness({
+      databaseEnvelope: directEnvelope,
+      deployment: directDeployment,
+      path: directPath,
+    });
+    assert.equal(validateAdjustmentRevisionCaptureEpochWitness(witness), witness);
+    assert.equal(witness.controlPlaneVersion, "17");
+    assert.equal(witness.databaseMigrationHistorySha256, migrationHistorySha256);
+    assert.deepEqual(await readAdjustmentRevisionCaptureEpochWitness({
+      expectedGid: process.getegid(),
+      expectedUid: process.geteuid(),
+      path: directPath,
+    }), witness);
+    assert.equal((await readAdjustmentRevisionCaptureEpochSnapshot({
+      expectedGid: process.getegid(),
+      expectedUid: process.geteuid(),
+      path: join(directRoot, "adjustment-capture-epoch-snapshot.json"),
+    })).snapshotSha256, witness.servingSnapshotSha256);
+
+    const rollingMigrationCount = migrationNames.indexOf(
+      "0021_adjustment_rolling_registration.sql",
+    ) + 1;
+    const rollingMigrationNames = migrationNames.slice(0, rollingMigrationCount);
+    const rollingMigrationChecksums = canonicalMigrationChecksums.slice(
+      0,
+      rollingMigrationCount,
+    );
+    const rollingManifest = {
+      ...directManifest,
+      migration_checksums: rollingMigrationChecksums,
+      migration_history_sha256: createHash("sha256").update(rollingMigrationNames.map(
+        // serialize the legacy database manifest without a trailing line feed
+        (name, index) => `${name}:${rollingMigrationChecksums[index]}`,
+      ).join("\n")).digest("hex"),
+      migration_names: rollingMigrationNames,
+    };
+    const rejected = [
+      {
+        databaseEnvelope: directEnvelope,
+        deployment: { ...directDeployment, controlPlaneSha256: "6".repeat(64), controlPlaneVersion: "14" },
+        error: /witness is invalid/u,
+        name: "legacy-control-direct-ledger",
+      },
+      {
+        databaseEnvelope: { ...directEnvelope, databaseManifest: rollingManifest },
+        deployment: directDeployment,
+        error: /witness is invalid/u,
+        name: "direct-control-legacy-ledger",
+      },
+      {
+        databaseEnvelope: directEnvelope,
+        deployment: { ...directDeployment, controlPlaneSha256: "7".repeat(64) },
+        error: /deployment is invalid/u,
+        name: "wrong-direct-control",
+      },
+      {
+        databaseEnvelope: { ...directEnvelope, databaseManifest: {
+          ...directManifest,
+          migration_history_sha256: "3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554",
+        } },
+        deployment: directDeployment,
+        error: /database ledger differs/u,
+        name: "trailing-line-feed-ledger",
+      },
+    ];
+    // reject every independently plausible crossed identity
+    for (const candidate of rejected) {
+      const candidateRoot = join(root, candidate.name);
+      await mkdir(candidateRoot);
+      await assert.rejects(writeAdjustmentRevisionCaptureEpochWitness({
+        databaseEnvelope: candidate.databaseEnvelope,
+        deployment: candidate.deployment,
+        path: join(candidateRoot, "adjustment-capture-epoch.json"),
+      }), candidate.error);
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 // archive permanent unqualified stages before releasing both bounded online slots
 test("revision gap transfer acknowledges exact staged bytes without ordinals", async () => {
   const root = await mkdtemp(join(tmpdir(), "weather-revision-gap-transfer-"));

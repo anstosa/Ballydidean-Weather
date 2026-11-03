@@ -1363,12 +1363,21 @@ export const ADJUSTMENT_REVISION_CAPTURE_EPOCH_SNAPSHOT_PATH =
 const ADJUSTMENT_REVISION_CAPTURE_EPOCH_MAXIMUM_BYTES = 16 * 1024;
 const ADJUSTMENT_ROLLING_REGISTRATION_MIGRATION_HISTORY_SHA256 =
   "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424";
-const ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGER = Object.freeze({
+const ADJUSTMENT_DIRECT_MIGRATION_HISTORY_SHA256 =
+  "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf";
+const ADJUSTMENT_CAPTURE_EPOCH_CONTROL_PLANE_17_SHA256 =
+  "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb";
+const ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGERS = Object.freeze([Object.freeze({
   checksum: "ca29db99377001fca2e2e4268fd80d1cbe7b876f71f2d5ba04e575712cb9f13b",
   count: 21,
   historySha256: ADJUSTMENT_ROLLING_REGISTRATION_MIGRATION_HISTORY_SHA256,
   name: "0021_adjustment_rolling_registration.sql",
-});
+}), Object.freeze({
+  checksum: "e637542cb2e742fe8f22f60313a11f00adbc1d140a811ee718524849fcece12a",
+  count: 23,
+  historySha256: ADJUSTMENT_DIRECT_MIGRATION_HISTORY_SHA256,
+  name: "0023_forecast_product_read_index.sql",
+})]);
 
 const OBJECT_MAXIMUM_BYTES = 512 * 1_024;
 const COMPRESSED_OBJECT_MAXIMUM_BYTES = 16 * 1_024;
@@ -1530,14 +1539,20 @@ export function validateAdjustmentRevisionCaptureEpochWitness(value) {
   requireInstant(value.epochAt, "adjustment revision capture epoch time");
   const releasePattern = /^\d{4}\.\d{2}\.\d{2}-[1-9][0-9]?$/u;
   const imageDigestPattern = /^sha256:[a-f0-9]{64}$/u;
-  // bind the one-time witness to the exact inert-v14 pre-activation identity
+  // match one closed witness identity
+  const identityMatches =
+    (value.controlPlaneVersion === "14" &&
+      value.databaseMigrationHistorySha256 ===
+        ADJUSTMENT_ROLLING_REGISTRATION_MIGRATION_HISTORY_SHA256) ||
+    (value.controlPlaneVersion === "17" &&
+      value.controlPlaneSha256 === ADJUSTMENT_CAPTURE_EPOCH_CONTROL_PLANE_17_SHA256 &&
+      value.databaseMigrationHistorySha256 === ADJUSTMENT_DIRECT_MIGRATION_HISTORY_SHA256);
+  // bind the one-time witness to one reviewed control-history identity
   if (value.activationKind !== "inert_v14_pre_activation" ||
     value.archiveCommitOrdinal !== "0" ||
     value.catalogFrontierSha256 !== adjustmentRevisionGenesisFrontier() ||
     value.contractVersion !== ADJUSTMENT_REVISION_CAPTURE_EPOCH_CONTRACT_VERSION ||
-    value.controlPlaneVersion !== "14" ||
-    value.databaseMigrationHistorySha256 !==
-      ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGER.historySha256 ||
+    !identityMatches ||
     typeof value.sourceCommit !== "string" || !/^[a-f0-9]{40}$/u.test(value.sourceCommit) ||
     typeof value.sourceRelease !== "string" || !releasePattern.test(value.sourceRelease) ||
     typeof value.sourceServerImageDigest !== "string" ||
@@ -1785,8 +1800,12 @@ function validateAdjustmentRevisionCaptureEpochDeployment(value) {
   ], "adjustment revision capture epoch deployment");
   requireSha256(value.controlPlaneSha256,
     "adjustment revision capture epoch control plane");
+  // retain legacy control while pinning version 17
+  const controlIdentityMatches = value.controlPlaneVersion === "14" ||
+    (value.controlPlaneVersion === "17" &&
+      value.controlPlaneSha256 === ADJUSTMENT_CAPTURE_EPOCH_CONTROL_PLANE_17_SHA256);
   // reuse the complete witness validator after construction for remaining fields
-  if (value.controlPlaneVersion !== "14" ||
+  if (!controlIdentityMatches ||
     !/^[a-f0-9]{40}$/u.test(value.sourceCommit) ||
     !/^\d{4}\.\d{2}\.\d{2}-[1-9][0-9]?$/u.test(value.sourceRelease) ||
     !/^sha256:[a-f0-9]{64}$/u.test(value.sourceServerImageDigest) ||
@@ -1813,9 +1832,13 @@ function validateAdjustmentRevisionCaptureEpochDatabaseEnvelope(value) {
         (name, index) => `${name}:${manifest.migration_checksums[index]}`,
       ).join("\n")))
     : null;
-  const reviewedLedger = ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGER;
-  // require the exact complete 0021 capture ledger rather than a compatible prefix
-  if (manifest.contract_version !== "adjustment-evaluation-export-manifest/v1" ||
+  const reviewedLedger = ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGERS.find(
+    // select only an exact reviewed manifest identity
+    (ledger) => ledger.historySha256 === manifest.migration_history_sha256,
+  );
+  // require one exact complete capture ledger rather than a compatible prefix
+  if (reviewedLedger === undefined ||
+    manifest.contract_version !== "adjustment-evaluation-export-manifest/v1" ||
     manifest.migration_history_sha256 !== reviewedLedger.historySha256 ||
     !Array.isArray(manifest.migration_names) ||
     manifest.migration_names.length !== reviewedLedger.count ||

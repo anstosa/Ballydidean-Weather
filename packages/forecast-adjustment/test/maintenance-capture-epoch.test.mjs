@@ -10,7 +10,7 @@ import {
   verifyAdjustmentRevisionCaptureEpochWitness,
 } from "../dist/index.js";
 
-// construct one self-addressed inert-v14 zero-frontier witness
+// construct one self-addressed zero-frontier witness
 function witnessBytes(overrides = {}) {
   const unsigned = {
     activationKind: "inert_v14_pre_activation",
@@ -50,6 +50,20 @@ test("capture epoch witness binds zero frontier and future-only clocks", () => {
   ), false);
 });
 
+// accept only the exact current control and migration identity
+test("capture epoch witness accepts the reviewed version 17 identity", () => {
+  const witness = verifyAdjustmentRevisionCaptureEpochWitness(witnessBytes({
+    controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+    controlPlaneVersion: "17",
+    databaseMigrationHistorySha256: "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf",
+  }));
+  assert.equal(witness.controlPlaneVersion, "17");
+  assert.equal(
+    witness.databaseMigrationHistorySha256,
+    "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf",
+  );
+});
+
 // reject a rehashed nonzero or incomplete database boundary
 test("capture epoch witness rejects alternate frontier and history claims", () => {
   assert.throws(
@@ -58,6 +72,35 @@ test("capture epoch witness rejects alternate frontier and history claims", () =
   );
   assert.throws(
     () => verifyAdjustmentRevisionCaptureEpochWitness(witnessBytes({ databaseMigrationHistorySha256: "6".repeat(64) })),
+    /identity differs/u,
+  );
+  assert.throws(
+    () => verifyAdjustmentRevisionCaptureEpochWitness(witnessBytes({
+      controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+      databaseMigrationHistorySha256: "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf",
+    })),
+    /identity differs/u,
+  );
+  assert.throws(
+    () => verifyAdjustmentRevisionCaptureEpochWitness(witnessBytes({
+      controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+      controlPlaneVersion: "17",
+    })),
+    /identity differs/u,
+  );
+  assert.throws(
+    () => verifyAdjustmentRevisionCaptureEpochWitness(witnessBytes({
+      controlPlaneVersion: "17",
+      databaseMigrationHistorySha256: "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf",
+    })),
+    /identity differs/u,
+  );
+  assert.throws(
+    () => verifyAdjustmentRevisionCaptureEpochWitness(witnessBytes({
+      controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+      controlPlaneVersion: "17",
+      databaseMigrationHistorySha256: "3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554",
+    })),
     /identity differs/u,
   );
 });

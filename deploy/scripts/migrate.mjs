@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 
-// accept only the two separately reviewed atomic migration bridges
+// accept only the separately reviewed atomic migration bridges
 export function parseMigrationEntrypointArguments(argumentsList) {
   // preserve the ordinary one-shot without adding runtime authority
   if (argumentsList.length === 0) return {};
@@ -11,6 +11,10 @@ export function parseMigrationEntrypointArguments(argumentsList) {
   // bind the normal release to the exact schema 21 through 23 bridge
   if (argumentsList.length === 1 && argumentsList[0] === "--atomic-normal-21-23") {
     return { atomicNormal21To23: true };
+  }
+  // select only the repaired direct source and target
+  if (argumentsList.length === 1 && argumentsList[0] === "--atomic-direct-18-23") {
+    return { atomicDirect18To23: true };
   }
   throw new Error("migration entrypoint arguments are invalid");
 }
