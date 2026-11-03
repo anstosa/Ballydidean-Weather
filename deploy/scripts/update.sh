@@ -35,7 +35,7 @@ releases_dir="$deploy_dir/releases"
 state_dir="$deploy_dir/state"
 capacity_evidence=/var/lib/weather/preflight-latest.json
 v13_resource_evidence=/var/lib/weather/preflight-v13-resource.json
-control_plane_version=16
+control_plane_version=17
 recurring_previous_release=2026.10.09-1
 recurring_previous_control_plane_sha256=603eb8f488ba78be3d7ecf76b0d587346d1c36432255d390d86d2b768c8fecba
 v16_handoff_source_release=2026.10.09-2
@@ -53,6 +53,15 @@ v16_control_plane_handoff="$state_dir/control-plane-handoff-v16-v1.json"
 v16_source_environment_sha256=97368a14e368dcf7fd3f3f179cd222df2f848695e1cd993abf8892e69c30d4e7
 v16_bridge_state_sha256=c944a152f3129d7bf3bf3b2dcd2b4d230ca58c64719360e22351eb8043779c62
 v16_predecessor_manifest_sha256=d1f64bf6c03fa35d198d6e9edc58b9d9ac4225e829e2c41e68761fe5ca827536
+v16_successor_control_sha256=e089e5c092fb336d0f8130cbf45320ed013a55af3b10957f2fd95a03265a2ed2
+v16_successor_manifest_sha256=157281ebd1ebc35691a34e085722a72ea3a530ca9b6cc75832d77ab6d868be5e
+v16_handoff_file_sha256=63daabc14561306402d6130d8d644dc7025148f837b40f34791f00b3106bef2e
+v16_handoff_receipt_sha256=f1acdcf00a21e7937b639d9d41910d695c5589175083eb5c3ba97f07066e7bfa
+v17_control_plane_handoff="$state_dir/control-plane-handoff-v17-v1.json"
+v17_handoff_source_release=2026.10.09-3
+v17_handoff_source_control_version=16
+v17_handoff_source_control_sha256=$v16_successor_control_sha256
+v17_source_environment_sha256=f4bd73a18649894a25d9b4f54784bb5eccb099b4226dd5aa7df50f09906dc63b
 historical_v14_rehearsal_receipt="$state_dir/historical-v14-18-21-rehearsal-v1.json"
 historical_v14_rehearsal_samples="$state_dir/historical-v14-18-21-rehearsal-samples-v1.json"
 normal_activation_journal="$state_dir/normal-activation-v1.env"
@@ -148,32 +157,32 @@ require_retained_maintenance_source() {
     die "v13 deployment source must be the exact active release environment"
 }
 
-# emit the exact normalized v16 control identity manifest
-control_plane_identity_manifest_v16() {
+# emit the exact normalized v17 control identity manifest
+control_plane_identity_manifest_v17() {
   local file relative mode count=0
   local -a files
   mapfile -d '' -t files < <(
     find "$deploy_dir/scripts" "$deploy_dir/postgres" "$deploy_dir/systemd" \
       "$deploy_dir/sudoers" -type f -print0 | LC_ALL=C sort -z
   )
-  ((${#files[@]} == 41)) || die "v16 control plane file count differs"
+  ((${#files[@]} == 41)) || die "v17 control plane file count differs"
 
   # keep Compose first and every other control path sorted
   for file in "$deploy_dir/compose.yaml" "${files[@]}"; do
     [[ -f "$file" && ! -L "$file" && "$(stat -c '%u:%g:%h' "$file")" == 0:0:1 ]] ||
-      die "v16 control plane file metadata differs: $file"
+      die "v17 control plane file metadata differs: $file"
     relative=${file#"$repo_root/"}
     mode=$((8#$(stat -c '%a' "$file")))
     printf '%s 0 0 %04o %s\n' "$(sha256sum "$file" | awk '{print $1}')" \
       "$mode" "$relative"
     count=$((count + 1))
   done
-  ((count == 42)) || die "v16 control plane identity manifest is incomplete"
+  ((count == 42)) || die "v17 control plane identity manifest is incomplete"
 }
 
 # verify the exact AF80-to-v16 installed handoff
 require_v16_control_plane_handoff() {
-  local source_env=$1 current_digest candidate_manifest_sha256
+  local source_env=$1
   require_file "$source_env"
   [[ ! -L "$source_env" && "$(stat -c '%u:%g:%a:%h' "$source_env")" == 0:0:600:1 &&
     "$(sha256sum "$source_env" | awk '{print $1}')" == "$v16_source_environment_sha256" ]] ||
@@ -184,12 +193,12 @@ require_v16_control_plane_handoff() {
       "$v16_bridge_state_sha256" ]] || die "v16 handoff bridge state differs"
   [[ -f "$v16_control_plane_handoff" && ! -L "$v16_control_plane_handoff" &&
     "$(stat -c '%u:%g:%a:%h' "$v16_control_plane_handoff")" == 0:0:600:1 &&
-    "$(stat -c '%s' "$v16_control_plane_handoff")" -le 4096 ]] ||
+    "$(stat -c '%s' "$v16_control_plane_handoff")" -le 4096 &&
+    "$(sha256sum "$v16_control_plane_handoff" | awk '{print $1}')" == \
+      "$v16_handoff_file_sha256" ]] ||
     die "v16 handoff receipt metadata differs"
-  current_digest=$(control_plane_digest)
-  candidate_manifest_sha256=$(control_plane_identity_manifest_v16 | sha256sum | awk '{print $1}')
-  node --input-type=module - "$v16_control_plane_handoff" "$current_digest" \
-    "$candidate_manifest_sha256" "$v16_predecessor_manifest_sha256" \
+  node --input-type=module - "$v16_control_plane_handoff" "$v16_successor_control_sha256" \
+    "$v16_successor_manifest_sha256" "$v16_predecessor_manifest_sha256" \
     "$v16_bridge_state_sha256" <<'NODE'
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -225,8 +234,102 @@ if (raw.at(-1) !== 0x0a || !raw.equals(Buffer.from(`${canonical(value)}\n`)) ||
   value.bridgeStateSha256 !== bridgeState || value.successorControlVersion !== 16 ||
   value.successorControlSha256 !== successor ||
   value.candidateIdentityManifestSha256 !== candidateManifest ||
-  value.receiptSha256 !== receiptSha256) {
+  value.receiptSha256 !== receiptSha256 ||
+  value.receiptSha256 !== "f1acdcf00a21e7937b639d9d41910d695c5589175083eb5c3ba97f07066e7bfa") {
   throw new Error("v16 control-plane handoff receipt differs");
+}
+NODE
+}
+
+# verify the exact v16-to-v17 installed handoff chain
+require_v17_control_plane_handoff() {
+  local source_env=$1 source_release source_version source_digest
+  local v16_source_env staged_source_env current_digest candidate_manifest_sha256
+  require_file "$source_env"
+  [[ ! -L "$source_env" && "$(stat -c '%u:%g:%a:%h' "$source_env")" == 0:0:600:1 ]] ||
+    die "v17 handoff source environment metadata differs"
+  source_release=$(env_value "$source_env" WEATHER_RELEASE)
+  source_version=$(env_value "$source_env" WEATHER_CONTROL_PLANE_VERSION)
+  source_digest=$(env_value "$source_env" WEATHER_CONTROL_PLANE_SHA256)
+
+  # admit only one exact legacy or staged source tuple
+  if [[ "$source_release" == "$v16_handoff_source_release" &&
+    "$source_version" == "$v16_handoff_source_control_version" &&
+    "$source_digest" == "$v16_handoff_source_control_sha256" ]]; then
+    [[ "$(sha256sum "$source_env" | awk '{print $1}')" == "$v16_source_environment_sha256" ]] ||
+      die "v17 legacy source environment differs"
+  elif [[ "$source_release" == "$v17_handoff_source_release" &&
+    "$source_version" == "$v17_handoff_source_control_version" &&
+    "$source_digest" == "$v17_handoff_source_control_sha256" ]]; then
+    [[ "$(sha256sum "$source_env" | awk '{print $1}')" == "$v17_source_environment_sha256" ]] ||
+      die "v17 staged source environment differs"
+  else
+    die "v17 handoff source identity differs"
+  fi
+
+  # replay the immutable v16 ancestry before trusting the successor
+  v16_source_env="$releases_dir/$v16_handoff_source_release.env"
+  require_v16_control_plane_handoff "$v16_source_env"
+  staged_source_env="$releases_dir/$v17_handoff_source_release.env"
+  require_file "$staged_source_env"
+  [[ ! -L "$staged_source_env" &&
+    "$(stat -c '%u:%g:%a:%h' "$staged_source_env")" == 0:0:600:1 &&
+    "$(sha256sum "$staged_source_env" | awk '{print $1}')" == \
+      "$v17_source_environment_sha256" ]] ||
+    die "v17 staged environment differs"
+  [[ -f "$v17_control_plane_handoff" && ! -L "$v17_control_plane_handoff" &&
+    "$(stat -c '%u:%g:%a:%h' "$v17_control_plane_handoff")" == 0:0:600:1 &&
+    "$(stat -c '%s' "$v17_control_plane_handoff")" -le 4096 ]] ||
+    die "v17 handoff receipt metadata differs"
+  current_digest=$(control_plane_digest)
+  candidate_manifest_sha256=$(control_plane_identity_manifest_v17 | sha256sum | awk '{print $1}')
+  node --input-type=module - "$v17_control_plane_handoff" "$current_digest" \
+    "$candidate_manifest_sha256" "$v17_handoff_source_release" \
+    "$v17_handoff_source_control_version" "$v17_handoff_source_control_sha256" \
+    "$v17_source_environment_sha256" "$v16_handoff_file_sha256" \
+    "$v16_handoff_receipt_sha256" "$v16_successor_manifest_sha256" \
+    "$v16_bridge_state_sha256" <<'NODE'
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+const [path, successor, candidateManifest, sourceRelease, sourceVersion, sourceControl,
+  sourceEnvironment, predecessorFile, predecessorReceipt, predecessorManifest,
+  bridgeState] = process.argv.slice(2);
+const raw = readFileSync(path);
+const value = JSON.parse(raw);
+const keys = ["bridgeStateSha256", "candidateIdentityManifestSha256", "contractVersion",
+  "installedAt", "predecessorHandoffFileSha256", "predecessorHandoffReceiptSha256",
+  "predecessorIdentityManifestSha256", "receiptSha256", "sourceControlSha256",
+  "sourceControlVersion", "sourceEnvironmentSha256", "sourceRelease",
+  "successorControlSha256", "successorControlVersion"];
+const canonical = (input) => Array.isArray(input)
+  ? `[${input.map(canonical).join(",")}]`
+  : input !== null && typeof input === "object"
+    ? `{${Object.keys(input).sort().map(
+      (key) => `${JSON.stringify(key)}:${canonical(input[key])}`,
+    ).join(",")}}`
+    : JSON.stringify(input);
+const body = { ...value };
+delete body.receiptSha256;
+const receiptSha256 = createHash("sha256").update(`${canonical(body)}\n`).digest("hex");
+
+// require one canonical self-hashed chained receipt
+if (raw.at(-1) !== 0x0a || !raw.equals(Buffer.from(`${canonical(value)}\n`)) ||
+  Object.keys(value).sort().join("\n") !== keys.sort().join("\n") ||
+  value.contractVersion !== "weather-control-plane-handoff/v17-v1" ||
+  !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u.test(value.installedAt) ||
+  !Number.isFinite(Date.parse(value.installedAt)) || value.sourceRelease !== sourceRelease ||
+  value.sourceControlVersion !== Number(sourceVersion) ||
+  value.sourceControlSha256 !== sourceControl ||
+  value.sourceEnvironmentSha256 !== sourceEnvironment ||
+  value.predecessorHandoffFileSha256 !== predecessorFile ||
+  value.predecessorHandoffReceiptSha256 !== predecessorReceipt ||
+  value.predecessorIdentityManifestSha256 !== predecessorManifest ||
+  value.bridgeStateSha256 !== bridgeState ||
+  value.successorControlVersion !== 17 || value.successorControlSha256 !== successor ||
+  value.candidateIdentityManifestSha256 !== candidateManifest ||
+  value.receiptSha256 !== receiptSha256) {
+  throw new Error("v17 control-plane handoff receipt differs");
 }
 NODE
 }
@@ -252,7 +355,12 @@ normal_release_source_env() {
         "$v16_handoff_source_control_version" &&
       "$(env_value "$source" WEATHER_CONTROL_PLANE_SHA256)" == \
         "$v16_handoff_source_control_sha256" &&
-      "$(env_value "$source" WEATHER_RELEASE)" == "$v16_handoff_source_release" ) ]] ||
+      "$(env_value "$source" WEATHER_RELEASE)" == "$v16_handoff_source_release" ) ||
+    ( "$(env_value "$source" WEATHER_CONTROL_PLANE_VERSION)" == \
+        "$v17_handoff_source_control_version" &&
+      "$(env_value "$source" WEATHER_CONTROL_PLANE_SHA256)" == \
+        "$v17_handoff_source_control_sha256" &&
+      "$(env_value "$source" WEATHER_RELEASE)" == "$v17_handoff_source_release" ) ]] ||
     die "normal release source is not the exact installed or handed-off contract"
   printf '%s\n' "$source"
 }
@@ -933,9 +1041,13 @@ require_literal_full_v14_release_capacity() (
   source_release=$(env_value "$source_env" WEATHER_RELEASE)
   target_version=$(env_value "$target_env" WEATHER_CONTROL_PLANE_VERSION)
 
-  # admit only the reviewed bridge-to-full transition
+  # admit only the reviewed bridge-to-staged-full transition
   [[ "$source_release" == "$v14_compatibility_bridge_release" &&
-    "$target_version" == "$control_plane_version" ]] ||
+    "$target_version" == "$v17_handoff_source_control_version" &&
+    "$(env_value "$target_env" WEATHER_CONTROL_PLANE_SHA256)" == \
+      "$v17_handoff_source_control_sha256" &&
+    "$(sha256sum "$target_env" | awk '{print $1}')" == \
+      "$v17_source_environment_sha256" ]] ||
     die "literal full v14 capacity is unsupported outside the fixed bridge handoff"
 
   # retain the exact database and tunnel infrastructure across the handoff
@@ -1634,13 +1746,23 @@ require_control_plane_compatibility() {
     return
   fi
 
-  # admit AF80 only through the complete installed v16 handoff
+  # admit AF80 only through the complete installed v16 and v17 handoff chain
   if [[ "$expected_version" == "$v16_handoff_source_control_version" &&
     "$expected_digest" == "$v16_handoff_source_control_sha256" ]]; then
     expected_release=$(env_value "$env_file" WEATHER_RELEASE)
     [[ "$expected_release" == "$v16_handoff_source_release" ]] ||
       die "deployment control-plane identity is unsupported without an exact versioned allowlisted handoff"
-    require_v16_control_plane_handoff "$env_file"
+    require_v17_control_plane_handoff "$env_file"
+    return
+  fi
+
+  # admit E089 only through the complete installed v17 handoff
+  if [[ "$expected_version" == "$v17_handoff_source_control_version" &&
+    "$expected_digest" == "$v17_handoff_source_control_sha256" ]]; then
+    expected_release=$(env_value "$env_file" WEATHER_RELEASE)
+    [[ "$expected_release" == "$v17_handoff_source_release" ]] ||
+      die "deployment control-plane identity is unsupported without an exact versioned allowlisted handoff"
+    require_v17_control_plane_handoff "$env_file"
     return
   fi
 
@@ -2874,8 +2996,12 @@ require_fixed_v14_source_identity() {
     die "full v14 source server image identity differs"
   [[ "$source_web" == "$full_v14_source_web_image" ]] ||
     die "full v14 source web image identity differs"
-  [[ "$target_version" == "$control_plane_version" &&
-    "$target_release" == "$full_v14_release" ]] ||
+  [[ "$target_version" == "$v17_handoff_source_control_version" &&
+    "$(env_value "$target_env" WEATHER_CONTROL_PLANE_SHA256)" == \
+      "$v17_handoff_source_control_sha256" &&
+    "$target_release" == "$full_v14_release" &&
+    "$(sha256sum "$target_env" | awk '{print $1}')" == \
+      "$v17_source_environment_sha256" ]] ||
     die "full v14 target identity differs"
 }
 
@@ -6395,6 +6521,104 @@ prepare_inert_v14_release() {
   printf '%s\n' "$target"
 }
 
+# measure one pinned physical pg_wal tree without following aliases
+measure_historical_pg_wal_allocated_bytes() (
+  local directory=$1
+  local expected_device=$2
+  local expected_inode=$3
+  local actual_device actual_inode attempt scan_error scan_output
+  [[ -d "$directory" && ! -L "$directory" ]] ||
+    die "historical rehearsal pg_wal root is invalid"
+  read -r actual_device actual_inode < <(stat -c '%d %i' "$directory")
+  [[ "$actual_device" == "$expected_device" && "$actual_inode" == "$expected_inode" ]] ||
+    die "historical rehearsal pg_wal identity changed"
+  scan_error=$(mktemp "${TMPDIR:-/tmp}/weather-pg-wal-scan.XXXXXX") ||
+    die "historical rehearsal pg_wal scan diagnostics could not be created"
+  trap 'rm -f -- "$scan_error"' EXIT
+
+  # retry only one ordinary WAL recycle race
+  for attempt in 1 2; do
+    : >"$scan_error"
+    if scan_output=$(LC_ALL=C find -P "$directory" -printf '%D %i %b %y\n' \
+      2>"$scan_error" | awk \
+      -v expected_device="$expected_device" '
+BEGIN { maximum = 9007199254740991 }
+{
+  if ($1 != expected_device || ($4 != "d" && $4 != "f")) {
+    failed = 1
+    exit
+  }
+  key = $1 ":" $2
+  if (!(key in seen)) {
+    seen[key] = 1
+    total += $3 * 512
+    count += 1
+    if (count > 100000 || total > maximum) {
+      failed = 1
+      exit
+    }
+  }
+}
+END {
+  if (failed || NR < 1) exit 1
+  printf "%.0f\n", total
+}'); then
+      [[ ! -s "$scan_error" && "$scan_output" =~ ^[0-9]+$ ]] ||
+        die "historical rehearsal pg_wal allocation scan emitted diagnostics"
+      read -r actual_device actual_inode < <(stat -c '%d %i' "$directory")
+      [[ "$actual_device" == "$expected_device" && "$actual_inode" == "$expected_inode" ]] ||
+        die "historical rehearsal pg_wal identity changed during its scan"
+      printf '%s\n' "$scan_output"
+      exit 0
+    fi
+
+    # fail closed unless the first bounded scan observed only file recycle
+    [[ "$(stat -c '%s' "$scan_error")" -le 4096 ]] ||
+      die "historical rehearsal pg_wal scan diagnostics are oversized"
+    if ((attempt == 1)) && [[ -s "$scan_error" ]] &&
+      ! grep -qEv '^find: .+: No such file or directory$' "$scan_error"; then
+      read -r actual_device actual_inode < <(stat -c '%d %i' "$directory")
+      [[ "$actual_device" == "$expected_device" && "$actual_inode" == "$expected_inode" ]] ||
+        die "historical rehearsal pg_wal identity changed during recycle"
+      continue
+    fi
+    die "historical rehearsal pg_wal allocation scan failed"
+  done
+  die "historical rehearsal pg_wal allocation scan retry was exhausted"
+)
+
+# collect one new full idle resource sample after rehearsal cleanup
+collect_fresh_normal_release_resource_evidence() {
+  local started_at finished_at
+  started_at=$(date -u +%s%3N)
+  # add one second for the sampler's coarse integer start epoch
+  if ! "$deploy_dir/scripts/preflight-capacity.sh" --sample-seconds 901 \
+    --json "$v13_resource_evidence" >&2; then
+    :
+  fi
+  finished_at=$(date -u +%s%3N)
+  ((finished_at - started_at >= 900000)) ||
+    die "fresh normal release resource sample ended early"
+  require_normal_release_resource_gate ||
+    die "fresh normal release resource evidence failed"
+  node --input-type=module - "$v13_resource_evidence" "$started_at" "$finished_at" <<'NODE'
+import { readFileSync } from "node:fs";
+
+const evidence = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const startedAt = Number(process.argv[3]);
+const finishedAt = Number(process.argv[4]);
+const capturedAt = Date.parse(evidence.capturedAt);
+
+// bind the accepted evidence to this exact uninterrupted collection window
+if (evidence.sampleSeconds !== 901 || !Number.isSafeInteger(startedAt) ||
+  !Number.isSafeInteger(finishedAt) || !Number.isFinite(capturedAt) ||
+  capturedAt < startedAt + 900_000 || capturedAt > finishedAt + 30_000) {
+  throw new Error("fresh normal release resource evidence window differs");
+}
+NODE
+  printf '%s %s\n' "$started_at" "$finished_at"
+}
+
 # produce one measured full-size ARM64 proof on an invocation-owned clone
 historical_v14_18_21_rehearsal() (
   local source_env=$1
@@ -6407,8 +6631,12 @@ historical_v14_18_21_rehearsal() (
   local system_identifier database_oid database_bytes weather_rows weather_bytes
   local candidate_scan_rows candidate_scan_heap_bytes
   local largest_index_bytes max_wal_bytes source_database_file_count
-  local free_bytes_before free_inodes_before start_wal_lsn peak_wal_bytes
+  local free_bytes_before free_inodes_before start_wal_lsn wal_bytes_generated
+  local pg_wal_dir pg_wal_device pg_wal_inode sample_wal_allocated_bytes
   local before_data_sha256 started_at finished_at duration_milliseconds
+  local full_copy_started_at full_copy_finished_at full_copy_duration_milliseconds
+  local cleanup_completed_at_milliseconds resource_window_started_at_milliseconds
+  local resource_window_finished_at_milliseconds
   local preexisting_data_contract preexisting_data_before preexisting_data_after
   local required_historical_bytes required_historical_inodes details migration_status
   local sample_free_bytes sample_free_inodes sample_temp_bytes _sample
@@ -6545,8 +6773,16 @@ historical_v14_18_21_rehearsal() (
     free_inodes_before >= required_historical_inodes)) ||
     die "historical rehearsal lacks its full-copy capacity envelope"
 
-  printf '0 %s %s %s 0\n' "$(date -u +%s%3N)" \
-    "$free_bytes_before" "$free_inodes_before" >"$samples"
+  pg_wal_dir="$postgres_dir/pg_wal"
+  [[ -d "$pg_wal_dir" && ! -L "$pg_wal_dir" ]] ||
+    die "historical rehearsal pg_wal root is invalid"
+  read -r pg_wal_device pg_wal_inode < <(stat -c '%d %i' "$pg_wal_dir")
+  sample_wal_allocated_bytes=$(measure_historical_pg_wal_allocated_bytes \
+    "$pg_wal_dir" "$pg_wal_device" "$pg_wal_inode")
+  full_copy_started_at=$(date -u +%s%3N)
+  printf '0 %s %s %s 0 %s\n' "$(date -u +%s%3N)" \
+    "$free_bytes_before" "$free_inodes_before" \
+    "$sample_wal_allocated_bytes" >"$samples"
   (
     _next_sequence=1
     # publish one exact completion handshake only on an intentional stop
@@ -6559,7 +6795,7 @@ historical_v14_18_21_rehearsal() (
       exit 0
     }
     trap complete_historical_monitor TERM
-    # retain the complete bounded free-space and PostgreSQL-temp series
+    # three-second cadence covers three hours within the 4096-sample receipt bound
     for ((_sample = 0; _sample < 4093; _sample += 1)); do
       read -r sample_free_bytes _ sample_free_inodes < <(
         stat --file-system --format='%a %S %d' "$postgres_dir" |
@@ -6568,11 +6804,14 @@ historical_v14_18_21_rehearsal() (
         psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
           --tuples-only --no-align --command \
           "SELECT COALESCE(sum(size), 0) FROM pg_ls_tmpdir()")
+      sample_wal_allocated_bytes=$(measure_historical_pg_wal_allocated_bytes \
+        "$pg_wal_dir" "$pg_wal_device" "$pg_wal_inode")
       # append each sample with one writer and one complete printf
-      printf '%s %s %s %s %s\n' "$_next_sequence" "$(date -u +%s%3N)" \
-        "$sample_free_bytes" "$sample_free_inodes" "$sample_temp_bytes" || exit 1
+      printf '%s %s %s %s %s %s\n' "$_next_sequence" "$(date -u +%s%3N)" \
+        "$sample_free_bytes" "$sample_free_inodes" "$sample_temp_bytes" \
+        "$sample_wal_allocated_bytes" || exit 1
       _next_sequence=$((_next_sequence + 1))
-      sleep 1
+      sleep 3
     done
     exit 1
   ) >>"$samples" &
@@ -6677,7 +6916,7 @@ historical_v14_18_21_rehearsal() (
   verify_preexisting_data_snapshots "$preexisting_data_contract" \
     "$preexisting_data_before" "$preexisting_data_after" ||
     die "historical rehearsal changed preexisting application data"
-  peak_wal_bytes=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
+  wal_bytes_generated=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
     psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname "$database_name" \
       --tuples-only --no-align --command \
       "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), '$start_wal_lsn'::pg_lsn)::bigint")
@@ -6704,6 +6943,11 @@ historical_v14_18_21_rehearsal() (
       "SELECT oid FROM pg_database WHERE datname = '$candidate'")" ]] ||
     die "historical rehearsal clone cleanup was not confirmed"
   candidate_created=false
+  cleanup_completed_at_milliseconds=$(date -u +%s%3N)
+  full_copy_finished_at=$cleanup_completed_at_milliseconds
+  full_copy_duration_milliseconds=$((full_copy_finished_at - full_copy_started_at))
+  ((full_copy_duration_milliseconds <= 10800000)) ||
+    die "historical rehearsal full copy exceeded its reviewed duration bound"
   # require the monitor to be live and to close its complete sequence explicitly
   stop_owned_capacity_monitor "$monitor_pid" "$monitor_completion" "$samples" ||
     die "historical rehearsal capacity monitor died or ended incompletely"
@@ -6714,8 +6958,17 @@ historical_v14_18_21_rehearsal() (
   sample_temp_bytes=$(WEATHER_ENV_FILE=$source_env compose exec -T postgres \
     psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname postgres \
       --tuples-only --no-align --command "SELECT COALESCE(sum(size), 0) FROM pg_ls_tmpdir()")
-  printf '%s %s %s %s %s\n' "$capacity_monitor_next_sequence" "$(date -u +%s%3N)" \
-    "$sample_free_bytes" "$sample_free_inodes" "$sample_temp_bytes" >>"$samples"
+  sample_wal_allocated_bytes=$(measure_historical_pg_wal_allocated_bytes \
+    "$pg_wal_dir" "$pg_wal_device" "$pg_wal_inode")
+  printf '%s %s %s %s %s %s\n' "$capacity_monitor_next_sequence" \
+    "$(date -u +%s%3N)" "$sample_free_bytes" "$sample_free_inodes" \
+    "$sample_temp_bytes" "$sample_wal_allocated_bytes" >>"$samples"
+
+  # replace any expired pre-copy proof with a genuine post-cleanup idle sample
+  read -r resource_window_started_at_milliseconds \
+    resource_window_finished_at_milliseconds < <(
+    collect_fresh_normal_release_resource_evidence
+  )
 
   node --input-type=module - "$samples" "$samples_json_temporary" "$receipt_temporary" \
     "$(sha256sum "$source_env" | awk '{print $1}')" \
@@ -6724,7 +6977,12 @@ historical_v14_18_21_rehearsal() (
     "$before_data_sha256" "$candidate_scan_rows" "$candidate_scan_heap_bytes" \
     "$largest_index_bytes" "$max_wal_bytes" "$source_database_file_count" \
     "$free_bytes_before" "$free_inodes_before" "$required_historical_bytes" \
-    "$required_historical_inodes" "$duration_milliseconds" "$peak_wal_bytes" \
+    "$required_historical_inodes" "$duration_milliseconds" \
+    "$full_copy_duration_milliseconds" "$wal_bytes_generated" \
+    "$pg_wal_device" "$pg_wal_inode" \
+    "$v13_resource_evidence" "$cleanup_completed_at_milliseconds" \
+    "$resource_window_started_at_milliseconds" \
+    "$resource_window_finished_at_milliseconds" \
     "$(env_value "$source_env" WEATHER_SERVER_IMAGE)" \
     "$(env_value "$source_env" WEATHER_WEB_IMAGE)" \
     "$(env_value "$target_env" WEATHER_SERVER_IMAGE)" \
@@ -6737,30 +6995,66 @@ const [samplesPath, samplesOutput, output, sourceEnvSha256, targetEnvSha256, sys
   candidateAppDataSha256, candidateScanRowCount, candidateScanHeapBytes,
   largestSourceIndexBytes, maxWalBytes, sourceDatabaseFileCount, freeBytesBefore,
   freeInodesBefore, requiredFreeBytes, requiredFreeInodes, durationMilliseconds,
-  peakWalBytes, sourceServerImage, sourceWebImage, targetServerImage,
-  targetWebImage] = process.argv.slice(2);
+  fullCopyDurationMilliseconds, walBytesGenerated, postgresWalDirectoryDevice,
+  postgresWalDirectoryInode, resourceEvidencePath, cleanupCompletedAtMilliseconds,
+  resourceWindowStartedAtMilliseconds, resourceWindowFinishedAtMilliseconds,
+  sourceServerImage, sourceWebImage, targetServerImage, targetWebImage] =
+  process.argv.slice(2);
 const lines = readFileSync(samplesPath, "utf8").trimEnd().split("\n");
 if (lines.length < 2 || lines.length > 4_096) throw new Error("historical sample count is invalid");
 const samples = lines.map((line) => line.split(" ").map(Number));
-if (samples.some((sample) => sample.length !== 5 || sample.some((value) =>
+if (samples.some((sample) => sample.length !== 6 || sample.some((value) =>
   !Number.isSafeInteger(value) || value < 0))) throw new Error("historical sample is invalid");
 for (let index = 0; index < samples.length; index += 1) {
   if (samples[index][0] !== index ||
-    (index > 0 && samples[index][1] < samples[index - 1][1])) {
+    (index > 0 && (samples[index][1] < samples[index - 1][1] ||
+      samples[index][1] - samples[index - 1][1] > 60_000))) {
     throw new Error("historical sample sequence is incomplete");
   }
 }
 const retainedSamples = samples.map(([sequence, capturedAtMilliseconds, freeBytes,
-  freeInodes, tempBytes]) => ({ capturedAtMilliseconds, freeBytes, freeInodes,
-  sequence, tempBytes }));
+  freeInodes, tempBytes, walAllocatedBytes]) => ({ capturedAtMilliseconds,
+  freeBytes, freeInodes, sequence, tempBytes, walAllocatedBytes }));
 const minimumFreeBytesObserved = Math.min(...samples.map((sample) => sample[2]));
 const minimumFreeInodesObserved = Math.min(...samples.map((sample) => sample[3]));
 const peakTempBytes = Math.max(...samples.map((sample) => sample[4]));
+const peakWalAllocatedBytes = Math.max(...samples.map((sample) => sample[5]));
 const peakGrowthBytes = Number(freeBytesBefore) - minimumFreeBytesObserved;
 const peakGrowthInodes = Number(freeInodesBefore) - minimumFreeInodesObserved;
+const resourceEvidenceBytes = readFileSync(resourceEvidencePath);
+const resourceEvidenceJson = resourceEvidenceBytes.toString("utf8");
+const resourceEvidence = JSON.parse(resourceEvidenceJson);
+const resourceCapturedAt = Date.parse(resourceEvidence.capturedAt);
+const cleanupCompletedAt = Number(cleanupCompletedAtMilliseconds);
+const resourceWindowStartedAt = Number(resourceWindowStartedAtMilliseconds);
+const resourceWindowFinishedAt = Number(resourceWindowFinishedAtMilliseconds);
+const sealedAt = new Date();
 if (peakGrowthBytes < 0 || peakGrowthInodes < 0 ||
   minimumFreeBytesObserved < 2_034_155_520 || minimumFreeInodesObserved < 32_768 ||
-  peakTempBytes > 268_435_456 || Number(peakWalBytes) > 2 * Number(maxWalBytes)) {
+  peakTempBytes > 268_435_456 || peakWalAllocatedBytes > 2 * Number(maxWalBytes) ||
+  !Number.isSafeInteger(Number(walBytesGenerated)) || Number(walBytesGenerated) < 0 ||
+  !Number.isSafeInteger(Number(fullCopyDurationMilliseconds)) ||
+  Number(fullCopyDurationMilliseconds) < 1 ||
+  Number(fullCopyDurationMilliseconds) > 10_800_000 ||
+  !Number.isSafeInteger(Number(postgresWalDirectoryDevice)) ||
+  Number(postgresWalDirectoryDevice) < 1 ||
+  !Number.isSafeInteger(Number(postgresWalDirectoryInode)) ||
+  Number(postgresWalDirectoryInode) < 1 ||
+  resourceEvidenceBytes.length < 2 || resourceEvidenceBytes.length > 65_536 ||
+  !resourceEvidenceBytes.equals(Buffer.from(`${JSON.stringify(resourceEvidence)}\n`)) ||
+  resourceEvidence.sampleSeconds !== 901 || !Number.isFinite(resourceCapturedAt) ||
+  !Number.isSafeInteger(cleanupCompletedAt) || !Number.isSafeInteger(resourceWindowStartedAt) ||
+  !Number.isSafeInteger(resourceWindowFinishedAt) ||
+  resourceWindowStartedAt < cleanupCompletedAt ||
+  resourceWindowFinishedAt - resourceWindowStartedAt < 900_000 ||
+  resourceWindowFinishedAt - resourceWindowStartedAt > 930_000 ||
+  resourceCapturedAt < cleanupCompletedAt + 900_000 ||
+  resourceCapturedAt < resourceWindowStartedAt + 900_000 ||
+  resourceCapturedAt > resourceWindowFinishedAt + 30_000 ||
+  resourceCapturedAt > sealedAt.getTime() ||
+  resourceWindowFinishedAt > sealedAt.getTime() ||
+  retainedSamples.at(-1).capturedAtMilliseconds < cleanupCompletedAt ||
+  retainedSamples.at(-1).capturedAtMilliseconds > resourceWindowStartedAt) {
   throw new Error("historical rehearsal exceeded its measured envelope");
 }
 const canonical = (value) => Array.isArray(value)
@@ -6769,7 +7063,7 @@ const canonical = (value) => Array.isArray(value)
     ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
     : JSON.stringify(value);
 const samplesBody = {
-  contractVersion: "historical-v14-capacity-samples/v1",
+  contractVersion: "historical-v14-capacity-samples/v2",
   samples: retainedSamples,
 };
 const samplesReceipt = { ...samplesBody,
@@ -6785,12 +7079,14 @@ const body = {
   capacitySampleCount: retainedSamples.length,
   capacitySamplesReceiptSha256: samplesReceipt.receiptSha256,
   capacitySamplesSha256: createHash("sha256").update(samplesBytes).digest("hex"),
-  capturedAt: new Date().toISOString(),
+  capturedAt: sealedAt.toISOString(),
   cleanupConfirmed: true,
-  contractVersion: "historical-v14-18-21-rehearsal/v1",
+  cleanupCompletedAtMilliseconds: cleanupCompletedAt,
+  contractVersion: "historical-v14-18-21-rehearsal/v2",
   databaseBytes: Number(databaseBytes),
   databaseOid: Number(databaseOid),
   durationMilliseconds: Number(durationMilliseconds),
+  fullCopyDurationMilliseconds: Number(fullCopyDurationMilliseconds),
   freeBytesBefore: Number(freeBytesBefore),
   freeInodesBefore: Number(freeInodesBefore),
   largestSourceIndexBytes: Number(largestSourceIndexBytes),
@@ -6802,7 +7098,13 @@ const body = {
   peakGrowthBytes,
   peakGrowthInodes,
   peakTempBytes,
-  peakWalBytes: Number(peakWalBytes),
+  peakWalAllocatedBytes,
+  postCleanupResourceEvidence: resourceEvidenceJson,
+  postCleanupResourceEvidenceSha256: createHash("sha256").update(resourceEvidenceBytes).digest("hex"),
+  postCleanupResourceWindowFinishedAtMilliseconds: resourceWindowFinishedAt,
+  postCleanupResourceWindowStartedAtMilliseconds: resourceWindowStartedAt,
+  postgresWalDirectoryDevice: Number(postgresWalDirectoryDevice),
+  postgresWalDirectoryInode: Number(postgresWalDirectoryInode),
   requiredFreeBytes: Number(requiredFreeBytes),
   requiredFreeInodes: Number(requiredFreeInodes),
   sourceDatabaseFileCount: Number(sourceDatabaseFileCount),
@@ -6818,6 +7120,7 @@ const body = {
   targetRelease: "2026.10.09-3",
   targetServerImage,
   targetWebImage,
+  walBytesGenerated: Number(walBytesGenerated),
   weatherRecordBytes: Number(weatherRecordBytes),
   weatherRecordCount: Number(weatherRecordCount),
 };
@@ -6853,6 +7156,7 @@ require_historical_v14_rehearsal_receipt() {
   local source_history system_identifier database_oid database_bytes weather_rows weather_bytes
   local live_scan_rows live_scan_heap_bytes largest_index_bytes max_wal_bytes
   local source_database_file_count postgres_dir free_bytes free_inodes
+  local pg_wal_dir pg_wal_device pg_wal_inode pg_wal_allocated_bytes
   database_name=$(env_value "$source_env" WEATHER_DATABASE_NAME)
   require_canonical_descendant "$receipt_path" "$state_dir" \
     "historical v14 rehearsal receipt"
@@ -6887,11 +7191,18 @@ require_historical_v14_rehearsal_receipt() {
   read -r free_bytes _ free_inodes < <(
     stat --file-system --format='%a %S %d' "$postgres_dir" |
       awk '{ printf "%.0f %s %s\n", $1 * $2, $2, $3 }')
+  pg_wal_dir="$postgres_dir/pg_wal"
+  [[ -d "$pg_wal_dir" && ! -L "$pg_wal_dir" ]] ||
+    die "historical v14 pg_wal root is invalid"
+  read -r pg_wal_device pg_wal_inode < <(stat -c '%d %i' "$pg_wal_dir")
+  pg_wal_allocated_bytes=$(measure_historical_pg_wal_allocated_bytes \
+    "$pg_wal_dir" "$pg_wal_device" "$pg_wal_inode")
   node --input-type=module - "$receipt_path" "$samples_path" \
     "$source_env_sha256" "$target_env_sha256" "$system_identifier" "$database_oid" \
     "$database_bytes" "$weather_rows" "$weather_bytes" "$live_scan_rows" \
     "$live_scan_heap_bytes" "$largest_index_bytes" "$max_wal_bytes" \
     "$source_database_file_count" "$free_bytes" "$free_inodes" \
+    "$pg_wal_device" "$pg_wal_inode" "$pg_wal_allocated_bytes" \
     "$(env_value "$source_env" WEATHER_SERVER_IMAGE)" \
     "$(env_value "$source_env" WEATHER_WEB_IMAGE)" \
     "$(env_value "$target_env" WEATHER_SERVER_IMAGE)" \
@@ -6902,6 +7213,7 @@ import { readFileSync } from "node:fs";
 const [path, samplesPath, sourceEnvSha256, targetEnvSha256, systemIdentifier, databaseOid,
   databaseBytes, weatherRows, weatherBytes, liveScanRows, liveScanHeapBytes,
   largestSourceIndexBytes, maxWalBytes, sourceDatabaseFileCount, freeBytes, freeInodes,
+  postgresWalDirectoryDevice, postgresWalDirectoryInode, liveWalAllocatedBytes,
   sourceServerImage, sourceWebImage,
   targetServerImage, targetWebImage, sourceHistory] = process.argv.slice(2);
 const receipt = JSON.parse(readFileSync(path, "utf8"));
@@ -6910,17 +7222,24 @@ const retained = JSON.parse(samplesBytes);
 const keys = ["appDataEqual", "architecture", "candidateAppDataSha256",
   "candidateScanHeapBytes", "candidateScanRowCount", "capacitySampleCount",
   "capacitySamplesReceiptSha256", "capacitySamplesSha256", "capturedAt", "cleanupConfirmed",
-  "contractVersion", "databaseBytes", "databaseOid", "durationMilliseconds",
+  "cleanupCompletedAtMilliseconds", "contractVersion", "databaseBytes", "databaseOid",
+  "durationMilliseconds",
+  "fullCopyDurationMilliseconds",
   "freeBytesBefore", "freeInodesBefore", "largestSourceIndexBytes",
   "lockTimeoutMilliseconds", "maxWalBytes", "memoryLimitBytes",
   "minimumFreeBytesObserved", "minimumFreeInodesObserved", "peakGrowthBytes",
-  "peakGrowthInodes", "peakTempBytes", "peakWalBytes", "requiredFreeBytes",
+  "peakGrowthInodes", "peakTempBytes", "peakWalAllocatedBytes",
+  "postCleanupResourceEvidence", "postCleanupResourceEvidenceSha256",
+  "postCleanupResourceWindowFinishedAtMilliseconds",
+  "postCleanupResourceWindowStartedAtMilliseconds",
+  "postgresWalDirectoryDevice", "postgresWalDirectoryInode", "requiredFreeBytes",
   "requiredFreeInodes",
   "receiptSha256", "sourceEnvSha256", "sourceLedgerSha256", "sourceRelease",
   "sourceDatabaseFileCount", "sourceServerImage", "sourceWebImage",
   "statementTimeoutMilliseconds",
   "systemIdentifier", "targetEnvSha256", "targetLedgerSha256", "targetRelease",
-  "targetServerImage", "targetWebImage", "weatherRecordBytes", "weatherRecordCount"];
+  "targetServerImage", "targetWebImage", "walBytesGenerated", "weatherRecordBytes",
+  "weatherRecordCount"];
 const exactKeys = Object.keys(receipt).sort().join("\n") === keys.sort().join("\n");
 const canonical = (value) => Array.isArray(value)
   ? `[${value.map(canonical).join(",")}]`
@@ -6931,8 +7250,11 @@ const body = { ...receipt };
 delete body.receiptSha256;
 const digest = createHash("sha256").update(canonical(body)).digest("hex");
 const capturedAt = Date.parse(receipt.capturedAt);
-const age = Date.now() - capturedAt;
 const integer = (value) => Number.isSafeInteger(value) && value >= 0;
+const exactObjectKeys = (value, expected) => value !== null && typeof value === "object" &&
+  !Array.isArray(value) &&
+  JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+const finite = (value) => Number.isFinite(value) && value >= 0;
 const receiptRequiredFreeBytes = 2_030_043_136 + 4_112_384 + receipt.databaseBytes +
   receipt.largestSourceIndexBytes + 2 * receipt.maxWalBytes + 268_435_456;
 const receiptRequiredFreeInodes = 32_768 + receipt.sourceDatabaseFileCount + 4_096;
@@ -6943,7 +7265,7 @@ const retainedBody = { ...retained };
 delete retainedBody.receiptSha256;
 const retainedDigest = createHash("sha256").update(canonical(retainedBody)).digest("hex");
 const retainedSamples = retained.samples;
-let retainedSeriesValid = retained.contractVersion === "historical-v14-capacity-samples/v1" &&
+let retainedSeriesValid = retained.contractVersion === "historical-v14-capacity-samples/v2" &&
   Object.keys(retained).sort().join("\n") === ["contractVersion", "receiptSha256", "samples"].sort().join("\n") &&
   retained.receiptSha256 === retainedDigest && Array.isArray(retainedSamples) &&
   retainedSamples.length >= 2 && retainedSamples.length <= 4_096;
@@ -6952,10 +7274,15 @@ if (retainedSeriesValid) {
   for (let index = 0; index < retainedSamples.length; index += 1) {
     const sample = retainedSamples[index];
     if (Object.keys(sample).sort().join("\n") !==
-      ["capturedAtMilliseconds", "freeBytes", "freeInodes", "sequence", "tempBytes"].sort().join("\n") ||
+      ["capturedAtMilliseconds", "freeBytes", "freeInodes", "sequence", "tempBytes",
+        "walAllocatedBytes"].sort().join("\n") ||
       sample.sequence !== index || !integer(sample.capturedAtMilliseconds) ||
       !integer(sample.freeBytes) || !integer(sample.freeInodes) || !integer(sample.tempBytes) ||
-      (index > 0 && sample.capturedAtMilliseconds < retainedSamples[index - 1].capturedAtMilliseconds)) {
+      !integer(sample.walAllocatedBytes) ||
+      (index > 0 && (sample.capturedAtMilliseconds <
+        retainedSamples[index - 1].capturedAtMilliseconds ||
+        sample.capturedAtMilliseconds -
+        retainedSamples[index - 1].capturedAtMilliseconds > 60_000))) {
       retainedSeriesValid = false;
       break;
     }
@@ -6967,12 +7294,107 @@ const retainedMinimumInodes = retainedSeriesValid
   ? Math.min(...retainedSamples.map((sample) => sample.freeInodes)) : -1;
 const retainedPeakTemp = retainedSeriesValid
   ? Math.max(...retainedSamples.map((sample) => sample.tempBytes)) : -1;
+const retainedPeakWalAllocated = retainedSeriesValid
+  ? Math.max(...retainedSamples.map((sample) => sample.walAllocatedBytes)) : -1;
+const retainedSampleDuration = retainedSeriesValid
+  ? retainedSamples.at(-1).capturedAtMilliseconds -
+    retainedSamples[0].capturedAtMilliseconds : -1;
+let resourceEvidence;
+let resourceEvidenceValid = false;
+
+// validate the sealed resource proof without regrading its historical age
+try {
+  const rawResourceEvidence = receipt.postCleanupResourceEvidence;
+  resourceEvidence = JSON.parse(rawResourceEvidence);
+  const resourceBytes = Buffer.from(rawResourceEvidence);
+  const resourceCapturedAt = Date.parse(resourceEvidence.capturedAt);
+  const expectedVarLibMinimum = Math.max(
+    10 * 1_024 * 1_024 * 1_024,
+    3 * resourceEvidence.varLib?.databaseBytes + 5 * 1_024 * 1_024 * 1_024,
+  );
+  const expectedLoadMaximum = Number((resourceEvidence.cpu?.actual * 0.5).toFixed(3));
+  const failedBuckets = [];
+  if (resourceEvidence.varLib?.freeBytes < resourceEvidence.varLib?.minimumFreeBytes) {
+    failedBuckets.push("varLib.storage");
+  }
+  if (resourceEvidence.docker?.freeBytes < resourceEvidence.docker?.minimumFreeBytes) {
+    failedBuckets.push("docker.storage");
+  }
+  const fullyPassing = resourceEvidence.pass === true && failedBuckets.length === 0;
+  const reviewedStorageFailure = resourceEvidence.pass === false &&
+    JSON.stringify(failedBuckets) === JSON.stringify(["varLib.storage"]);
+  resourceEvidenceValid = typeof rawResourceEvidence === "string" &&
+    resourceBytes.length >= 2 && resourceBytes.length <= 65_536 &&
+    rawResourceEvidence === `${JSON.stringify(resourceEvidence)}\n` &&
+    receipt.postCleanupResourceEvidenceSha256 ===
+      createHash("sha256").update(resourceBytes).digest("hex") &&
+    exactObjectKeys(resourceEvidence, ["architecture", "capturedAt", "cpu", "docker",
+      "load15", "memoryAvailableBytes", "pass", "sampleSeconds", "swapBytesPerMinute",
+      "varLib"]) &&
+    exactObjectKeys(resourceEvidence.architecture, ["docker", "expected", "host"]) &&
+    exactObjectKeys(resourceEvidence.cpu, ["actual", "minimum"]) &&
+    exactObjectKeys(resourceEvidence.load15, ["actual", "maximum"]) &&
+    exactObjectKeys(resourceEvidence.memoryAvailableBytes, ["minimumObserved", "minimumRequired"]) &&
+    exactObjectKeys(resourceEvidence.swapBytesPerMinute, ["actual", "maximum"]) &&
+    exactObjectKeys(resourceEvidence.varLib,
+      ["databaseBytes", "freeBytes", "inodeFreePercent", "minimumFreeBytes"]) &&
+    exactObjectKeys(resourceEvidence.docker,
+      ["freeBytes", "inodeFreePercent", "minimumFreeBytes", "root"]) &&
+    resourceEvidence.sampleSeconds === 901 && Number.isFinite(resourceCapturedAt) &&
+    resourceEvidence.architecture.host === "aarch64" &&
+    resourceEvidence.architecture.docker === "aarch64" &&
+    resourceEvidence.architecture.expected === "aarch64" &&
+    resourceEvidence.cpu.minimum === 4 && integer(resourceEvidence.cpu.actual) &&
+    resourceEvidence.cpu.actual >= resourceEvidence.cpu.minimum &&
+    finite(resourceEvidence.load15.actual) && finite(resourceEvidence.load15.maximum) &&
+    resourceEvidence.load15.maximum === expectedLoadMaximum &&
+    resourceEvidence.load15.actual <= resourceEvidence.load15.maximum &&
+    resourceEvidence.memoryAvailableBytes.minimumRequired === 1_792 * 1_024 * 1_024 &&
+    integer(resourceEvidence.memoryAvailableBytes.minimumObserved) &&
+    resourceEvidence.memoryAvailableBytes.minimumObserved >=
+      resourceEvidence.memoryAvailableBytes.minimumRequired &&
+    resourceEvidence.swapBytesPerMinute.maximum === 1_024 * 1_024 &&
+    integer(resourceEvidence.swapBytesPerMinute.actual) &&
+    resourceEvidence.swapBytesPerMinute.actual <= resourceEvidence.swapBytesPerMinute.maximum &&
+    integer(resourceEvidence.varLib.databaseBytes) && integer(resourceEvidence.varLib.freeBytes) &&
+    integer(resourceEvidence.varLib.minimumFreeBytes) &&
+    resourceEvidence.varLib.minimumFreeBytes === expectedVarLibMinimum &&
+    integer(resourceEvidence.varLib.inodeFreePercent) &&
+    resourceEvidence.varLib.inodeFreePercent >= 10 &&
+    resourceEvidence.varLib.inodeFreePercent <= 100 &&
+    resourceEvidence.docker.root === "/var/lib/docker" &&
+    integer(resourceEvidence.docker.freeBytes) &&
+    resourceEvidence.docker.minimumFreeBytes === 4 * 1_024 * 1_024 * 1_024 &&
+    integer(resourceEvidence.docker.inodeFreePercent) &&
+    resourceEvidence.docker.inodeFreePercent >= 10 &&
+    resourceEvidence.docker.inodeFreePercent <= 100 &&
+    (fullyPassing || reviewedStorageFailure) &&
+    integer(receipt.cleanupCompletedAtMilliseconds) &&
+    integer(receipt.postCleanupResourceWindowStartedAtMilliseconds) &&
+    integer(receipt.postCleanupResourceWindowFinishedAtMilliseconds) &&
+    receipt.postCleanupResourceWindowStartedAtMilliseconds >=
+      receipt.cleanupCompletedAtMilliseconds &&
+    receipt.postCleanupResourceWindowFinishedAtMilliseconds -
+      receipt.postCleanupResourceWindowStartedAtMilliseconds >= 900_000 &&
+    receipt.postCleanupResourceWindowFinishedAtMilliseconds -
+      receipt.postCleanupResourceWindowStartedAtMilliseconds <= 930_000 &&
+    resourceCapturedAt >= receipt.cleanupCompletedAtMilliseconds + 900_000 &&
+    resourceCapturedAt >= receipt.postCleanupResourceWindowStartedAtMilliseconds + 900_000 &&
+    resourceCapturedAt <= receipt.postCleanupResourceWindowFinishedAtMilliseconds + 30_000 &&
+    resourceCapturedAt <= capturedAt &&
+    receipt.postCleanupResourceWindowFinishedAtMilliseconds <= capturedAt &&
+    retainedSamples.at(-1)?.capturedAtMilliseconds >= receipt.cleanupCompletedAtMilliseconds &&
+    retainedSamples.at(-1)?.capturedAtMilliseconds <=
+      receipt.postCleanupResourceWindowStartedAtMilliseconds;
+} catch {
+  resourceEvidenceValid = false;
+}
 const liveRows = BigInt(liveScanRows);
 const liveHeapBytes = BigInt(liveScanHeapBytes);
 const candidateRows = BigInt(receipt.candidateScanRowCount ?? 0);
 const candidateHeapBytes = BigInt(receipt.candidateScanHeapBytes ?? 0);
 const duration = BigInt(receipt.durationMilliseconds ?? 0);
-if (!exactKeys || receipt.contractVersion !== "historical-v14-18-21-rehearsal/v1" ||
+if (!exactKeys || receipt.contractVersion !== "historical-v14-18-21-rehearsal/v2" ||
   receipt.sourceRelease !== "2026.10.09-2" || receipt.targetRelease !== "2026.10.09-3" ||
   receipt.sourceEnvSha256 !== sourceEnvSha256 || receipt.targetEnvSha256 !== targetEnvSha256 ||
   receipt.systemIdentifier !== systemIdentifier || receipt.databaseOid !== Number(databaseOid) ||
@@ -6985,11 +7407,13 @@ if (!exactKeys || receipt.contractVersion !== "historical-v14-18-21-rehearsal/v1
   !integer(receipt.candidateScanRowCount) || receipt.candidateScanRowCount < 1 ||
   !integer(receipt.candidateScanHeapBytes) || receipt.candidateScanHeapBytes < 1 ||
   !retainedSeriesValid || receipt.capacitySampleCount !== retainedSamples.length ||
+  !resourceEvidenceValid ||
   receipt.capacitySamplesReceiptSha256 !== retained.receiptSha256 ||
   receipt.capacitySamplesSha256 !== createHash("sha256").update(samplesBytes).digest("hex") ||
   receipt.minimumFreeBytesObserved !== retainedMinimumBytes ||
   receipt.minimumFreeInodesObserved !== retainedMinimumInodes ||
   receipt.peakTempBytes !== retainedPeakTemp ||
+  receipt.peakWalAllocatedBytes !== retainedPeakWalAllocated ||
   receipt.freeBytesBefore !== retainedSamples[0]?.freeBytes ||
   receipt.freeInodesBefore !== retainedSamples[0]?.freeInodes ||
   receipt.peakGrowthBytes !== receipt.freeBytesBefore - retainedMinimumBytes ||
@@ -7003,11 +7427,23 @@ if (!exactKeys || receipt.contractVersion !== "historical-v14-18-21-rehearsal/v1
   receipt.statementTimeoutMilliseconds !== 300000 || receipt.lockTimeoutMilliseconds !== 10000 ||
   !integer(receipt.durationMilliseconds) || receipt.durationMilliseconds < 1 ||
   receipt.durationMilliseconds > 150000 || candidateRows < 1n || candidateHeapBytes < 1n ||
+  !integer(receipt.fullCopyDurationMilliseconds) ||
+  receipt.fullCopyDurationMilliseconds < 1 ||
+  receipt.fullCopyDurationMilliseconds > 10_800_000 ||
+  Math.abs(receipt.fullCopyDurationMilliseconds - retainedSampleDuration) > 60_000 ||
   duration * liveRows > 150000n * candidateRows ||
   duration * liveHeapBytes > 150000n * candidateHeapBytes ||
   !integer(receipt.peakGrowthBytes) || !integer(receipt.peakGrowthInodes) ||
   !integer(receipt.peakTempBytes) || receipt.peakTempBytes > 268_435_456 ||
-  !integer(receipt.peakWalBytes) || receipt.peakWalBytes > 2 * receipt.maxWalBytes ||
+  !integer(receipt.peakWalAllocatedBytes) ||
+  receipt.peakWalAllocatedBytes > 2 * receipt.maxWalBytes ||
+  !integer(receipt.walBytesGenerated) ||
+  !integer(receipt.postgresWalDirectoryDevice) ||
+  receipt.postgresWalDirectoryDevice !== Number(postgresWalDirectoryDevice) ||
+  !integer(receipt.postgresWalDirectoryInode) ||
+  receipt.postgresWalDirectoryInode !== Number(postgresWalDirectoryInode) ||
+  !integer(Number(liveWalAllocatedBytes)) ||
+  Number(liveWalAllocatedBytes) > 2 * receipt.maxWalBytes ||
   !integer(receipt.freeBytesBefore) || receipt.freeBytesBefore < receiptRequiredFreeBytes ||
   !integer(receipt.freeInodesBefore) || receipt.freeInodesBefore < receiptRequiredFreeInodes ||
   Number(freeBytes) < liveRequiredFreeBytes || Number(freeInodes) < liveRequiredFreeInodes ||
@@ -7015,7 +7451,7 @@ if (!exactKeys || receipt.contractVersion !== "historical-v14-18-21-rehearsal/v1
   receipt.minimumFreeBytesObserved < 2_034_155_520 ||
   receipt.minimumFreeInodesObserved < 32_768 ||
   receipt.appDataEqual !== true || receipt.cleanupConfirmed !== true ||
-  !Number.isFinite(capturedAt) || age < -30_000 || age > 3_600_000 ||
+  !Number.isFinite(capturedAt) ||
   receipt.receiptSha256 !== digest) {
   throw new Error("historical v14 rehearsal receipt differs from the live handoff");
 }

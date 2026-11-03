@@ -575,8 +575,10 @@ test("historical rehearsal admission uses the measured scan envelope instead of 
       : JSON.stringify(value);
   try {
     await mkdir(join(postgres, "base/16384"), { recursive: true });
+    await mkdir(join(postgres, "pg_wal"));
     await mkdir(state);
     await writeFile(join(postgres, "base/16384/1"), "fixture");
+    await writeFile(join(postgres, "pg_wal/000000010000000000000001"), "fixture");
     const sourceServer = `ghcr.io/example/server@sha256:${"1".repeat(64)}`;
     const sourceWeb = `ghcr.io/example/web@sha256:${"2".repeat(64)}`;
     const targetServer = `ghcr.io/example/server@sha256:${"3".repeat(64)}`;
@@ -595,12 +597,49 @@ test("historical rehearsal admission uses the measured scan envelope instead of 
       `WEATHER_WEB_IMAGE=${targetWeb}`,
       "",
     ].join("\n"));
+    const walDirectory = await stat(join(postgres, "pg_wal"));
+    // replay historical proof without reapplying a wall-clock expiry
+    const receiptTime = Date.now() - 7_200_000;
+    const cleanupCompletedAtMilliseconds = receiptTime - 902_000;
+    const retainedEnd = cleanupCompletedAtMilliseconds + 1_000;
+    const resourceWindowStartedAtMilliseconds = cleanupCompletedAtMilliseconds + 2_000;
+    const resourceWindowFinishedAtMilliseconds = resourceWindowStartedAtMilliseconds + 900_000;
+    const resourceEvidence = {
+      capturedAt: new Date(resourceWindowFinishedAtMilliseconds).toISOString(),
+      sampleSeconds: 901,
+      pass: true,
+      architecture: { host: "aarch64", docker: "aarch64", expected: "aarch64" },
+      cpu: { actual: 4, minimum: 4 },
+      load15: { actual: 1, maximum: 2 },
+      memoryAvailableBytes: {
+        minimumObserved: 2 * 1_024 * 1_024 * 1_024,
+        minimumRequired: 1_792 * 1_024 * 1_024,
+      },
+      swapBytesPerMinute: { actual: 0, maximum: 1_024 * 1_024 },
+      varLib: {
+        databaseBytes: 100_000_000,
+        freeBytes: 12 * 1_024 * 1_024 * 1_024,
+        minimumFreeBytes: 10 * 1_024 * 1_024 * 1_024,
+        inodeFreePercent: 50,
+      },
+      docker: {
+        root: "/var/lib/docker",
+        freeBytes: 5 * 1_024 * 1_024 * 1_024,
+        minimumFreeBytes: 4 * 1_024 * 1_024 * 1_024,
+        inodeFreePercent: 50,
+      },
+    };
+    const resourceEvidenceJson = `${JSON.stringify(resourceEvidence)}\n`;
     const retainedBody = {
-      contractVersion: "historical-v14-capacity-samples/v1",
-      samples: [
-        { capturedAtMilliseconds: Date.now() - 2_000, freeBytes: 5_000_000_000, freeInodes: 100_000, sequence: 0, tempBytes: 0 },
-        { capturedAtMilliseconds: Date.now() - 1_000, freeBytes: 4_900_000_000, freeInodes: 99_000, sequence: 1, tempBytes: 1_000 },
-      ],
+      contractVersion: "historical-v14-capacity-samples/v2",
+      samples: Array.from({ length: 541 }, (_, sequence) => ({
+        capturedAtMilliseconds: retainedEnd - 5_400_000 + sequence * 10_000,
+        freeBytes: sequence === 0 ? 5_000_000_000 : 4_900_000_000,
+        freeInodes: sequence === 0 ? 100_000 : 99_000,
+        sequence,
+        tempBytes: sequence === 540 ? 1_000 : 0,
+        walAllocatedBytes: 100_000,
+      })),
     };
     const retained = { ...retainedBody,
       receiptSha256: createHash("sha256").update(canonical(retainedBody)).digest("hex") };
@@ -614,15 +653,17 @@ test("historical rehearsal admission uses the measured scan envelope instead of 
       candidateAppDataSha256: "a".repeat(64),
       candidateScanHeapBytes: 1_000,
       candidateScanRowCount: 100,
-      capacitySampleCount: 2,
+      capacitySampleCount: retainedBody.samples.length,
       capacitySamplesReceiptSha256: retained.receiptSha256,
       capacitySamplesSha256: createHash("sha256").update(retainedBytes).digest("hex"),
-      capturedAt: new Date().toISOString(),
+      capturedAt: new Date(receiptTime).toISOString(),
       cleanupConfirmed: true,
-      contractVersion: "historical-v14-18-21-rehearsal/v1",
+      cleanupCompletedAtMilliseconds,
+      contractVersion: "historical-v14-18-21-rehearsal/v2",
       databaseBytes: 100_000_000,
       databaseOid: 16_384,
       durationMilliseconds: 100_000,
+      fullCopyDurationMilliseconds: 5_400_000,
       freeBytesBefore: 5_000_000_000,
       freeInodesBefore: 100_000,
       largestSourceIndexBytes: 10_000_000,
@@ -634,7 +675,14 @@ test("historical rehearsal admission uses the measured scan envelope instead of 
       peakGrowthBytes: 100_000_000,
       peakGrowthInodes: 1_000,
       peakTempBytes: 1_000,
-      peakWalBytes: 100_000,
+      peakWalAllocatedBytes: 100_000,
+      postCleanupResourceEvidence: resourceEvidenceJson,
+      postCleanupResourceEvidenceSha256: createHash("sha256")
+        .update(resourceEvidenceJson).digest("hex"),
+      postCleanupResourceWindowFinishedAtMilliseconds: resourceWindowFinishedAtMilliseconds,
+      postCleanupResourceWindowStartedAtMilliseconds: resourceWindowStartedAtMilliseconds,
+      postgresWalDirectoryDevice: walDirectory.dev,
+      postgresWalDirectoryInode: walDirectory.ino,
       requiredFreeBytes,
       requiredFreeInodes: 32_768 + 1 + 4_096,
       sourceDatabaseFileCount: 1,
@@ -650,6 +698,7 @@ test("historical rehearsal admission uses the measured scan envelope instead of 
       targetRelease: "2026.10.09-3",
       targetServerImage: targetServer,
       targetWebImage: targetWeb,
+      walBytesGenerated: 1_000_000_000,
       weatherRecordBytes: 99_000_000,
       weatherRecordCount: 90,
     };
@@ -673,6 +722,304 @@ require_historical_v14_rehearsal_receipt "$3" "$4" "$5" "$6"`,
       assert.notEqual(rejected.status, 0);
       assert.match(rejected.stderr, /differs from the live handoff/u);
     }
+
+    // shape one opening gap while retaining the exact series endpoints
+    const samplesWithOpeningGap = (extraMilliseconds) => {
+      const reductionSamples = Math.ceil(extraMilliseconds / 10_000);
+      const reductionStartsAt = retainedBody.samples.length - 1 - reductionSamples;
+      return retainedBody.samples.map((sample) => {
+        const offset = sample.sequence === 0 ? 0
+          : sample.sequence <= reductionStartsAt ? extraMilliseconds
+            : Math.max(0, extraMilliseconds -
+              (sample.sequence - reductionStartsAt) * 10_000);
+        return { ...sample, capturedAtMilliseconds: sample.capturedAtMilliseconds + offset };
+      });
+    };
+    // write one fully rehashed sample-series variant
+    const writeSamplesVariant = async (samples) => {
+      const samplesBody = { ...retainedBody, samples };
+      const samplesReceipt = {
+        ...samplesBody,
+        receiptSha256: createHash("sha256").update(canonical(samplesBody)).digest("hex"),
+      };
+      const samplesBytes = Buffer.from(canonical(samplesReceipt));
+      await writeFile(samplesPath, samplesBytes, { mode: 0o600 });
+      const candidateBody = {
+        ...body,
+        capacitySamplesReceiptSha256: samplesReceipt.receiptSha256,
+        capacitySamplesSha256: createHash("sha256").update(samplesBytes).digest("hex"),
+      };
+      await writeFile(receiptPath, canonical({
+        ...candidateBody,
+        receiptSha256: createHash("sha256").update(canonical(candidateBody)).digest("hex"),
+      }), { mode: 0o600 });
+    };
+    await writeSamplesVariant(samplesWithOpeningGap(40_000));
+    const fiftySecondGap = run(150, 1_500);
+    assert.equal(fiftySecondGap.status, 0, fiftySecondGap.stderr);
+    await writeSamplesVariant(samplesWithOpeningGap(50_001));
+    assert.notEqual(run(150, 1_500).status, 0);
+    await writeFile(samplesPath, retainedBytes, { mode: 0o600 });
+
+    // write one fully rehashed resource-evidence variant
+    const writeResourceVariant = async (evidence, evidenceSha256) => {
+      const evidenceJson = `${JSON.stringify(evidence)}\n`;
+      const candidateBody = {
+        ...body,
+        postCleanupResourceEvidence: evidenceJson,
+        postCleanupResourceEvidenceSha256: evidenceSha256 ??
+          createHash("sha256").update(evidenceJson).digest("hex"),
+      };
+      await writeFile(receiptPath, canonical({
+        ...candidateBody,
+        receiptSha256: createHash("sha256").update(canonical(candidateBody)).digest("hex"),
+      }), { mode: 0o600 });
+    };
+
+    // reject exact-byte evidence tampering even when thresholds still pass
+    await writeResourceVariant(
+      { ...resourceEvidence, load15: { ...resourceEvidence.load15, actual: 1.5 } },
+      body.postCleanupResourceEvidenceSha256,
+    );
+    assert.notEqual(run(150, 1_500).status, 0);
+
+    // reject a pre-cleanup resource capture with a valid replacement hash
+    await writeResourceVariant({
+      ...resourceEvidence,
+      capturedAt: new Date(cleanupCompletedAtMilliseconds + 899_999).toISOString(),
+    });
+    assert.notEqual(run(150, 1_500).status, 0);
+
+    const invalidResourceEvidence = [
+      { ...resourceEvidence, load15: { ...resourceEvidence.load15, actual: 2.001 } },
+      {
+        ...resourceEvidence,
+        memoryAvailableBytes: {
+          ...resourceEvidence.memoryAvailableBytes,
+          minimumObserved: resourceEvidence.memoryAvailableBytes.minimumRequired - 1,
+        },
+      },
+      {
+        ...resourceEvidence,
+        swapBytesPerMinute: {
+          ...resourceEvidence.swapBytesPerMinute,
+          actual: resourceEvidence.swapBytesPerMinute.maximum + 1,
+        },
+      },
+    ];
+    // reject each rehashed non-storage threshold failure
+    for (const evidence of invalidResourceEvidence) {
+      await writeResourceVariant(evidence);
+      assert.notEqual(run(150, 1_500).status, 0);
+    }
+
+    // reject a rebound WAL directory identity
+    const reboundWalBody = {
+      ...body,
+      postgresWalDirectoryInode: body.postgresWalDirectoryInode + 1,
+    };
+    await writeFile(receiptPath, canonical({
+      ...reboundWalBody,
+      receiptSha256: createHash("sha256").update(canonical(reboundWalBody)).digest("hex"),
+    }), { mode: 0o600 });
+    assert.notEqual(run(150, 1_500).status, 0);
+
+    // reject a fully rehashed truncated sample tail
+    const truncatedSamplesBody = {
+      ...retainedBody,
+      samples: retainedBody.samples.slice(0, -2),
+    };
+    const truncatedSamples = {
+      ...truncatedSamplesBody,
+      receiptSha256: createHash("sha256").update(canonical(truncatedSamplesBody)).digest("hex"),
+    };
+    const truncatedSamplesBytes = Buffer.from(canonical(truncatedSamples));
+    await writeFile(samplesPath, truncatedSamplesBytes, { mode: 0o600 });
+    const truncatedBody = {
+      ...body,
+      capacitySampleCount: truncatedSamplesBody.samples.length,
+      capacitySamplesReceiptSha256: truncatedSamples.receiptSha256,
+      capacitySamplesSha256: createHash("sha256").update(truncatedSamplesBytes).digest("hex"),
+      peakTempBytes: 0,
+    };
+    await writeFile(receiptPath, canonical({
+      ...truncatedBody,
+      receiptSha256: createHash("sha256").update(canonical(truncatedBody)).digest("hex"),
+    }), { mode: 0o600 });
+    assert.notEqual(run(150, 1_500).status, 0);
+
+    // reject physical WAL overrun even when generated WAL is small
+    const oversizedSamplesBody = {
+      ...retainedBody,
+      samples: retainedBody.samples.map((sample) => ({
+        ...sample,
+        walAllocatedBytes: 200_000_001,
+      })),
+    };
+    const oversizedSamples = {
+      ...oversizedSamplesBody,
+      receiptSha256: createHash("sha256").update(canonical(oversizedSamplesBody)).digest("hex"),
+    };
+    const oversizedSamplesBytes = Buffer.from(canonical(oversizedSamples));
+    await writeFile(samplesPath, oversizedSamplesBytes, { mode: 0o600 });
+    const oversizedBody = {
+      ...body,
+      capacitySamplesReceiptSha256: oversizedSamples.receiptSha256,
+      capacitySamplesSha256: createHash("sha256").update(oversizedSamplesBytes).digest("hex"),
+      peakWalAllocatedBytes: 200_000_001,
+      walBytesGenerated: 1,
+    };
+    await writeFile(receiptPath, canonical({
+      ...oversizedBody,
+      receiptSha256: createHash("sha256").update(canonical(oversizedBody)).digest("hex"),
+    }), { mode: 0o600 });
+    const oversized = run(150, 1_500);
+    assert.notEqual(oversized.status, 0);
+    assert.match(oversized.stderr, /differs from the live handoff/u);
+
+    // never reinterpret the previously failed v1 evidence
+    const v1SamplesBody = { ...retainedBody, contractVersion: "historical-v14-capacity-samples/v1" };
+    const v1Samples = { ...v1SamplesBody,
+      receiptSha256: createHash("sha256").update(canonical(v1SamplesBody)).digest("hex") };
+    const v1SamplesBytes = Buffer.from(canonical(v1Samples));
+    await writeFile(samplesPath, v1SamplesBytes, { mode: 0o600 });
+    const v1Body = {
+      ...body,
+      capacitySamplesReceiptSha256: v1Samples.receiptSha256,
+      capacitySamplesSha256: createHash("sha256").update(v1SamplesBytes).digest("hex"),
+      contractVersion: "historical-v14-18-21-rehearsal/v1",
+    };
+    await writeFile(receiptPath, canonical({ ...v1Body,
+      receiptSha256: createHash("sha256").update(canonical(v1Body)).digest("hex"),
+    }), { mode: 0o600 });
+    assert.notEqual(run(150, 1_500).status, 0);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("historical rehearsal refreshes a complete idle resource window after cleanup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-historical-resource-"));
+  const deploy = join(directory, "deploy");
+  const scripts = join(deploy, "scripts");
+  const bin = join(directory, "bin");
+  const evidence = join(directory, "evidence.json");
+  const counter = join(directory, "date-counter");
+  const dateCommand = join(bin, "date");
+  const preflight = join(scripts, "preflight-capacity.sh");
+  const harness = `source "$1"
+deploy_dir=$2
+v13_resource_evidence=$3
+require_normal_release_resource_gate() { [[ -f "$v13_resource_evidence" ]]; }
+collect_fresh_normal_release_resource_evidence`;
+  try {
+    await mkdir(scripts, { recursive: true });
+    await mkdir(bin);
+    await writeFile(dateCommand, `#!/usr/bin/env bash
+# return one persisted two-point trusted clock
+if [[ ! -e "$DATE_COUNTER" ]]; then
+  : >"$DATE_COUNTER"
+  printf '%s\\n' "$DATE_STARTED_MS"
+else
+  printf '%s\\n' "$DATE_FINISHED_MS"
+fi
+`);
+    await chmod(dateCommand, 0o755);
+    await writeFile(preflight, `#!/usr/bin/env bash
+set -euo pipefail
+# write one bounded fixture resource observation
+[[ "$1" == --sample-seconds && "$2" == 901 && "$3" == --json ]]
+printf '{"capturedAt":"%s","sampleSeconds":901}\\n' "$EVIDENCE_CAPTURED_AT" >"$4"
+`);
+    await chmod(preflight, 0o755);
+    const baseEnvironment = {
+      ...process.env,
+      DATE_COUNTER: counter,
+      DATE_FINISHED_MS: "1900000",
+      DATE_STARTED_MS: "1000000",
+      EVIDENCE_CAPTURED_AT: "1970-01-01T00:31:40.000Z",
+      PATH: `${bin}:${process.env.PATH}`,
+    };
+    const accepted = runBash(harness, [deploy, evidence], { env: baseEnvironment });
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    // reject a newly written observation outside the measured window
+    await rm(counter);
+    const stale = runBash(harness, [deploy, evidence], {
+      env: { ...baseEnvironment, EVIDENCE_CAPTURED_AT: "1970-01-01T00:15:00.000Z" },
+    });
+    assert.notEqual(stale.status, 0);
+
+    // reject an early-returning sampler even with a current timestamp
+    await rm(counter);
+    const short = runBash(harness, [deploy, evidence], {
+      env: {
+        ...baseEnvironment,
+        DATE_FINISHED_MS: "1899999",
+        EVIDENCE_CAPTURED_AT: "1970-01-01T00:31:39.999Z",
+      },
+    });
+    assert.notEqual(short.status, 0);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("historical WAL allocation scan retries only file recycle and rejects root drift", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-historical-wal-"));
+  const wal = join(directory, "pg_wal");
+  const counter = join(directory, "find-count");
+  try {
+    await mkdir(wal);
+    await writeFile(join(wal, "000000010000000000000001"), "fixture");
+    const details = await stat(wal);
+    const normal = runBash(
+      'source "$1"; measure_historical_pg_wal_allocated_bytes "$2" "$3" "$4"',
+      [wal, String(details.dev), String(details.ino)],
+    );
+    assert.equal(normal.status, 0, normal.stderr);
+    assert.match(normal.stdout, /^[1-9][0-9]*\n$/u);
+
+    const recycled = runBash(
+      `source "$1"
+FIND_COUNTER=$5
+find() {
+  # inject one ordinary file-recycle race
+  if [[ ! -e "$FIND_COUNTER" ]]; then
+    : >"$FIND_COUNTER"
+    printf "find: '%s/recycled': No such file or directory\\n" "$2" >&2
+    return 1
+  fi
+  printf x >>"$FIND_COUNTER"
+  command find "$@"
+}
+measure_historical_pg_wal_allocated_bytes "$2" "$3" "$4"`,
+      [wal, String(details.dev), String(details.ino), counter],
+    );
+    assert.equal(recycled.status, 0, recycled.stderr);
+    assert.equal(await readFile(counter, "utf8"), "x");
+
+    const refused = runBash(
+      `source "$1"
+find() { printf '%s %s 1 l\\n' "$3" "$4"; }
+measure_historical_pg_wal_allocated_bytes "$2" "$3" "$4"`,
+      [wal, String(details.dev), String(details.ino)],
+    );
+    assert.notEqual(refused.status, 0);
+    assert.equal(refused.stdout, "");
+
+    const replaced = runBash(
+      `source "$1"
+find() {
+  command find "$@"
+  mv "$2" "$2-retired"
+  mkdir "$2"
+}
+measure_historical_pg_wal_allocated_bytes "$2" "$3" "$4"`,
+      [wal, String(details.dev), String(details.ino)],
+    );
+    assert.notEqual(replaced.status, 0);
+    assert.equal(replaced.stdout, "");
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
@@ -1357,42 +1704,42 @@ test("normal activation cleanup removes private evidence after exact-ledger rest
   );
 });
 
-// enforce the installed generation and exact historical predecessor
-test("release operations accept only current v16 and the exact reviewed predecessor", async () => {
+// enforce the installed generation and exact chained predecessors
+test("release operations accept only current v17 and exact chained predecessors", async () => {
   const directory = await mkdtemp(join(tmpdir(), "weather-control-plane-"));
   const release = join(directory, "release.env");
+  const af80 = "af80d5752590bf47f5b893ee69f04215132e80210993f4a8c78d8562d2ea9a52";
+  const e089 = "e089e5c092fb336d0f8130cbf45320ed013a55af3b10957f2fd95a03265a2ed2";
 
   try {
     const digest = runBash('source "$1"; control_plane_digest').stdout.trim();
-    await writeFile(
-      release,
-      [
-        "WEATHER_RELEASE=2026.10.08-1",
-        `WEATHER_CONTROL_PLANE_SHA256=${digest}`,
-        "WEATHER_CONTROL_PLANE_VERSION=16",
+    // run one identity through the real router with only the chain verifier isolated
+    const check = async (candidateRelease, candidateDigest, candidateVersion, handoffOk = false) => {
+      await writeFile(release, [
+        `WEATHER_RELEASE=${candidateRelease}`,
+        `WEATHER_CONTROL_PLANE_SHA256=${candidateDigest}`,
+        `WEATHER_CONTROL_PLANE_VERSION=${candidateVersion}`,
         "",
-      ].join("\n"),
-    );
-    const currentAccepted = runBash(
-      'source "$1"; require_control_plane_compatibility "$2"',
-      [release],
-    );
+      ].join("\n"));
+      return runBash(
+        'source "$1"; require_v17_control_plane_handoff() { [[ "$HANDOFF_OK" == true ]]; }; require_control_plane_compatibility "$2"',
+        [release],
+        { env: { ...process.env, HANDOFF_OK: String(handoffOk) } },
+      );
+    };
+    const currentAccepted = await check("2026.10.08-1", digest, "17");
     assert.equal(currentAccepted.status, 0, currentAccepted.stderr);
 
-    await writeFile(
-      release,
-      [
-        "WEATHER_RELEASE=2026.10.09-1",
-        "WEATHER_CONTROL_PLANE_SHA256=603eb8f488ba78be3d7ecf76b0d587346d1c36432255d390d86d2b768c8fecba",
-        "WEATHER_CONTROL_PLANE_VERSION=13",
-        "",
-      ].join("\n"),
-    );
-    const predecessorAccepted = runBash(
-      'source "$1"; require_control_plane_compatibility "$2"',
-      [release],
+    const predecessorAccepted = await check(
+      "2026.10.09-1",
+      "603eb8f488ba78be3d7ecf76b0d587346d1c36432255d390d86d2b768c8fecba",
+      "13",
     );
     assert.equal(predecessorAccepted.status, 0, predecessorAccepted.stderr);
+    assert.equal((await check("2026.10.09-2", af80, "15", true)).status, 0);
+    assert.equal((await check("2026.10.09-3", e089, "16", true)).status, 0);
+    assert.notEqual((await check("2026.10.09-2", af80, "15", false)).status, 0);
+    assert.notEqual((await check("2026.10.09-3", e089, "16", false)).status, 0);
 
     const rejectedIdentities = [
       [
@@ -1411,25 +1758,15 @@ test("release operations accept only current v16 and the exact reviewed predeces
         "11",
       ],
       ["2026.10.08-1", digest, "12"],
-      ["2026.10.08-1", digest, "15"],
+      ["2026.10.08-1", digest, "16"],
       ["2026.10.08-1", "a".repeat(64), "13"],
+      ["2026.10.09-3", af80, "15"],
+      ["2026.10.09-2", e089, "16"],
     ];
 
     // reject every relabelled or obsolete identity
     for (const [candidateRelease, candidateDigest, candidateVersion] of rejectedIdentities) {
-      await writeFile(
-        release,
-        [
-          `WEATHER_RELEASE=${candidateRelease}`,
-          `WEATHER_CONTROL_PLANE_SHA256=${candidateDigest}`,
-          `WEATHER_CONTROL_PLANE_VERSION=${candidateVersion}`,
-          "",
-        ].join("\n"),
-      );
-      const rejected = runBash(
-        'source "$1"; require_control_plane_compatibility "$2"',
-        [release],
-      );
+      const rejected = await check(candidateRelease, candidateDigest, candidateVersion, true);
       assert.notEqual(rejected.status, 0);
       assert.match(
         rejected.stderr,
@@ -1437,12 +1774,126 @@ test("release operations accept only current v16 and the exact reviewed predeces
       );
     }
 
-    await writeFile(release, "WEATHER_CONTROL_PLANE_VERSION=16\n");
+    await writeFile(release, "WEATHER_CONTROL_PLANE_VERSION=17\n");
     const incomplete = runBash(
       'source "$1"; require_control_plane_compatibility "$2"',
       [release],
     );
     assert.notEqual(incomplete.status, 0);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("v17 handoff verifier closes the staged source and predecessor chain", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-v17-handoff-"));
+  const state = join(directory, "state");
+  const releases = join(directory, "releases");
+  const staged = join(releases, "2026.10.09-3.env");
+  const receiptPath = join(state, "control-plane-handoff-v17-v1.json");
+  const stagedControl = "e".repeat(64);
+  const predecessorFile = "1".repeat(64);
+  const predecessorReceipt = "2".repeat(64);
+  const predecessorManifest = "3".repeat(64);
+  const bridgeState = "4".repeat(64);
+  const successor = "5".repeat(64);
+  const manifestBody = "candidate manifest\n";
+  // encode one deterministic canonical receipt
+  const canonical = (value) => Array.isArray(value)
+    ? `[${value.map(canonical).join(",")}]`
+    : value !== null && typeof value === "object"
+      ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+      : JSON.stringify(value);
+  const harness = `
+source "$1"
+state_dir=$2
+releases_dir=$3
+v17_control_plane_handoff=$4
+v17_handoff_source_control_sha256=$5
+v17_source_environment_sha256=$6
+v16_handoff_file_sha256=$7
+v16_handoff_receipt_sha256=$8
+v16_successor_manifest_sha256=$9
+v16_bridge_state_sha256=\${10}
+EXPECTED_LEGACY="$releases_dir/2026.10.09-2.env"
+FIXTURE_ROOT=\${11}
+stat() {
+  # model production ownership while preserving real modes
+  if [[ "$1" == -c && "$3" == "$FIXTURE_ROOT/"* ]]; then
+    case "$2" in
+      %u:%g:%a:%h) printf '0:0:%s:1\\n' "$(command stat -c %a "$3")" ;;
+      *) command stat "$@" ;;
+    esac
+  else
+    command stat "$@"
+  fi
+}
+# isolate only the already-tested immutable predecessor verifier
+require_v16_control_plane_handoff() { [[ "$1" == "$EXPECTED_LEGACY" ]]; }
+control_plane_digest() { printf '%s\\n' "$SUCCESSOR"; }
+control_plane_identity_manifest_v17() { printf '%s' "$MANIFEST_BODY"; }
+require_v17_control_plane_handoff "$releases_dir/2026.10.09-3.env"
+`;
+
+  try {
+    await mkdir(state);
+    await mkdir(releases);
+    const stagedBytes = [
+      "WEATHER_RELEASE=2026.10.09-3",
+      `WEATHER_CONTROL_PLANE_SHA256=${stagedControl}`,
+      "WEATHER_CONTROL_PLANE_VERSION=16",
+      "",
+    ].join("\n");
+    await writeFile(staged, stagedBytes, { mode: 0o600 });
+    const stagedSha256 = createHash("sha256").update(stagedBytes).digest("hex");
+    const candidateManifest = createHash("sha256").update(manifestBody).digest("hex");
+    const body = {
+      bridgeStateSha256: bridgeState,
+      candidateIdentityManifestSha256: candidateManifest,
+      contractVersion: "weather-control-plane-handoff/v17-v1",
+      installedAt: "2026-11-03T01:00:00Z",
+      predecessorHandoffFileSha256: predecessorFile,
+      predecessorHandoffReceiptSha256: predecessorReceipt,
+      predecessorIdentityManifestSha256: predecessorManifest,
+      sourceControlSha256: stagedControl,
+      sourceControlVersion: 16,
+      sourceEnvironmentSha256: stagedSha256,
+      sourceRelease: "2026.10.09-3",
+      successorControlSha256: successor,
+      successorControlVersion: 17,
+    };
+    const closed = {
+      ...body,
+      receiptSha256: createHash("sha256").update(`${canonical(body)}\n`).digest("hex"),
+    };
+    await writeFile(receiptPath, `${canonical(closed)}\n`, { mode: 0o600 });
+    const argumentsList = [state, releases, receiptPath, stagedControl, stagedSha256,
+      predecessorFile, predecessorReceipt, predecessorManifest, bridgeState, directory];
+    const options = {
+      env: { ...process.env, MANIFEST_BODY: manifestBody, SUCCESSOR: successor },
+    };
+    const accepted = runBash(harness, argumentsList, options);
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    // reject a fully rehashed crossed source tuple
+    const crossedBody = { ...body, sourceRelease: "2026.10.09-2" };
+    const crossed = {
+      ...crossedBody,
+      receiptSha256: createHash("sha256").update(`${canonical(crossedBody)}\n`).digest("hex"),
+    };
+    await writeFile(receiptPath, `${canonical(crossed)}\n`, { mode: 0o600 });
+    assert.notEqual(runBash(harness, argumentsList, options).status, 0);
+
+    // reject candidate manifest drift
+    await writeFile(receiptPath, `${canonical(closed)}\n`, { mode: 0o600 });
+    const drifted = runBash(harness, argumentsList, {
+      env: { ...process.env, MANIFEST_BODY: "drifted manifest\n", SUCCESSOR: successor },
+    });
+    assert.notEqual(drifted.status, 0);
+
+    // reject an absent successor receipt
+    await rm(receiptPath);
+    assert.notEqual(runBash(harness, argumentsList, options).status, 0);
   } finally {
     await rm(directory, { force: true, recursive: true });
   }

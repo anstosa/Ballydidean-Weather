@@ -22,6 +22,7 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const repositoryInstaller = join(repoRoot, "scripts/install-adjustment-recurring-control-plane-successor-v1.sh");
 const repositoryLibrary = join(repoRoot, "scripts/install-adjustment-recurring-control-plane.sh");
 const frozenLibrarySha256 = "f3df96877b938b67ab0c8eac497b2ee07c9b78db77e25896002ef51c9928fcd9";
+const v16SuccessorCommit = "238f41e36e2491f8ae09370d7740e59ca8ac4cc2";
 const af80BaseCommit = "f7ac5369379a6f7f93d03ffbe09ae50e1cfb4f54";
 const af80MaintenanceCommit = "d308ff4072ff623df6ef37ca6bc16cab5a6d4412";
 const af80MaintenancePaths = new Set([
@@ -164,9 +165,9 @@ async function createFixture() {
   }
   await writeAf80Tree(installed);
   await cp(join(installed, "deploy"), join(candidate, "deploy"), { recursive: true });
-  // assemble the candidate from the three real reviewed controls
+  // retain the three immutable v16 candidate controls
   for (const relative of changedPaths) {
-    await writeFile(join(candidate, relative), await readFile(join(repoRoot, relative)));
+    await writeFile(join(candidate, relative), execFileSync("git", ["show", `${v16SuccessorCommit}:${relative}`], { cwd: repoRoot }));
   }
   execFileSync("tar", ["-cf", archive, "-C", candidate, "deploy"]);
   const archiveSha256 = await fileHash(archive);
@@ -388,11 +389,11 @@ test("successor embeds the exact AF80 packet and three-path order", async () => 
   assert.deepEqual(changes.trim().split("\n"), changedPaths);
 });
 
-// validate the complete candidate assembled from current reviewed controls
+// validate the complete immutable v16 candidate
 test("successor accepts the real v16 handoff constants and 42-file candidate", async () => {
   const fixture = await createFixture();
   try {
-    const updater = await readFile(join(repoRoot, "deploy/scripts/update.sh"), "utf8");
+    const updater = await readFile(join(fixture.candidate, "deploy/scripts/update.sh"), "utf8");
     // require every historical and handoff marker
     for (const line of [
       "control_plane_version=16",
@@ -404,15 +405,33 @@ test("successor accepts the real v16 handoff constants and 42-file candidate", a
     ]) {
       assert.ok(updater.split("\n").includes(line), line);
     }
-    // bind all three candidate bytes to the live reviewed files
+    // bind all three candidate bytes to their reviewed commit
     for (const relative of changedPaths) {
-      assert.equal(await fileHash(join(fixture.candidate, relative)), await fileHash(join(repoRoot, relative)));
+      const committed = execFileSync("git", ["show", `${v16SuccessorCommit}:${relative}`], { cwd: repoRoot });
+      assert.equal(await fileHash(join(fixture.candidate, relative)), createHash("sha256").update(committed).digest("hex"));
     }
     const result = spawnSync("bash", ["-c",
       'source "$1"; successor_verify_candidate "$2" "$3"',
       "successor-current-candidate", installer, fixture.candidate, fixture.candidateDigest],
     { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
+  } finally {
+    await rm(fixture.root, { force: true, recursive: true });
+  }
+});
+
+// keep the frozen v16 installer closed to later control versions
+test("v16 successor rejects a v17 updater", async () => {
+  const fixture = await createFixture();
+  try {
+    await cp(join(repoRoot, "deploy/scripts/update.sh"), join(fixture.candidate, "deploy/scripts/update.sh"));
+    const digest = spawnSync("bash", ["-c", 'source "$1"; control_digest "$2"',
+      "successor-v17-negative-digest", installer, fixture.candidate], { encoding: "utf8" });
+    assert.equal(digest.status, 0, digest.stderr);
+    const result = spawnSync("bash", ["-c", 'source "$1"; successor_verify_candidate "$2" "$3"',
+      "successor-v17-negative", installer, fixture.candidate, digest.stdout.trim()], { encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /candidate control version is not sixteen/u);
   } finally {
     await rm(fixture.root, { force: true, recursive: true });
   }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import test from "node:test";
 const root = resolve(import.meta.dirname, "../..");
 const updatePath = join(root, "deploy/scripts/update.sh");
 const predecessorDigest = "af80d5752590bf47f5b893ee69f04215132e80210993f4a8c78d8562d2ea9a52";
+const stagedDigest = "e089e5c092fb336d0f8130cbf45320ed013a55af3b10957f2fd95a03265a2ed2";
 const historicalDigest = "603eb8f488ba78be3d7ecf76b0d587346d1c36432255d390d86d2b768c8fecba";
 
 const sourceEnvironment = `WEATHER_RELEASE=2026.10.09-2
@@ -44,7 +45,7 @@ function shellFunction(source, name) {
   return source.slice(start, next + 3);
 }
 
-test("v16 routes the AF80 source only through the exact handoff", async () => {
+test("v17 routes AF80 and E089 only through the exact chained handoff", async () => {
   const directory = await mkdtemp(join(tmpdir(), "weather-v16-handoff-"));
   const envFile = join(directory, "release.env");
   const harness = `
@@ -52,7 +53,7 @@ source "$1"
 # inject the installed digest for router isolation
 control_plane_digest() { printf '%s\\n' "$INSTALLED_DIGEST"; }
 # inject the handoff decision for router isolation
-require_v16_control_plane_handoff() { [[ "$HANDOFF_OK" == true ]]; }
+require_v17_control_plane_handoff() { [[ "$HANDOFF_OK" == true ]]; }
 require_control_plane_compatibility "$2"
 `;
 
@@ -75,10 +76,13 @@ require_control_plane_compatibility "$2"
   };
 
   try {
-    assert.equal((await check(16, "a".repeat(64), "2026.10.09-3")).status, 0);
+    assert.equal((await check(17, "a".repeat(64), "2026.10.09-4")).status, 0);
     assert.equal((await check(15, predecessorDigest, "2026.10.09-2", true)).status, 0);
     assert.notEqual((await check(15, predecessorDigest, "2026.10.09-2", false)).status, 0);
     assert.notEqual((await check(15, predecessorDigest, "2026.10.09-3", true)).status, 0);
+    assert.equal((await check(16, stagedDigest, "2026.10.09-3", true)).status, 0);
+    assert.notEqual((await check(16, stagedDigest, "2026.10.09-3", false)).status, 0);
+    assert.notEqual((await check(16, stagedDigest, "2026.10.09-2", true)).status, 0);
     assert.equal((await check(13, historicalDigest, "2026.10.09-1")).status, 0);
   } finally {
     await rm(directory, { force: true, recursive: true });
@@ -114,22 +118,20 @@ stat() {
     command stat "$@"
   fi
 }
-successor=$(control_plane_digest)
-candidate=$(control_plane_identity_manifest_v16 | sha256sum | awk '{print $1}')
-node --input-type=module - "$v16_control_plane_handoff" "$successor" "$candidate" <<'NODE'
+node --input-type=module - "$v16_control_plane_handoff" <<'NODE'
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
-const [path, successorControlSha256, candidateIdentityManifestSha256] = process.argv.slice(2);
+const [path] = process.argv.slice(2);
 const body = {
   bridgeStateSha256: "c944a152f3129d7bf3bf3b2dcd2b4d230ca58c64719360e22351eb8043779c62",
-  candidateIdentityManifestSha256,
+  candidateIdentityManifestSha256: "157281ebd1ebc35691a34e085722a72ea3a530ca9b6cc75832d77ab6d868be5e",
   contractVersion: "weather-control-plane-handoff/v16-v1",
-  installedAt: "2026-11-02T12:00:00Z",
+  installedAt: "2026-11-03T00:38:21Z",
   predecessorIdentityManifestSha256: "d1f64bf6c03fa35d198d6e9edc58b9d9ac4225e829e2c41e68761fe5ca827536",
   sourceControlSha256: "af80d5752590bf47f5b893ee69f04215132e80210993f4a8c78d8562d2ea9a52",
   sourceControlVersion: 15,
   sourceRelease: "2026.10.09-2",
-  successorControlSha256,
+  successorControlSha256: "e089e5c092fb336d0f8130cbf45320ed013a55af3b10957f2fd95a03265a2ed2",
   successorControlVersion: 16,
 };
 const canonical = (value) => Array.isArray(value)
@@ -145,19 +147,10 @@ require_v16_control_plane_handoff "$4"
 `;
 
   try {
-    // build the exact 42-file manifest shape expected by the validator
-    // create every fixed manifest root
-    for (const name of ["scripts", "postgres", "systemd", "sudoers", "state", "releases"]) {
+    // create every fixed receipt root
+    for (const name of ["state", "releases"]) {
       await mkdir(join(deploy, name), { recursive: true });
     }
-    // create the exact non-compose control count
-    for (let index = 0; index < 41; index += 1) {
-      const group = ["scripts", "postgres", "systemd", "sudoers"][index % 4];
-      const path = join(deploy, group, `control-${String(index).padStart(2, "0")}`);
-      await writeFile(path, `control-${index}\n`, { mode: 0o600 });
-      await chmod(path, 0o600);
-    }
-    await writeFile(join(deploy, "compose.yaml"), "services: {}\n", { mode: 0o600 });
     await writeFile(sourceEnv, sourceEnvironment, { mode: 0o600 });
     await writeFile(bridge, bridgeState, { mode: 0o600 });
     const result = spawnSync("bash", ["-c", harness, "v16-real", updatePath, deploy,
@@ -168,22 +161,31 @@ require_v16_control_plane_handoff "$4"
   }
 });
 
-test("v16 handoff verifier closes the receipt and candidate manifest", async () => {
+test("v17 handoff verifier chains the immutable v16 receipt", async () => {
   const source = await readFile(updatePath, "utf8");
-  const verifier = shellFunction(source, "require_v16_control_plane_handoff");
-  assert.match(source, /^control_plane_version=16$/mu);
+  const v16Verifier = shellFunction(source, "require_v16_control_plane_handoff");
+  const v17Verifier = shellFunction(source, "require_v17_control_plane_handoff");
+  assert.match(source, /^control_plane_version=17$/mu);
   assert.match(source, /^recurring_previous_release=2026\.10\.09-1$/mu);
   assert.match(source, new RegExp(`^recurring_previous_control_plane_sha256=${historicalDigest}$`, "mu"));
   assert.match(source, /^v16_handoff_source_release=2026\.10\.09-2$/mu);
   assert.match(source, /^v16_handoff_source_control_version=15$/mu);
   assert.match(source, new RegExp(`^v16_handoff_source_control_sha256=${predecessorDigest}$`, "mu"));
-  assert.match(verifier, /weather-control-plane-handoff\/v16-v1/u);
+  assert.match(v16Verifier, /weather-control-plane-handoff\/v16-v1/u);
   assert.match(source, /d1f64bf6c03fa35d198d6e9edc58b9d9ac4225e829e2c41e68761fe5ca827536/u);
   assert.match(source, /97368a14e368dcf7fd3f3f179cd222df2f848695e1cd993abf8892e69c30d4e7/u);
   assert.match(source, /c944a152f3129d7bf3bf3b2dcd2b4d230ca58c64719360e22351eb8043779c62/u);
-  assert.match(verifier, /candidateIdentityManifestSha256/u);
-  assert.match(verifier, /receiptSha256/u);
-  assert.match(verifier, /raw\.at\(-1\) !== 0x0a/u);
+  assert.match(source, /63daabc14561306402d6130d8d644dc7025148f837b40f34791f00b3106bef2e/u);
+  assert.match(source, /f1acdcf00a21e7937b639d9d41910d695c5589175083eb5c3ba97f07066e7bfa/u);
+  assert.match(source, /f4bd73a18649894a25d9b4f54784bb5eccb099b4226dd5aa7df50f09906dc63b/u);
+  assert.match(v16Verifier, /candidateIdentityManifestSha256/u);
+  assert.match(v16Verifier, /receiptSha256/u);
+  assert.match(v16Verifier, /raw\.at\(-1\) !== 0x0a/u);
+  assert.match(v17Verifier, /require_v16_control_plane_handoff/u);
+  assert.match(v17Verifier, /weather-control-plane-handoff\/v17-v1/u);
+  assert.match(v17Verifier, /predecessorHandoffFileSha256/u);
+  assert.match(v17Verifier, /sourceEnvironmentSha256/u);
+  assert.match(v17Verifier, /successorControlVersion !== 17/u);
 });
 
 test("normal stage proves images before live SQL and closes all three phases", async () => {
