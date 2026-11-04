@@ -305,6 +305,7 @@ function createFixture(overrides = {}, options = {}) {
       trendQueries.push({ from, siteSlug, to });
       return [{
         apparentTemperatureC: 15.5,
+        pm25MicrogramsPerCubicMeter: 12.3,
         precipitationMm: 0.2,
         pressureHpa: 1014.2,
         relativeHumidityPercent: 78,
@@ -710,9 +711,14 @@ test("current accepts station and source and returns bounded public metadata", a
 
   assert.equal(response.status, 200);
   assert.deepEqual(currentQueries[0], {
-    filters: { sourceId: "10", stationSlug: "open-meteo-virtual" },
+    filters: {
+      asOf: "2026-08-22T05:00:00.000Z",
+      sourceId: "10",
+      stationSlug: "open-meteo-virtual",
+    },
     siteSlug: "ballydidean",
   });
+  assert.equal(body.data[0].airQuality, null);
   assert.equal(body.data[0].freshness.status, "fresh");
   assert.equal(body.data[0].pressureChange3hHpa, -2.5);
   assert.equal(body.data[0].provenance.label, "model-derived current conditions");
@@ -749,6 +755,11 @@ test("current exposes only bounded EcoWitt property sensor snapshots", async () 
     // return one record with provider-private sensor snapshots
     async getCurrent() {
       return [makeRecord({
+        pm25HourlyBySensor: {
+          "air-quality-1": [12, 11, 10, 9, 8, 7, null, 6, 5, 4, 3, 2],
+        },
+        pm25HourlyConcentrations: [12, 11, 10, 9, 8, 7, null, 6, 5, 4, 3, 2],
+        pm25HourlyThrough: "2026-08-22T04:00:00.000Z",
         providerMetadata: {
           dataset: "get_livedata_info",
           property_sensors: [
@@ -778,6 +789,7 @@ test("current exposes only bounded EcoWitt property sensor snapshots", async () 
 
   assert.deepEqual(body.data[0].metadata.provider.propertySensors, [
     {
+      airQuality: null,
       channel: 1,
       key: "soil-1",
       model: "WH52",
@@ -787,9 +799,22 @@ test("current exposes only bounded EcoWitt property sensor snapshots", async () 
         temperatureC: 17.7,
       },
     },
-    { channel: 1, key: "temperature-1", model: "WN31", readings: { batteryLow: 0, temperatureC: 20 } },
-    { channel: 1, key: "air-quality-1", model: "WH41", readings: { batteryExternalPower: 1, pm25MicrogramsPerCubicMeter: 12 } },
+    { airQuality: null, channel: 1, key: "temperature-1", model: "WN31", readings: { batteryLow: 0, temperatureC: 20 } },
+    {
+      airQuality: {
+        hourlyPm25: [12, 11, 10, 9, 8, 7, null, 6, 5, 4, 3, 2],
+        through: "2026-08-22T04:00:00.000Z",
+      },
+      channel: 1,
+      key: "air-quality-1",
+      model: "WH41",
+      readings: { batteryExternalPower: 1, pm25MicrogramsPerCubicMeter: 12 },
+    },
   ]);
+  assert.deepEqual(body.data[0].airQuality, {
+    hourlyPm25: [12, 11, 10, 9, 8, 7, null, 6, 5, 4, 3, 2],
+    through: "2026-08-22T04:00:00.000Z",
+  });
 });
 
 test("history uses frozen filter names, defaults, maximum, and opaque cursor", async () => {
@@ -848,8 +873,8 @@ test("I-API-01 forecast preserves raw metrics with inactive adjustment metadata"
 
   assert.equal(response.status, 200);
   assert.deepEqual(forecastQueries, [{
-    asOf: "2026-08-21T07:00:00.000Z",
-    hours: 24,
+    asOf: "2026-08-20T19:00:00.000Z",
+    hours: 37,
     siteSlug: "ballydidean",
   }]);
   assert.deepEqual(pressureContextQueries, [{
@@ -949,6 +974,7 @@ test("I-API-01 forecast preserves raw metrics with inactive adjustment metadata"
     inactiveTemperatureAdjustmentRuntime,
   );
   assert.equal(body.days, 1);
+  assert.deepEqual(body.airQualityContext, []);
   assert.deepEqual(body.pressureContext, []);
 
   const extendedResponse = await handler(
@@ -958,8 +984,8 @@ test("I-API-01 forecast preserves raw metrics with inactive adjustment metadata"
   assert.equal(extendedResponse.status, 200);
   assert.equal(extendedBody.days, 10);
   assert.deepEqual(forecastQueries.at(-1), {
-    asOf: "2026-08-21T07:00:00.000Z",
-    hours: 240,
+    asOf: "2026-08-20T19:00:00.000Z",
+    hours: 253,
     siteSlug: "ballydidean",
   });
 
@@ -969,12 +995,51 @@ test("I-API-01 forecast preserves raw metrics with inactive adjustment metadata"
   const overnightBody = await overnightResponse.json();
   assert.equal(overnightResponse.status, 200);
   assert.equal(overnightBody.days, 1);
+  assert.deepEqual(overnightBody.airQualityContext, []);
   assert.deepEqual(forecastQueries.at(-1), {
     asOf: "2026-08-21T07:00:00.000Z",
     hours: 31,
     productSelection: "anchor-containing",
     siteSlug: "ballydidean",
   });
+});
+
+// preserve civil forecast data while exposing fixed-standard-time AQI hours
+test("default forecast adds one-query AQI context outside the public day", async () => {
+  const reads = [];
+  const { handler } = createFixture({
+    // return every hour requested by the expanded repository window
+    async getForecast(siteSlug, asOf, hours, productSelection) {
+      reads.push({ asOf, hours, productSelection, siteSlug });
+      return Array.from(
+        { length: hours },
+        // create one distinct hourly forecast record
+        (_unused, index) => ({
+          ...forecastRecord,
+          id: String(10_000 + index),
+          validAt: new Date(Date.parse(asOf) + index * 3_600_000).toISOString(),
+        }),
+      );
+    },
+  });
+  const response = await handler(
+    new Request("http://weather.test/api/v1/sites/ballydidean/forecast"),
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(reads, [{
+    asOf: "2026-08-20T19:00:00.000Z",
+    hours: 37,
+    productSelection: undefined,
+    siteSlug: "ballydidean",
+  }]);
+  assert.equal(body.data.length, 24);
+  assert.equal(body.data[0].validAt, "2026-08-21T07:00:00.000Z");
+  assert.equal(body.data.at(-1).validAt, "2026-08-22T06:00:00.000Z");
+  assert.equal(body.airQualityContext.length, 13);
+  assert.equal(body.airQualityContext[0].validAt, "2026-08-20T19:00:00.000Z");
+  assert.equal(body.airQualityContext.at(-1).validAt, "2026-08-22T07:00:00.000Z");
 });
 
 // explicit rain policy must suppress retained sidecars before repository access
@@ -1522,9 +1587,10 @@ test("temperature canary inference failures emit once across many rows", async (
   await secondResponse.json();
 
   assert.equal(response.status, 200);
-  assert.equal(body.data.length, rows.length);
+  const returnedRows = [...body.data, ...body.airQualityContext];
+  assert.equal(returnedRows.length, rows.length);
   // compare every public raw temperature
-  const returnedTemperatures = body.data.map((record) => record.metrics.temperatureC);
+  const returnedTemperatures = returnedRows.map((record) => record.metrics.temperatureC);
   // retain the source raw temperature order
   const expectedTemperatures = rows.map((row) => row.temperatureC);
   assert.deepEqual(
@@ -1856,7 +1922,8 @@ test("expired wind canary metadata and rows fail raw on the same clock", async (
     state: "disabled",
     transferReportSha256: null,
   });
-  assert.equal(body.data[0].adjustment.reasonCode, "canary_expired");
+  const record = [...body.data, ...body.airQualityContext][0];
+  assert.equal(record.adjustment.reasonCode, "canary_expired");
 
   const healthResponse = await handler(
     new Request("http://weather.test/api/v1/health"),
@@ -1900,9 +1967,10 @@ test("I-API-03 runtime identity and lead mismatches fail raw with stable reasons
       new Request("http://weather.test/api/v1/sites/ballydidean/forecast"),
     );
     const body = await response.json();
+    const record = [...body.data, ...body.airQualityContext][0];
 
     assert.equal(response.status, 200, name);
-    assert.deepEqual(body.data[0].metrics, {
+    assert.deepEqual(record.metrics, {
       apparentTemperatureC: row.apparentTemperatureC,
       blackGlobeTemperatureC: row.blackGlobeTemperatureC,
       cloudCoverPercent: row.cloudCoverPercent,
@@ -1922,8 +1990,8 @@ test("I-API-03 runtime identity and lead mismatches fail raw with stable reasons
       windSpeedMps: row.windSpeedMps,
       wetBulbGlobeTemperatureC: row.wetBulbGlobeTemperatureC,
     }, name);
-    assert.equal(body.data[0].adjustment.state, "not_applicable", name);
-    assert.equal(body.data[0].adjustment.reasonCode, reasonCode, name);
+    assert.equal(record.adjustment.state, "not_applicable", name);
+    assert.equal(record.adjustment.reasonCode, reasonCode, name);
   }
 });
 
@@ -2315,6 +2383,7 @@ test("trends expose daily local-calendar history from 2019", async () => {
     to: "2026-08-22T05:00:00.000Z",
   }]);
   assert.equal(body.data[0].validAt, "2026-08-22T04:00:00.000Z");
+  assert.equal(body.data[0].metrics.pm25MicrogramsPerCubicMeter, 12.3);
   assert.equal(body.data[0].metrics.temperatureC, 16.2);
   assert.equal(body.data[0].metrics.temperatureMaximumC, 19.4);
   assert.equal(body.data[0].metrics.temperatureMinimumC, 11.1);

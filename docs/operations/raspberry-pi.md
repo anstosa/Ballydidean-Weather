@@ -204,9 +204,17 @@ node scripts/prepare-schema-preserving-publication.mjs \
 ```
 
 The preparer verifies the local and GitHub tag, exact successful workflows,
-published digest artifacts, ARM64 image configurations, and unchanged protected
-deployment/database/model file contents. It does not pull images or fetch another
-database. Retain its publication document with the release evidence.
+published digest artifacts, ARM64 image configurations, and protected file
+contents. Publication v2 permits only the exact reviewed SHA-256 transition for
+`packages/database/src/repositories.ts` pinned in the installed validator for
+the AQI hourly-history and daily-average queries. Every migration, schema,
+deployment, configuration, workflow, and adjustment-model file remains
+byte-identical to the anchor. Any other query-file revision requires a newly
+reviewed, content-addressed operator-bundle rotation; this is not a database
+package exemption. Retained v1 publications still require exact tree equality
+and remain valid for recovery and rollback. The preparer does not pull images
+or fetch another database. Retain its publication document with the release
+evidence.
 
 An authorized host administrator installs the two-file operator bundle with
 `scripts/install-schema-preserving-release.sh BUNDLE_DIRECTORY BUNDLE_SHA256`.

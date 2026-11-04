@@ -1,4 +1,9 @@
 import {
+  airQualityDayKey,
+  dailyForecastAqi,
+  pm25NowCastAqi,
+  pm25ToAqi,
+  type AirQualityHourlyContext,
   browserUnitPreferenceStorage,
   DEFAULT_UNIT_PREFERENCES,
   formatMeasurement,
@@ -72,6 +77,7 @@ export interface WeatherSite {
 }
 
 export interface WeatherRecord {
+  readonly airQuality?: AirQualityHourlyContext | null;
   // retain the same-source observed three-hour pressure difference
   readonly pressureChange3hHpa?: number | null;
   readonly adjustment?: ForecastAdjustmentDecision;
@@ -1219,6 +1225,7 @@ export type ForecastAdjustmentScorecardPublicationState =
   "current" | "pending_unapplied" | "legacy_display";
 
 export interface PropertySensorSnapshot {
+  readonly airQuality?: AirQualityHourlyContext | null;
   readonly channel: number | null;
   readonly key: string;
   readonly model: string;
@@ -1287,6 +1294,7 @@ export interface DashboardState {
   readonly adminAdjustmentScorecardPublicationState: ForecastAdjustmentScorecardPublicationState | null;
   readonly adminAdjustmentScorecardState: ForecastAdjustmentScorecardLoadState;
   readonly forecast: readonly WeatherRecord[];
+  readonly forecastAirQualityContext?: readonly WeatherRecord[];
   readonly forecastPressureContext: readonly WeatherRecord[];
   readonly solarCloudEvidence: SolarCloudEvidence | null;
   readonly forecastObservations: readonly ForecastObservationPoint[];
@@ -1340,6 +1348,7 @@ export type TrendChartMetric =
   | "frostDayCount"
   | "growingDegreeDaysC"
   | "precipitationMm"
+  | "pm25MicrogramsPerCubicMeter"
   | "pressureHpa"
   | "relativeHumidityPercent"
   | "temperatureAnomalyC"
@@ -1367,6 +1376,7 @@ interface ForecastWeatherMapBinding {
 
 export interface TrendPoint {
   readonly metrics: {
+    readonly pm25MicrogramsPerCubicMeter?: number | null;
     readonly apparentTemperatureC: number | null;
     readonly precipitationMm: number | null;
     readonly pressureHpa: number | null;
@@ -1401,6 +1411,7 @@ interface RecordsResponse {
 
 // describe the adjusted forecast boundary
 interface ForecastRecordsResponse extends RecordsResponse {
+  readonly airQualityContext: readonly WeatherRecord[];
   readonly pressureContext: readonly WeatherRecord[];
   readonly adjustmentSettings: ForecastAdjustmentSettings | null;
   readonly adjustmentRuntime: ForecastAdjustmentRuntimeStatus;
@@ -1450,6 +1461,7 @@ const EMPTY_STATE: DashboardState = {
   adminAdjustmentScorecardPublicationState: null,
   adminAdjustmentScorecardState: "loading",
   forecast: [],
+  forecastAirQualityContext: [],
   forecastPressureContext: [],
   solarCloudEvidence: null,
   forecastObservations: [],
@@ -3781,7 +3793,12 @@ export function parseForecastRecordsResponse(value: unknown): ForecastRecordsRes
     throw new RangeError("Forecast response is invalid");
   }
 
-  const responseData = response.data;
+  // keep standard-time AQI padding outside the visible weather window
+  if (response.airQualityContext !== undefined && (!Array.isArray(response.airQualityContext) || response.airQualityContext.length > 64)) {
+    throw new RangeError("Forecast air quality context is invalid");
+  }
+  const visibleCount = response.data.length;
+  const responseData = [...response.data, ...((response.airQualityContext as unknown[] | undefined) ?? [])];
   const rawRecords = responseData.map(rawForecastRecord);
 
   // reject malformed raw rows normally
@@ -3885,7 +3902,8 @@ export function parseForecastRecordsResponse(value: unknown): ForecastRecordsRes
     ...(response as unknown as RecordsResponse),
     adjustmentSettings: settings,
     adjustmentRuntime: effectiveRuntime,
-    data: safeRecords,
+    data: safeRecords.slice(0, visibleCount),
+    airQualityContext: safeRecords.slice(visibleCount),
     pressureContext: parseForecastPressureContext(response.pressureContext),
     rainAdjustmentRuntime: effectiveRainRuntime,
     temperatureAdjustmentRuntime: effectiveTemperatureRuntime,
@@ -4080,6 +4098,7 @@ export class WeatherDashboardController {
           cachedNowIcon,
           selectedSite: responseSite,
           forecast: forecastRecords,
+          forecastAirQualityContext: forecast?.airQualityContext ?? this.#state.forecastAirQualityContext ?? [],
           forecastPressureContext: forecast?.pressureContext ?? this.#state.forecastPressureContext,
           forecastAdjustmentSettings: forecast?.adjustmentSettings ?? this.#state.forecastAdjustmentSettings,
           forecastAdjustmentRuntime: forecast?.adjustmentRuntime ?? this.#state.forecastAdjustmentRuntime,
@@ -4318,6 +4337,7 @@ export class WeatherDashboardController {
       this.patch({
         error: null,
         forecast: response.data,
+        forecastAirQualityContext: response.airQualityContext,
         forecastPressureContext: response.pressureContext,
         forecastAdjustmentMode: this.#state.forecastAdjustmentMode,
         forecastAdjustmentSettings: response.adjustmentSettings,
@@ -4727,6 +4747,7 @@ export class WeatherDashboardController {
           : dailyPrecipitation.data,
         error: null,
         forecast: forecast?.data ?? this.#state.forecast,
+        forecastAirQualityContext: forecast?.airQualityContext ?? this.#state.forecastAirQualityContext ?? [],
         forecastPressureContext: forecast?.pressureContext ?? this.#state.forecastPressureContext,
         forecastAdjustmentMode: this.#state.forecastAdjustmentMode,
         forecastAdjustmentSettings: adminSettings ?? forecast?.adjustmentSettings ?? this.#state.forecastAdjustmentSettings,
@@ -5238,7 +5259,11 @@ export function renderWeatherDashboard(
   view: WeatherView = "home",
   isAdmin = false,
 ): string {
-  state = withLocalForecastAdjustments(withSolarCloudAdjustment(state));
+  const visibleCount = state.forecast.length;
+  const solar = withSolarCloudAdjustment(state);
+  // correct AQI boundary hours with the same policy without exposing them to other charts or alerts
+  const projected = withLocalForecastAdjustments({ ...solar, forecast: [...solar.forecast, ...(state.forecastAirQualityContext ?? [])] });
+  state = { ...projected, forecast: projected.forecast.slice(0, visibleCount), forecastAirQualityContext: projected.forecast.slice(visibleCount) };
   return `
     <main class="shell">
       <header class="masthead${view === "forecast" ? " forecast-masthead" : view === "home" ? " home-masthead" : ""}">
@@ -5612,7 +5637,8 @@ function renderCurrent(state: DashboardState): string {
     return '<p class="notice">No current weather value is available yet.</p>';
   }
 
-  const airQuality = current.metrics.pm25MicrogramsPerCubicMeter;
+  const airQualityForecastRecords = [...state.forecast, ...(state.forecastAirQualityContext ?? [])];
+  const airQuality = currentAirQualityAqi(state.current, state.forecastAdjustmentMode, airQualityForecastRecords);
   const dailyRain = state.forecastAdjustmentMode === "raw" ? null : state.dailyPrecipitation?.accumulationMm ?? null;
   const rainRate = current.metrics.precipitationRateMmPerHour;
   const uvIndex = current.metrics.uvIndex;
@@ -5635,7 +5661,7 @@ function renderCurrent(state: DashboardState): string {
   const windForecast = forecastWind(forecast, state.units, useForecastAdjustments);
   const rainForecast = forecastRain(forecast, state.units, useForecastAdjustments);
   const humidityForecast = forecastHumidity(forecast, useForecastAdjustments);
-  const airQualityForecast = forecastMaximumFixed(forecast, "pm25MicrogramsPerCubicMeter", "", 0, airQualityBand, useForecastAdjustments);
+  const airQualityForecast = forecastAirQuality(airQualityForecastRecords, current.forecastReferenceAt, state.selectedSite?.timezone ?? PRODUCT_SITE.timezone, useForecastAdjustments);
   const uvForecast = forecastMaximumFixed(forecast, "uvIndex", "", 1, uvBand, useForecastAdjustments);
   // homepage gold identifies changed current readings or a changed displayed daily summary
   const changed = (keys: readonly WeatherMetricKey[], selected: ForecastCardValue, raw: ForecastCardValue): boolean =>
@@ -5695,12 +5721,12 @@ function renderCurrent(state: DashboardState): string {
           forecast: humidityForecast,
         })}
       ${renderConditionCard({
-          adjusted: changed(["pm25MicrogramsPerCubicMeter"], airQualityForecast, forecastMaximumFixed(forecast, "pm25MicrogramsPerCubicMeter", "", 0, airQualityBand, false)),
-          band: airQualityBand(airQuality),
+          adjusted: useForecastAdjustments && (adjustmentValuesDiffer(airQuality, currentAirQualityAqi(state.current, "raw", airQualityForecastRecords)) || forecastReadingsDiffer(airQualityForecast, forecastAirQuality(airQualityForecastRecords, current.forecastReferenceAt, state.selectedSite?.timezone ?? PRODUCT_SITE.timezone, false))),
+          band: { ...airQualityBand(airQuality), detail: "PM2.5 NowCast · US AQI" },
           className: "air-quality-condition",
           icon: "masks",
           label: "Air quality",
-          measurement: formatFixedMeasurement(airQuality, "", 0),
+          measurement: formatFixedMeasurement(airQuality, "AQI", 0),
           forecast: airQualityForecast,
         })}
       ${renderPressureCondition(state)}
@@ -5757,6 +5783,90 @@ interface CurrentWeatherReadings {
   readonly forecastReferenceAt: string;
   readonly metrics: WeatherRecord["metrics"];
   readonly pressureChange3hHpa: number | null;
+}
+
+// select hourly PM evidence before calculating the current index
+function currentAirQualityAqi(
+  records: readonly WeatherRecord[],
+  mode: ForecastAdjustmentMode,
+  forecast: readonly WeatherRecord[],
+  now = Date.now(),
+): number | null {
+  const hour = 3_600_000;
+  const through = Math.floor(now / hour) * hour - hour;
+  const physical = records.filter(
+    // exclude stale and future physical observations
+    (record) => record.provenance.sourceKind === "physical_sensor" && record.freshness.status !== "stale" && Date.parse(record.validAt) <= now,
+  ).toSorted(
+    // keep farm source preference independent of API order
+    (left, right) => Date.parse(right.validAt) - Date.parse(left.validAt) || left.provenance.sourceKey.localeCompare(right.provenance.sourceKey),
+  );
+  // retain farm-local measured history in adjusted mode
+  if (mode !== "raw") {
+    const farm = physical.filter(isFarmCurrentRecord).map(
+      // calculate each source independently rather than averaging AQI scores
+      (record) => pm25NowCastAqi(record.airQuality, now),
+    ).find((value) => value !== null);
+    // prefer the farm whenever sufficient hourly history exists
+    if (farm !== undefined) {
+      return farm;
+    }
+    const stations = new Map<string, AirQualityHourlyContext>();
+    // give each nearby station one history contribution
+    for (const record of physical) {
+      // ignore incomplete stale contexts and duplicate station providers
+      if (!isFarmCurrentRecord(record) && !stations.has(record.provenance.stationSlug) && pm25NowCastAqi(record.airQuality, now) !== null) {
+        stations.set(record.provenance.stationSlug, record.airQuality!);
+      }
+    }
+    // combine concentrations before the nonlinear NowCast and AQI calculations
+    if (stations.size > 0) {
+      const hourlyPm25 = Array.from({ length: 12 },
+        // align each station to the same absolute completed hour
+        (_, age) => meanCurrentValues([...stations.values()].flatMap(
+          // retain null gaps rather than counting them as clean air
+          (context) => {
+            const index = age - (through - Date.parse(context.through)) / hour;
+            const value = index < 0 ? null : context.hourlyPm25[index] ?? null;
+            return value === null || !Number.isFinite(value) || value < 0 ? [] : [value];
+          },
+        )),
+      );
+      return pm25NowCastAqi({ hourlyPm25, through: new Date(through).toISOString() }, now);
+    }
+  }
+  const regional = records.filter(
+    // raw mode stays regional without substituting farm measurements
+    (record) => record.provenance.sourceKind === "model_current" && record.freshness.status !== "stale",
+  );
+  // retain measured model context or derive a modeled NowCast from past forecast hours
+  for (const record of regional) {
+    const direct = pm25NowCastAqi(record.airQuality, now);
+    // prefer a supplied source-local hourly history
+    if (direct !== null) {
+      return direct;
+    }
+    const historical = forecast.filter(
+      // never use future hours or stale and unpublished model runs as current evidence
+      (point) => point.provenance.sourceKind === "forecast" && point.provenance.stationSlug === record.provenance.stationSlug &&
+        point.provenance.providerKey === record.provenance.providerKey && Date.parse(point.validAt) <= through &&
+        Date.parse(point.validAt) > through - 12 * hour && Date.parse(point.productRunAt ?? point.receivedAt) <= now &&
+        now - Date.parse(point.productRunAt ?? point.receivedAt) <= REGIONAL_FORECAST_MAX_AGE_MS,
+    ).toSorted(
+      // retain the newest published model for each completed hour
+      (left, right) => Date.parse(right.productRunAt ?? right.receivedAt) - Date.parse(left.productRunAt ?? left.receivedAt),
+    );
+    const hourlyPm25 = Array.from({ length: 12 },
+      // leave unavailable regional history missing rather than repeating the latest reading
+      (_, age) => historical.find((point) => Date.parse(point.validAt) === through - age * hour)?.metrics.pm25MicrogramsPerCubicMeter ?? null,
+    );
+    const modeled = pm25NowCastAqi({ hourlyPm25, through: new Date(through).toISOString() }, now);
+    // skip a regional source that cannot satisfy recent-hour completeness
+    if (modeled !== null) {
+      return modeled;
+    }
+  }
+  return null;
 }
 
 // share metric-specific farm and nearby fallbacks across cards alerts and artwork
@@ -5979,7 +6089,7 @@ function renderCurrentSkeleton(): string {
     { className: "rain-condition", forecast: { readings: [{ label: "Max", measurement: { unit: "in/h", value: "0.00" } }, { label: "Total", measurement: { unit: "in", value: "0.00" } }] }, icon: "rainy", label: "Rain", secondary: "Accumulation" },
     { className: "compact-condition clouds-condition", detail: null, forecast: { readings: [{ label: "Max", measurement: { unit: "%", value: "00" } }, { label: "Min", measurement: { unit: "%", value: "00" } }] }, icon: "cloud", label: "Clouds", secondary: "Clearest" },
     { className: "compact-condition", forecast: { readings: [{ label: "Max", measurement: { unit: "%", value: "00" } }] }, icon: "humidity_percentage", label: "Humidity" },
-    { className: "air-quality-condition", forecast: { readings: [{ label: "Max", measurement: { unit: "", value: "00" } }] }, icon: "masks", label: "Air quality" },
+    { className: "air-quality-condition", forecast: { readings: [{ label: "Daily", measurement: { unit: "AQI", value: "00" } }] }, icon: "masks", label: "Air quality", measurement: { unit: "AQI", value: "00" } },
     { className: "compact-condition pressure-condition", detail: null, forecast: { readings: [{ label: "Max", measurement: { unit: "", value: "+0.0" } }, { label: "", measurement: { unit: "PM", value: "00:00" } }] }, icon: "speed", label: "Pressure", measurement: { unit: "", value: "+0.0" } },
     { className: "compact-condition", forecast: { readings: [{ label: "Max", measurement: { unit: "", value: "0.0" } }] }, icon: "wb_sunny", label: "UV index" },
     { className: "compact-condition tide-condition", detail: null, forecast: { readings: [{ label: "Next low", measurement: { unit: "", value: "00:00 PM" } }] }, icon: "water", label: "Tide", secondary: "Direction" },
@@ -6744,7 +6854,7 @@ function deriveAlerts(state: DashboardState): readonly LocalWeatherAlert[] {
   const windHigh = currentGust === null ? forecastGust : Math.max(currentGust, forecastGust ?? currentGust);
   const rainRate = current?.metrics.precipitationRateMmPerHour ?? null;
   const forecastRain = maximumMetric(state.forecast, "precipitationMm", useForecastAdjustments);
-  const pm25 = current?.metrics.pm25MicrogramsPerCubicMeter ?? null;
+  const aqi = currentAirQualityAqi(state.current, state.forecastAdjustmentMode, [...state.forecast, ...(state.forecastAirQualityContext ?? [])]);
 
   // flag forecast frost
   if (forecastLow !== null && forecastLow <= 0) {
@@ -6812,10 +6922,10 @@ function deriveAlerts(state: DashboardState): readonly LocalWeatherAlert[] {
     });
   }
 
-  // flag unhealthy particulate levels
-  if (pm25 !== null && pm25 >= 35.5) {
+  // flag unhealthy averaged particulate levels
+  if (aqi !== null && aqi >= 101) {
     alerts.push({
-      detail: `PM2.5 is ${formatNumber(pm25)} µg/m³`,
+      detail: `Air quality is ${formatNumber(aqi)} AQI (PM2.5 NowCast)`,
       label: "Air quality",
       tone: "danger",
     });
@@ -6864,7 +6974,7 @@ function renderForecast(state: DashboardState): string {
   }
 
   const useForecastAdjustments = state.forecastAdjustmentMode !== "raw";
-  const charts = buildForecastCharts(hours, state.tides, useForecastAdjustments, state.forecast, state.forecastPressureContext ?? [], state.forecastObservations ?? [], Date.parse(reference ?? new Date().toISOString()));
+  const charts = buildForecastCharts(hours, state.tides, useForecastAdjustments, state.forecast, state.forecastPressureContext ?? [], state.forecastObservations ?? [], Date.parse(reference ?? new Date().toISOString()), state.selectedSite?.timezone ?? PRODUCT_SITE.timezone, state.forecastAirQualityContext ?? []);
   const hourlyTimes = hours.map(
     // retain one shared continuous clock
     (record) => record.validAt,
@@ -7257,6 +7367,8 @@ function buildForecastCharts(
   pressureContext: readonly WeatherRecord[],
   observations: readonly ForecastObservationPoint[],
   now: number,
+  timezone: string,
+  airQualityContext: readonly WeatherRecord[],
 ): readonly ForecastChartDefinition[] {
   const observed = new Map(observations.map((point) => [Date.parse(point.validAt), point]));
   // recorded past never inherits forecast corrections or the persisted adjustment mode
@@ -7280,6 +7392,16 @@ function buildForecastCharts(
     (record) => value(record, "precipitationRateMmPerHour", adjusted) ??
       forecastMetricValue(record, "precipitationMm", Date.parse(record.validAt) >= now && adjusted),
   );
+  // daily AQI uses the complete forecast product without mixing recorded observations
+  const airQuality = (adjusted: boolean): readonly (number | null)[] => {
+    const days = forecastAirQualityDays([...records, ...airQualityContext], timezone, adjusted);
+    return hours.map(
+      // repeat the daily forecast index across its standard-time day
+      (record) => days.get(airQualityDayKey(record.validAt, timezone)) ?? null,
+    );
+  };
+  const selectedAirQuality = airQuality(useAdjustments);
+  const rawAirQuality = airQuality(false);
   const selectedRain = rainRates(useAdjustments);
   const rawRain = rainRates(false);
 
@@ -7356,13 +7478,22 @@ function buildForecastCharts(
       temperaturesC: metric("temperatureC"),
     },
     {
-      adjusted: changed("pm25MicrogramsPerCubicMeter"),
-      domain: HISTORICAL_FORECAST_DOMAINS.airQuality,
+      adjusted: useAdjustments && selectedAirQuality.some(
+        // flag only changes visible after daily averaging and AQI rounding
+        (reading, index) => adjustmentValuesDiffer(reading, rawAirQuality[index] ?? null),
+      ),
+      domain: {
+        maximum: Math.max(HISTORICAL_FORECAST_DOMAINS.airQuality.maximum, ...selectedAirQuality.map(
+          // retain hazardous AQI including values above 500 without clipping the plotted line
+          (value) => Math.ceil((value ?? 0) / 50) * 50,
+        )),
+        minimum: 0,
+      },
       format: "airQuality",
       icon: "masks",
       key: "air-quality",
       label: "Air quality",
-      series: [{ label: "PM2.5", values: metric("pm25MicrogramsPerCubicMeter") }],
+      series: [{ label: "Daily AQI", values: selectedAirQuality }],
     },
     {
       adjusted: changed("uvIndex"),
@@ -7511,7 +7642,7 @@ function forecastValueLabelEdge(
 
 // use one population deviation from the normalized local archives
 const HISTORICAL_FORECAST_DOMAINS = {
-  airQuality: { maximum: 14.488_261_472_4, minimum: 0 },
+  airQuality: { maximum: 100, minimum: 0 },
 } as const;
 
 // retain the requested consumer chart scales in canonical units
@@ -7793,7 +7924,7 @@ function formatForecastChartValue(
     case "precipitationRate":
       return formatPrecipitationRate(value, units);
     case "airQuality":
-      return formatFixedMeasurement(value, "", 0);
+      return formatFixedMeasurement(value, "AQI", 0);
     case "uvIndex":
       return formatFixedMeasurement(value, "", 1);
     case "pressureChange":
@@ -7911,7 +8042,7 @@ const TREND_MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Au
 const WIND_ROSE_DIRECTIONS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"] as const;
 const TREND_CURRENT_YEAR_COLOR = "var(--brand-orange)";
 const TREND_YEAR_COLORS = ["#3878c5", "#439756", "#e6b519", "#ef7e1f", "#cf4337", "#8d6e63", "#545450", "#00838f"] as const;
-type TrendChartFormat = keyof UnitPreferences | "count" | "degreeDays" | "humidity" | "temperatureDelta";
+type TrendChartFormat = keyof UnitPreferences | "airQuality" | "count" | "degreeDays" | "humidity" | "temperatureDelta";
 interface TrendChartOption {
   readonly format: TrendChartFormat;
   readonly group: "Farm insights" | "Measurements";
@@ -7931,6 +8062,7 @@ const TREND_CHART_OPTIONS: readonly TrendChartOption[] = [
   { format: "precipitation", group: "Measurements", label: "Daily rain", metric: "precipitationMm", minimum: 0 },
   { format: "humidity", group: "Measurements", label: "Humidity", maximum: 100, metric: "relativeHumidityPercent", minimum: 0 },
   { format: "pressure", group: "Measurements", label: "Pressure", metric: "pressureHpa" },
+  { format: "airQuality", group: "Measurements", label: "Air quality", metric: "pm25MicrogramsPerCubicMeter", minimum: 0 },
   { format: "precipitation", group: "Farm insights", label: "Cumulative rainfall", metric: "cumulativePrecipitationMm", minimum: 0, supportsDetail: false },
   { format: "temperatureDelta", group: "Farm insights", includeZero: true, label: "Temperature anomaly", metric: "temperatureAnomalyC" },
   { format: "temperatureDelta", group: "Farm insights", label: "Daily temperature range", metric: "temperatureRangeC", minimum: 0 },
@@ -8354,6 +8486,8 @@ function renderTrendInsightControls(
 ): string {
   // describe each derived chart without crowding its title
   switch (option.metric) {
+    case "pm25MicrogramsPerCubicMeter":
+      return '<p class="trend-insight-note">Daily PM2.5 AQI · 24-hour standard-time mean · at least 18 measured hours</p>';
     case "cumulativePrecipitationMm":
       return '<p class="trend-insight-note">Running annual total</p>';
     case "temperatureAnomalyC":
@@ -8449,6 +8583,13 @@ function buildTrendChartYearSeries(
 
   // derive each farm chart from the shared daily payload
   switch (option.metric) {
+    case "pm25MicrogramsPerCubicMeter":
+      return buildTrendValueYearSeries(
+        state.trends,
+        timezone,
+        // convert completed daily means before rolling and historical aggregation
+        (point) => pm25ToAqi(point.metrics.pm25MicrogramsPerCubicMeter),
+      );
     case "cumulativePrecipitationMm":
       return accumulateTrendYearSeries(
         buildTrendYearSeries(state.trends, "precipitationMm", timezone),
@@ -8516,7 +8657,7 @@ function buildTrendYearSeries(
     trends,
     timezone,
     // read one canonical daily metric
-    (point) => point.metrics[metric],
+    (point) => point.metrics[metric] ?? null,
   );
 }
 
@@ -8985,6 +9126,7 @@ function trendDisplayValue(
 ): number {
   // convert one monotonic display scale
   switch (format) {
+    case "airQuality":
     case "count":
       return value;
     case "degreeDays":
@@ -9027,6 +9169,7 @@ function trendCanonicalValue(
 ): number {
   // invert one monotonic display scale
   switch (format) {
+    case "airQuality":
     case "count":
       return value;
     case "degreeDays":
@@ -9067,6 +9210,11 @@ function formatTrendMeasurement(
   format: TrendChartFormat,
   units: UnitPreferences,
 ): FormattedMeasurement {
+  // retain the same AQI scale under every unit preference
+  if (format === "airQuality") {
+    return formatFixedMeasurement(value, "AQI", 0);
+  }
+
   // format whole-day streaks and cumulative counts
   if (format === "count") {
     return formatFixedMeasurement(value, "days", 0);
@@ -10546,7 +10694,11 @@ function propertySensorReadingLabels(
   }
   pushMeasurement("dailyPrecipitationMm", "Accumulation", "precipitation");
   pushMeasurement("pressureHpa", "Pressure", "pressure");
-  pushFixed("pm25MicrogramsPerCubicMeter", "PM2.5", "");
+  // display only a history-backed NowCast rather than converting an instantaneous reading
+  if (readings.pm25MicrogramsPerCubicMeter !== undefined) {
+    const value = pm25NowCastAqi(sensor.airQuality);
+    labels.push(value === null ? "Air quality unavailable" : `Air quality ${String(value)} AQI`);
+  }
   pushFixed("uvIndex", "UV", "");
   pushFixed("solarRadiationWm2", "Solar", "W/m²");
   pushMeasurement("blackGlobeTemperatureC", "Globe", "temperature");
@@ -11064,8 +11216,8 @@ function renderCompactStationCurrent(
       value: compactMeasurement(formatMeasurement(record.metrics.pressureHpa, "pressure", state.units)),
     },
     {
-      label: "PM2.5",
-      value: compactMeasurement(formatFixedMeasurement(record.metrics.pm25MicrogramsPerCubicMeter, "µg/m³")),
+      label: "Air quality",
+      value: compactMeasurement(formatFixedMeasurement(pm25NowCastAqi(record.airQuality), "AQI", 0)),
     },
     {
       label: "UV",
@@ -11156,9 +11308,9 @@ function stationReading(stationSlug: string, state: DashboardState): string {
     return `${value.value}${value.unit}`;
   }
 
-  // fall back to particulate concentration
+  // fall back to history-backed particulate AQI
   if (record.metrics.pm25MicrogramsPerCubicMeter !== null) {
-    return `${formatNumber(record.metrics.pm25MicrogramsPerCubicMeter)} µg/m³ PM2.5`;
+    return compactMeasurement(formatFixedMeasurement(pm25NowCastAqi(record.airQuality), "AQI", 0)) ?? "Air quality unavailable";
   }
 
   return "Current sample available";
@@ -11419,39 +11571,39 @@ export function windBand(
   return { color, detail: `Peak reading ${peak.value} ${peak.unit}`, label: "Dangerous" };
 }
 
-// classify PM2.5 with current EPA health-category breakpoints
+// classify the calculated US AQI without converting its values again
 export function airQualityBand(value: number | null): ConditionBand {
   // preserve unavailable particulate data honestly
-  if (value === null) {
-    return unavailableBand("PM2.5 reading unavailable");
+  if (value === null || !Number.isFinite(value) || value < 0) {
+    return unavailableBand("PM2.5 AQI unavailable");
   }
 
   // label the good PM2.5 range
-  if (value <= 9) {
-    return { color: "rgb(0, 146, 63)", detail: "PM2.5 health range", label: "Good" };
+  if (value <= 50) {
+    return { color: "rgb(0, 146, 63)", detail: "US PM2.5 AQI", label: "Good" };
   }
 
   // label the moderate PM2.5 range
-  if (value <= 35.4) {
-    return { color: "rgb(230, 181, 25)", detail: "PM2.5 health range", label: "Moderate" };
+  if (value <= 100) {
+    return { color: "rgb(230, 181, 25)", detail: "US PM2.5 AQI", label: "Moderate" };
   }
 
   // label sensitive-group risk
-  if (value <= 55.4) {
-    return { color: "rgb(239, 126, 31)", detail: "PM2.5 health range", label: "Sensitive groups" };
+  if (value <= 150) {
+    return { color: "rgb(239, 126, 31)", detail: "US PM2.5 AQI", label: "Sensitive groups" };
   }
 
   // label unhealthy particulate levels
-  if (value <= 125.4) {
-    return { color: "rgb(207, 67, 55)", detail: "PM2.5 health range", label: "Unhealthy" };
+  if (value <= 200) {
+    return { color: "rgb(207, 67, 55)", detail: "US PM2.5 AQI", label: "Unhealthy" };
   }
 
   // label very unhealthy particulate levels
-  if (value <= 225.4) {
-    return { color: "rgb(124, 81, 116)", detail: "PM2.5 health range", label: "Very unhealthy" };
+  if (value <= 300) {
+    return { color: "rgb(124, 81, 116)", detail: "US PM2.5 AQI", label: "Very unhealthy" };
   }
 
-  return { color: "rgb(114, 30, 52)", detail: "PM2.5 health range", label: "Hazardous" };
+  return { color: "rgb(114, 30, 52)", detail: "US PM2.5 AQI", label: "Hazardous" };
 }
 
 // classify UV exposure with the EPA scale
@@ -14569,6 +14721,22 @@ function forecastHumidity(records: readonly WeatherRecord[], useAdjustments: boo
       measurement: formatFixedMeasurement(value, "%", 0),
       tone: forecastToneForBand(value, humidityBand(value, temperatureC)),
     }],
+  };
+}
+
+// aggregate the selected raw or corrected PM forecast before converting to AQI
+function forecastAirQualityDays(records: readonly WeatherRecord[], timezone: string, useAdjustments: boolean): ReadonlyMap<string, number> {
+  return dailyForecastAqi(records.map(
+    // retain raw concentration semantics inside forecast correction models
+    (record) => ({ validAt: record.validAt, concentration: forecastMetricValue(record, "pm25MicrogramsPerCubicMeter", useAdjustments) }),
+  ), timezone);
+}
+
+// label the day's predicted mean rather than an instantaneous maximum
+function forecastAirQuality(records: readonly WeatherRecord[], referenceAt: string, timezone: string, useAdjustments: boolean): ForecastCardValue {
+  const value = forecastAirQualityDays(records, timezone, useAdjustments).get(forecastSiteDateKey(referenceAt, timezone)) ?? null;
+  return {
+    readings: [{ label: "Daily", measurement: formatFixedMeasurement(value, "AQI", 0), tone: forecastToneForBand(value, airQualityBand(value)) }],
   };
 }
 

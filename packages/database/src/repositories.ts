@@ -266,6 +266,7 @@ export interface ForecastObservationInput {
 }
 
 export interface CurrentQuery {
+  readonly asOf?: string;
   readonly sourceId?: string;
   readonly stationSlug?: string;
 }
@@ -556,6 +557,7 @@ export interface TideQuery {
 
 export interface TrendPointRow extends QueryResultRow {
   readonly apparentTemperatureC: number | null;
+  readonly pm25MicrogramsPerCubicMeter: number | null;
   readonly precipitationMm: number | null;
   readonly pressureHpa: number | null;
   readonly relativeHumidityPercent: number | null;
@@ -618,6 +620,9 @@ export interface WeatherRecordRow extends QueryResultRow {
 
 // retain same-source pressure change with its current row
 export interface CurrentWeatherRecordRow extends WeatherRecordRow {
+  readonly pm25HourlyBySensor: Readonly<Record<string, readonly (number | null)[]>> | null;
+  readonly pm25HourlyConcentrations: readonly (number | null)[] | null;
+  readonly pm25HourlyThrough: Date | string;
   readonly pressureChange3hHpa: number | null;
 }
 
@@ -1978,6 +1983,7 @@ export async function getCurrentWeather(
   siteSlug: string,
   query: CurrentQuery = {},
 ): Promise<readonly CurrentWeatherRecordRow[]> {
+  const asOf = validateUtcInstant(query.asOf ?? new Date().toISOString(), "asOf");
   const result = await pool.query<CurrentWeatherRecordRow>(
     `
       SELECT
@@ -1996,7 +2002,10 @@ export async function getCurrentWeather(
               * EXTRACT(EPOCH FROM (wr.valid_at - interval '3 hours' - pressure_before.valid_at))
               / EXTRACT(EPOCH FROM (pressure_after.valid_at - pressure_before.valid_at))
           )
-        END AS "pressureChange3hHpa"
+        END AS "pressureChange3hHpa",
+        pm25_context.hourly_concentrations AS "pm25HourlyConcentrations",
+        pm25_context.hourly_by_sensor AS "pm25HourlyBySensor",
+        pm25_context.through_start AS "pm25HourlyThrough"
       FROM sources s
       JOIN stations st ON st.id = s.station_id
       JOIN sites si ON si.id = st.site_id
@@ -2005,6 +2014,7 @@ export async function getCurrentWeather(
         SELECT ${weatherRecordLateralSelection()}
         FROM weather_records candidate
         WHERE candidate.source_id = s.id
+          AND candidate.valid_at <= $4::timestamptz
         ORDER BY candidate.valid_at DESC, candidate.id DESC
         LIMIT 1
       ) wr ON true
@@ -2030,6 +2040,93 @@ export async function getCurrentWeather(
         ORDER BY candidate.valid_at ASC, candidate.id ASC
         LIMIT 1
       ) pressure_after ON true
+      -- build source-local hourly particulate means for the EPA NowCast input
+      LEFT JOIN LATERAL (
+        WITH bounds AS (
+          SELECT date_trunc('hour', $4::timestamptz) - interval '1 hour' AS through_start
+        ),
+        slots AS (
+          SELECT
+            age,
+            bounds.through_start - age * interval '1 hour' AS hour_start
+          FROM bounds
+          CROSS JOIN generate_series(0, 11) AS age
+        ),
+        raw_pm25 AS MATERIALIZED (
+          SELECT
+            date_trunc('hour', candidate.valid_at) AS hour_start,
+            candidate.pm25_micrograms_per_cubic_meter,
+            candidate.provider_metadata
+          FROM weather_records candidate
+          CROSS JOIN bounds
+          WHERE candidate.source_id = s.id
+            AND s.source_kind = 'physical_sensor'
+            AND candidate.source_kind = 'physical_sensor'
+            AND (
+              candidate.pm25_micrograms_per_cubic_meter IS NOT NULL
+              OR COALESCE(
+                jsonb_path_exists(
+                  candidate.provider_metadata,
+                  '$.property_sensors[*].readings.pm25MicrogramsPerCubicMeter'
+                ),
+                false
+              )
+            )
+            AND candidate.valid_at >= bounds.through_start - interval '11 hours'
+            AND candidate.valid_at < bounds.through_start + interval '1 hour'
+        ),
+        main_hourly AS (
+          SELECT
+            hour_start,
+            AVG(pm25_micrograms_per_cubic_meter) AS concentration
+          FROM raw_pm25
+          WHERE pm25_micrograms_per_cubic_meter >= 0
+            AND pm25_micrograms_per_cubic_meter < 'Infinity'::double precision
+          GROUP BY hour_start
+        ),
+        sensor_hourly AS (
+          SELECT
+            sensor.value ->> 'key' AS sensor_key,
+            raw_pm25.hour_start,
+            AVG((sensor.value #>> '{readings,pm25MicrogramsPerCubicMeter}')::double precision) AS concentration
+          FROM raw_pm25
+          CROSS JOIN LATERAL jsonb_array_elements(
+            CASE
+              WHEN jsonb_typeof(raw_pm25.provider_metadata -> 'property_sensors') = 'array'
+              THEN raw_pm25.provider_metadata -> 'property_sensors'
+              ELSE '[]'::jsonb
+            END
+          ) AS sensor(value)
+          WHERE sensor.value ->> 'model' = 'WH41'
+            AND sensor.value ->> 'key' ~ '^air-quality-[1-9][0-9]?$'
+            AND jsonb_typeof(sensor.value #> '{readings,pm25MicrogramsPerCubicMeter}') = 'number'
+            AND (sensor.value #>> '{readings,pm25MicrogramsPerCubicMeter}')::double precision >= 0
+            AND (sensor.value #>> '{readings,pm25MicrogramsPerCubicMeter}')::double precision < 'Infinity'::double precision
+          GROUP BY sensor.value ->> 'key', raw_pm25.hour_start
+        ),
+        sensor_contexts AS (
+          SELECT
+            sensor_keys.sensor_key,
+            jsonb_agg(sensor_hourly.concentration ORDER BY slots.age) AS hourly_concentrations
+          FROM (SELECT DISTINCT sensor_key FROM sensor_hourly) sensor_keys
+          CROSS JOIN slots
+          LEFT JOIN sensor_hourly
+            ON sensor_hourly.sensor_key = sensor_keys.sensor_key
+            AND sensor_hourly.hour_start = slots.hour_start
+          GROUP BY sensor_keys.sensor_key
+        )
+        SELECT
+          CASE
+            WHEN COUNT(main_hourly.concentration) = 0 THEN NULL
+            ELSE ARRAY_AGG(main_hourly.concentration ORDER BY slots.age)
+          END AS hourly_concentrations,
+          (SELECT jsonb_object_agg(sensor_key, hourly_concentrations) FROM sensor_contexts) AS hourly_by_sensor,
+          bounds.through_start
+        FROM bounds
+        CROSS JOIN slots
+        LEFT JOIN main_hourly ON main_hourly.hour_start = slots.hour_start
+        GROUP BY bounds.through_start
+      ) pm25_context ON true
       WHERE si.slug = $1
         AND si.active
         AND st.active
@@ -2041,7 +2138,7 @@ export async function getCurrentWeather(
         AND ($3::bigint IS NULL OR s.id = $3)
       ORDER BY wr.source_id
     `,
-    [siteSlug, query.stationSlug ?? null, query.sourceId ?? null],
+    [siteSlug, query.stationSlug ?? null, query.sourceId ?? null, asOf],
   );
 
   return result.rows;
@@ -3138,6 +3235,7 @@ export async function listWeatherTrends(
       WITH daily_sources AS (
         SELECT
           date_trunc('day', wr.valid_at AT TIME ZONE si.timezone) AT TIME ZONE si.timezone AS valid_at,
+          (wr.valid_at AT TIME ZONE si.timezone)::date AS calendar_day,
           s.source_kind,
           AVG(wr.temperature_c) AS temperature_c,
           MAX(wr.temperature_c) AS temperature_maximum_c,
@@ -3166,7 +3264,7 @@ export async function listWeatherTrends(
           AND p.active
           AND s.source_kind IN ('model_current', 'reanalysis')
           AND ${CURRENT_SOURCE_PREDICATE}
-        GROUP BY 1, s.source_kind
+        GROUP BY 1, 2, s.source_kind
       ),
       preferred_days AS (
         SELECT
@@ -3176,6 +3274,54 @@ export async function listWeatherTrends(
             ORDER BY CASE source_kind WHEN 'reanalysis' THEN 0 ELSE 1 END
           ) AS source_priority
         FROM daily_sources
+      ),
+      -- average equal hourly farm observations on fixed Pacific standard-time days
+      physical_pm_hourly AS (
+        SELECT
+          (wr.valid_at AT TIME ZONE 'UTC' - interval '8 hours')::date AS calendar_day,
+          s.id AS source_id,
+          date_trunc('hour', wr.valid_at) AS hour_start,
+          AVG(wr.pm25_micrograms_per_cubic_meter) AS hourly_concentration
+        FROM weather_records wr
+        JOIN sources s ON s.id = wr.source_id
+        JOIN stations st ON st.id = s.station_id
+        JOIN sites si ON si.id = st.site_id
+        JOIN providers p ON p.id = s.provider_id
+        WHERE si.slug = $1
+          AND si.timezone = 'America/Los_Angeles'
+          AND st.slug = 'ballydidean-ecowitt'
+          AND p.provider_key = 'ecowitt-local'
+          AND wr.valid_at >= $2
+          AND wr.valid_at < $3
+          AND wr.pm25_micrograms_per_cubic_meter >= 0
+          AND wr.pm25_micrograms_per_cubic_meter < 'Infinity'::double precision
+          AND si.active
+          AND st.active
+          AND s.active
+          AND p.active
+          AND s.source_kind = 'physical_sensor'
+          AND wr.source_kind = 'physical_sensor'
+          AND ${CURRENT_SOURCE_PREDICATE}
+        GROUP BY 1, s.id, 3
+      ),
+      physical_pm_days AS (
+        SELECT
+          calendar_day,
+          source_id,
+          AVG(hourly_concentration) AS daily_concentration
+        FROM physical_pm_hourly
+        WHERE (calendar_day::timestamp AT TIME ZONE 'UTC') + interval '32 hours' <= $3
+        GROUP BY calendar_day, source_id
+        HAVING COUNT(*) >= 18
+      ),
+      preferred_pm_days AS (
+        SELECT
+          physical_pm_days.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY calendar_day
+            ORDER BY source_id
+          ) AS source_priority
+        FROM physical_pm_days
       )
       SELECT
         valid_at AS "validAt",
@@ -3188,10 +3334,14 @@ export async function listWeatherTrends(
         wind_gust_mps AS "windGustMps",
         wind_direction_degrees AS "windDirectionDegrees",
         pressure_hpa AS "pressureHpa",
-        relative_humidity_percent AS "relativeHumidityPercent"
+        relative_humidity_percent AS "relativeHumidityPercent",
+        preferred_pm_days.daily_concentration AS "pm25MicrogramsPerCubicMeter"
       FROM preferred_days
-      WHERE source_priority = 1
-      ORDER BY valid_at ASC
+      LEFT JOIN preferred_pm_days
+        ON preferred_pm_days.calendar_day = preferred_days.calendar_day
+        AND preferred_pm_days.source_priority = 1
+      WHERE preferred_days.source_priority = 1
+      ORDER BY preferred_days.valid_at ASC
     `,
     [query.siteSlug, from, to],
   );

@@ -209,7 +209,7 @@ fi`;
 }
 
 // retain an installed predecessor while preparing a different immutable bundle
-async function createUpgradeFixture() {
+async function createUpgradeFixture(validatorOnly = false) {
   const fixture = await createFixture();
   const bootstrap = runInstaller(fixture);
   assert.equal(bootstrap.status, 0, bootstrap.stderr);
@@ -218,8 +218,10 @@ async function createUpgradeFixture() {
   fixture.oldReceipt = await readFile(join(fixture.deploy, "state/schema-preserving-release-v1/installation.json"), "utf8");
   fixture.bundle = join(fixture.root, "repaired-bundle");
   await mkdir(fixture.bundle, { mode: 0o700 });
-  const operator = "#!/usr/bin/env bash\n# repaired fixture helper\n";
-  const validator = "export const helper = true;\n";
+  const operator = validatorOnly
+    ? await readFile(join(fixture.operators, fixture.previousSha, "schema-preserving-release.sh"), "utf8")
+    : "#!/usr/bin/env bash\n# repaired fixture helper\n";
+  const validator = validatorOnly ? "export const helper = 'reviewed-query';\n" : "export const helper = true;\n";
   await writeFile(join(fixture.bundle, "schema-preserving-release.sh"), operator, { mode: 0o755 });
   await writeFile(join(fixture.bundle, "schema-preserving-release.mjs"), validator, { mode: 0o644 });
   await chmod(join(fixture.bundle, "schema-preserving-release.sh"), 0o755);
@@ -251,6 +253,23 @@ test("bundle upgrade retains the legacy receipt and publishes new authority befo
     assert.equal(retry.status, 0, retry.stderr);
     const pending = runInstaller(fixture, "pending", true);
     assert.equal(pending.status, 0, pending.stderr);
+  } finally {
+    await cleanup(fixture);
+  }
+});
+
+// validator-only repairs still require a distinct bundle and retain rollback authority
+test("validator-only upgrade rotates authority without changing the operator shell", async () => {
+  const fixture = await createUpgradeFixture(true);
+  try {
+    assert.notEqual(fixture.bundleSha, fixture.previousSha);
+    const result = runInstaller(fixture, "", true);
+    assert.equal(result.status, 0, result.stderr);
+    const previous = join(fixture.operators, fixture.previousSha);
+    const current = join(fixture.operators, fixture.bundleSha);
+    assert.equal(await readFile(join(current, "schema-preserving-release.sh"), "utf8"), await readFile(join(previous, "schema-preserving-release.sh"), "utf8"));
+    assert.notEqual(await readFile(join(current, "schema-preserving-release.mjs"), "utf8"), await readFile(join(previous, "schema-preserving-release.mjs"), "utf8"));
+    assert.equal(await readFile(join(fixture.deploy, "state/schema-preserving-release-v1/installation.json"), "utf8"), fixture.oldReceipt);
   } finally {
     await cleanup(fixture);
   }

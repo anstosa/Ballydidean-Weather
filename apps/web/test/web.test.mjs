@@ -211,6 +211,15 @@ const forecastRecord = {
   validAt: "2026-08-22T06:00:00.000Z",
 };
 
+// build one complete current-hour PM2.5 history for rendered AQI fixtures
+function currentAirQualityContext(concentration, now = Date.now()) {
+  const hour = 3_600_000;
+  return {
+    hourlyPm25: Array(12).fill(concentration),
+    through: new Date(Math.floor(now / hour) * hour - hour).toISOString(),
+  };
+}
+
 // build one hourly cloud forecast fixture
 function cloudForecastRecord(validAt, cloudCoverPercent, id = validAt) {
   return {
@@ -390,6 +399,7 @@ const ecowittRecord = {
 const trend = {
   metrics: {
     apparentTemperatureC: 15.5,
+    pm25MicrogramsPerCubicMeter: 15,
     precipitationMm: 0.2,
     pressureHpa: 1014.2,
     relativeHumidityPercent: 78,
@@ -1216,6 +1226,51 @@ test("forecast adjustment boundary preserves raw and validates active metadata",
   assert.doesNotMatch(rawHtml, /data-forecast-adjustment-status|Local adjustment turned off/u);
 });
 
+// keep standard-time AQI padding separate from the visible civil-day forecast
+test("forecast AQI context completes daily means without changing visible weather", () => {
+  const visible = Array.from({ length: 24 },
+    // model one summer civil day from midnight PDT through 11 PM PDT
+    (_, index) => ({
+      ...forecastRecord,
+      id: `visible-${String(index)}`,
+      metrics: {
+        ...forecastRecord.metrics,
+        pm25MicrogramsPerCubicMeter: 15,
+        precipitationMm: 0,
+        temperatureC: 16,
+      },
+      validAt: new Date(Date.parse("2026-08-21T07:00:00.000Z") + index * 3_600_000).toISOString(),
+    }),
+  );
+  const padding = {
+    ...forecastRecord,
+    id: "standard-day-padding",
+    metrics: {
+      ...forecastRecord.metrics,
+      pm25MicrogramsPerCubicMeter: 15,
+      precipitationMm: 100,
+      precipitationRateMmPerHour: 100,
+      temperatureC: -50,
+    },
+    validAt: "2026-08-22T07:00:00.000Z",
+  };
+  const parsed = parseForecastRecordsResponse({ airQualityContext: [padding], data: visible, site });
+  assert.equal(parsed.data.length, 24);
+  assert.equal(parsed.airQualityContext.length, 1);
+  const state = {
+    ...forecastState(parsed.data, parsed.adjustmentRuntime),
+    forecastAirQualityContext: parsed.airQualityContext,
+  };
+  const forecastHtml = renderWeatherDashboard(state, "forecast");
+  const homeHtml = renderWeatherDashboard(state, "home");
+  assert.deepEqual(forecastChartSeries(forecastHtml, "air-quality"), [
+    { label: "Daily AQI", values: [null, ...Array(23).fill(62)] },
+  ]);
+  assert.doesNotMatch(JSON.stringify(forecastChartSeries(forecastHtml, "temperature")), /-50/u);
+  assert.match(conditionCardHtml(homeHtml, "air-quality"), /Daily<\/span> <strong>62 <small>AQI/u);
+  assert.doesNotMatch(homeHtml, /Frost possible|Heavy rain/u);
+});
+
 // retain accessible switch state without a visible label or separate chip content
 test("sparkle adjustment switch exposes both preferences without visible text", () => {
   // use the same control on both forecast-bearing routes
@@ -1267,6 +1322,7 @@ test("Now navigation owns the current weather icon on every route", () => {
 test("raw mode uses model current values without sensor fallback or homepage supplements", () => {
   const quietModel = {
     ...record,
+    airQuality: currentAirQualityContext(5),
     pressureChange3hHpa: -1,
     metrics: {
       ...record.metrics,
@@ -1283,6 +1339,7 @@ test("raw mode uses model current values without sensor fallback or homepage sup
   };
   const hazardousLocal = {
     ...ecowittRecord,
+    airQuality: currentAirQualityContext(50),
     pressureChange3hHpa: 9,
     metrics: {
       ...ecowittRecord.metrics,
@@ -1320,7 +1377,7 @@ test("raw mode uses model current values without sensor fallback or homepage sup
   assert.match(conditionCardHtml(adjusted, "wind"), /class="condition-primary"><strong>22<small>mph SW/u);
   assert.match(conditionCardHtml(adjusted, "rain"), /class="condition-primary"><strong>0\.31<small>in\/h/u);
   assert.match(conditionCardHtml(adjusted, "rain"), /Accumulation[\s\S]*?0\.1<small>in/u);
-  assert.match(conditionCardHtml(adjusted, "air-quality"), /class="condition-primary"><strong>50/u);
+  assert.match(conditionCardHtml(adjusted, "air-quality"), /class="condition-primary"><strong>137<small>AQI/u);
   assert.match(conditionCardHtml(adjusted, "pressure"), /class="condition-primary"><strong>\+9\.0/u);
   assert.match(adjusted, /Heat stress[\s\S]*High wind[\s\S]*Heavy rain[\s\S]*Air quality/u);
   assert.match(adjusted, /\/weather-icons\/10-heavy-rain-wind\.svg/u);
@@ -1330,7 +1387,7 @@ test("raw mode uses model current values without sensor fallback or homepage sup
   assert.match(conditionCardHtml(raw, "wind"), /class="condition-primary"><strong>2<small>mph SW/u);
   assert.match(conditionCardHtml(raw, "rain"), /class="condition-primary"><strong>0<small>in\/h/u);
   assert.match(conditionCardHtml(raw, "rain"), /Accumulation[\s\S]*?<strong>—<\/strong>/u);
-  assert.match(conditionCardHtml(raw, "air-quality"), /class="condition-primary"><strong>5/u);
+  assert.match(conditionCardHtml(raw, "air-quality"), /class="condition-primary"><strong>28<small>AQI/u);
   assert.match(conditionCardHtml(raw, "pressure"), /class="condition-primary"><strong>-1\.0/u);
   assert.doesNotMatch(raw, /class="alert-list"/u);
   assert.match(raw, /\/weather-icons\/05-cloudy\.svg/u);
@@ -1338,6 +1395,7 @@ test("raw mode uses model current values without sensor fallback or homepage sup
 
   const hazardousModel = {
     ...quietModel,
+    airQuality: currentAirQualityContext(50),
     pressureChange3hHpa: -4,
     metrics: {
       ...quietModel.metrics,
@@ -1352,6 +1410,7 @@ test("raw mode uses model current values without sensor fallback or homepage sup
   };
   const quietLocal = {
     ...hazardousLocal,
+    airQuality: currentAirQualityContext(4),
     pressureChange3hHpa: 1,
     metrics: {
       ...hazardousLocal.metrics,
@@ -1409,10 +1468,94 @@ test("raw mode uses model current values without sensor fallback or homepage sup
   assert.match(renderWeatherDashboard(rawState, "trends", true), /data-trend-metric-control/u);
 });
 
+// prove every visible air-quality surface uses averaged app-calculated AQI
+test("air quality renders NowCast and complete daily forecast AQI instead of instantaneous PM2.5", (context) => {
+  context.mock.timers.enable({ apis: ["Date"], now: new Date("2026-08-22T05:30:00.000Z") });
+  const regionalContext = { hourlyPm25: Array(12).fill(10), through: "2026-08-22T04:00:00.000Z" };
+  const farmContext = { hourlyPm25: Array(12).fill(15), through: "2026-08-22T04:00:00.000Z" };
+  const regional = {
+    ...record,
+    airQuality: regionalContext,
+    metrics: { ...record.metrics, pm25MicrogramsPerCubicMeter: 100 },
+  };
+  const sensor = {
+    airQuality: farmContext,
+    channel: 1,
+    key: "air-quality-1",
+    model: "WH41",
+    readings: { pm25MicrogramsPerCubicMeter: 300 },
+  };
+  const farm = {
+    ...ecowittRecord,
+    airQuality: farmContext,
+    metadata: {
+      ...ecowittRecord.metadata,
+      provider: { ...ecowittRecord.metadata.provider, propertySensors: [sensor] },
+    },
+    metrics: { ...ecowittRecord.metrics, pm25MicrogramsPerCubicMeter: 300 },
+  };
+  const start = Date.parse("2026-08-21T08:00:00.000Z");
+  const forecast = Array.from({ length: 24 },
+    // provide one complete Pacific local-standard-time forecast day
+    (_, index) => ({
+      ...forecastRecord,
+      id: `aqi-${String(index)}`,
+      metrics: { ...forecastRecord.metrics, pm25MicrogramsPerCubicMeter: 15 },
+      validAt: new Date(start + index * 3_600_000).toISOString(),
+    }),
+  );
+  const state = {
+    ...forecastState(forecast, null),
+    current: [regional, farm],
+    homeNetwork: true,
+    propertySensorLayout: [{
+      displayName: "Air quality",
+      icon: "air-quality",
+      latitude: 47.9505,
+      longitude: -122.4281,
+      sensorKey: "air-quality-1",
+      updatedAt: "2026-08-22T04:59:00.000Z",
+    }],
+    selectedPropertySensorKey: "air-quality-1",
+  };
+  const adjusted = renderWeatherDashboard(state, "home", true);
+  const raw = renderWeatherDashboard({ ...state, forecastAdjustmentMode: "raw" }, "home", true);
+  const property = renderWeatherDashboard(state, "map", true);
+  const hazardousForecast = forecast.map(
+    // preserve every complete-day hour while crossing the upper AQI breakpoint
+    (hour) => ({
+      ...hour,
+      metrics: { ...hour.metrics, pm25MicrogramsPerCubicMeter: 325.7 },
+    }),
+  );
+  const hazardousForecastHtml = renderWeatherDashboard({
+    ...state,
+    forecast: hazardousForecast,
+  }, "forecast", true);
+
+  assert.match(conditionCardHtml(adjusted, "air-quality"), /class="condition-primary"><strong>62<small>AQI/u);
+  assert.match(conditionCardHtml(adjusted, "air-quality"), /Daily<\/span> <strong>62 <small>AQI/u);
+  assert.match(conditionCardHtml(raw, "air-quality"), /class="condition-primary"><strong>53<small>AQI/u);
+  assert.match(property, /Air quality 62 AQI/u);
+  assert.doesNotMatch(`${adjusted}${raw}${property}`, /300(?:<|\s)|µg\/m³|PM2\.5 is/u);
+  assert.deepEqual(forecastChartSeries(hazardousForecastHtml, "air-quality"), [
+    { label: "Daily AQI", values: Array(23).fill(501) },
+  ]);
+  assert.match(forecastChartHtml(hazardousForecastHtml, "air-quality"), /data-forecast-min="0"[\s\S]*data-forecast-max="550"/u);
+  assert.match(forecastChartHtml(hazardousForecastHtml, "air-quality"), /stop-color="rgb\(114, 30, 52\)"/u);
+  assert.doesNotMatch(forecastChartHtml(hazardousForecastHtml, "air-quality"), /325\.7|µg\/m³/u);
+});
+
 // create one nearby station with explicit source and observation identities
 function localFallbackRecord(stationSlug, metrics, overrides = {}) {
   return {
     ...physicalRecord,
+    airQuality: metrics.pm25MicrogramsPerCubicMeter !== undefined &&
+      metrics.pm25MicrogramsPerCubicMeter !== null &&
+      metrics.pm25MicrogramsPerCubicMeter >= 0 &&
+      metrics.pm25MicrogramsPerCubicMeter <= 999
+      ? currentAirQualityContext(metrics.pm25MicrogramsPerCubicMeter)
+      : null,
     id: stationSlug,
     metrics: { ...physicalRecord.metrics, ...metrics },
     provenance: { ...physicalRecord.provenance, stationSlug, sourceKey: `${stationSlug}-current` },
@@ -1445,7 +1588,7 @@ test("home current readings average non-stale local stations when the farm is ab
     assert.match(conditionCardHtml(html, "wind"), /Gusts[\s\S]*?<strong>13<small>mph/u);
     assert.match(conditionCardHtml(html, "rain"), /class="condition-primary"><strong>0\.1<small>in\/h/u);
     assert.match(conditionCardHtml(html, "rain"), /Accumulation[\s\S]*?<strong>0\.1<small>in/u);
-    assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>4<\/strong>/u);
+    assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>22<small>AQI/u);
     assert.match(conditionCardHtml(html, "uv-index"), /class="condition-primary"><strong>1/u);
     assert.match(conditionCardHtml(html, "pressure"), /class="condition-primary"><strong>-2\.0/u);
     assert.match(conditionCardHtml(html, "clouds"), /class="condition-primary"><strong>42<small>%/u);
@@ -1457,7 +1600,7 @@ test("home current readings average non-stale local stations when the farm is ab
 
 // retain zeros and working farm sensors during a partial outage
 test("home current readings fill only missing or non-finite farm metrics", () => {
-  const farm = { ...ecowittRecord, metrics: {
+  const farm = { ...ecowittRecord, airQuality: currentAirQualityContext(0), metrics: {
     ...ecowittRecord.metrics, apparentTemperatureC: null, temperatureC: Number.NaN,
     relativeHumidityPercent: 0, precipitationRateMmPerHour: 0, windSpeedMps: 0, windGustMps: 0,
     windDirectionDegrees: null, pm25MicrogramsPerCubicMeter: 0, uvIndex: Number.POSITIVE_INFINITY,
@@ -1474,7 +1617,7 @@ test("home current readings fill only missing or non-finite farm metrics", () =>
   assert.match(conditionCardHtml(html, "wind"), /Gusts[\s\S]*?<strong>0<small>mph/u);
   assert.match(conditionCardHtml(html, "rain"), /class="condition-primary"><strong>0<small>in\/h/u);
   assert.match(conditionCardHtml(html, "humidity"), /class="condition-primary"><strong>0<small>%/u);
-  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>0/u);
+  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>0<small>AQI/u);
   assert.match(conditionCardHtml(html, "uv-index"), /class="condition-primary"><strong>2/u);
   assert.doesNotMatch(html, /NaN|Infinity|class="alert-list"/u);
 });
@@ -1496,7 +1639,7 @@ test("home local fallback rejects impossible metric domains without rejecting fr
   assert.match(conditionCardHtml(html, "wind"), /Gusts[\s\S]*?<strong>4<small>mph/u);
   assert.match(conditionCardHtml(html, "humidity"), /class="condition-primary"><strong>50<small>%/u);
   assert.match(conditionCardHtml(html, "rain"), /class="condition-primary"><strong>0<small>in\/h/u);
-  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>0/u);
+  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>0<small>AQI/u);
   assert.match(conditionCardHtml(html, "uv-index"), /class="condition-primary"><strong>0/u);
   assert.match(conditionCardHtml(html, "pressure"), /class="condition-primary"><strong>-1\.0/u);
 });
@@ -1547,7 +1690,7 @@ test("home fallback applies canonical upper bounds and preserves valid wet-bulb 
   const html = renderWeatherDashboard(state);
   assert.match(conditionCardHtml(html, "temperature"), /class="condition-primary"><strong>60<small>°F/u);
   assert.match(conditionCardHtml(html, "temperature"), /Air Temp[\s\S]*?<strong>61<small>°F/u);
-  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>7/u);
+  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>—<\/strong>/u);
   assert.match(conditionCardHtml(html, "uv-index"), /class="condition-primary"><strong>2/u);
   assert.match(conditionCardHtml(html, "rain"), /class="condition-primary"><strong>0\.02<small>in\/h/u);
   assert.match(conditionCardHtml(html, "pressure"), /class="condition-primary"><strong>\+1\.2/u);
@@ -1657,7 +1800,7 @@ test("regional current gaps use the matching fresh forecast hour for cards and a
   const original = structuredClone(state);
   const html = renderWeatherDashboard(state);
   assert.match(conditionCardHtml(html, "rain"), /class="condition-primary"><strong>0\.1<small>in\/h/u);
-  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>9/u);
+  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>—<\/strong>/u);
   assert.match(conditionCardHtml(html, "uv-index"), /class="condition-primary"><strong>3/u);
   assert.match(conditionCardHtml(html, "temperature"), /class="condition-primary"><strong>60<small>°F/u);
   assert.doesNotMatch(html, /class="alert-list"/u);
@@ -1667,7 +1810,7 @@ test("regional current gaps use the matching fresh forecast hour for cards and a
 
   const adjusted = renderWeatherDashboard({ ...state, forecastAdjustmentMode: "adjusted" });
   assert.match(conditionCardHtml(adjusted, "rain"), /class="condition-primary"><strong>0\.31<small>in\/h/u);
-  assert.match(conditionCardHtml(adjusted, "air-quality"), /class="condition-primary"><strong>50/u);
+  assert.match(conditionCardHtml(adjusted, "air-quality"), /class="condition-primary"><strong>—<\/strong>/u);
   assert.match(conditionCardHtml(adjusted, "uv-index"), /class="condition-primary"><strong>10/u);
 });
 
@@ -1683,14 +1826,14 @@ test("regional forecast supplements preserve current values and accept zero", (c
   }];
   const html = renderWeatherDashboard(state);
   assert.match(conditionCardHtml(html, "rain"), /class="condition-primary"><strong>0<small>in\/h/u);
-  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>0/u);
+  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>—<\/strong>/u);
   assert.match(conditionCardHtml(html, "uv-index"), /class="condition-primary"><strong>0/u);
   assert.equal(currentWeatherIcon(state).name, "03-partly-cloudy");
   state.current = [{ ...state.current[0], metrics: { ...state.current[0].metrics, pm25MicrogramsPerCubicMeter: 12, precipitationRateMmPerHour: 0, uvIndex: 4 } }];
   state.forecast = [hour];
   const existing = renderWeatherDashboard(state);
   assert.match(conditionCardHtml(existing, "rain"), /class="condition-primary"><strong>0<small>in\/h/u);
-  assert.match(conditionCardHtml(existing, "air-quality"), /class="condition-primary"><strong>12/u);
+  assert.match(conditionCardHtml(existing, "air-quality"), /class="condition-primary"><strong>—<\/strong>/u);
   assert.match(conditionCardHtml(existing, "uv-index"), /class="condition-primary"><strong>4/u);
 });
 
@@ -1739,9 +1882,9 @@ test("regional forecast supplements select the newest run and expire at the hour
   state.forecast = [hour, newer];
   const html = renderWeatherDashboard(state);
   assert.match(conditionCardHtml(html, "rain"), /class="condition-primary"><strong>0\.31<small>in\/h/u);
-  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>40/u);
+  assert.match(conditionCardHtml(html, "air-quality"), /class="condition-primary"><strong>—<\/strong>/u);
   assert.match(html, /Current rain 0\.31 in\/h/u);
-  assert.match(html, /PM2\.5 is 40 µg\/m³/u);
+  assert.doesNotMatch(html, /Air quality is/u);
   assert.equal(currentWeatherIcon(state).name, "09-heavy-rain");
   context.mock.timers.tick(1);
   const expired = renderWeatherDashboard(state);
@@ -1755,7 +1898,7 @@ test("regional forecast supplements select the newest run and expire at the hour
 test("regional forecast supplements use a recent receipt only when the run timestamp is absent", (context) => {
   context.mock.timers.enable({ apis: ["Date"], now: new Date("2026-08-22T20:45:00.000Z") });
   const state = regionalGapState({ productRunAt: null, receivedAt: "2026-08-22T20:30:00.000Z" });
-  assert.match(conditionCardHtml(renderWeatherDashboard(state), "air-quality"), /class="condition-primary"><strong>9/u);
+  assert.match(conditionCardHtml(renderWeatherDashboard(state), "air-quality"), /class="condition-primary"><strong>—<\/strong>/u);
 });
 
 // refresh raw regional forecasts without full reloads or overlapping background reads
@@ -1809,7 +1952,7 @@ test("regional current polling refreshes its forecast on cadence and retains saf
   pendingForecast = null;
   assert.equal(controller.state.loading, false);
   assert.equal(controller.state.forecastDays, 1);
-  assert.match(conditionCardHtml(renderWeatherDashboard(controller.state), "air-quality"), /class="condition-primary"><strong>15/u);
+  assert.match(conditionCardHtml(renderWeatherDashboard(controller.state), "air-quality"), /class="condition-primary"><strong>—<\/strong>/u);
   assert.equal(requests.some((url) => url.includes("/tides") || url.includes("/daily-precipitation")), false);
   const retained = controller.state.forecast;
   failCurrent = false;
@@ -3326,6 +3469,10 @@ test("dashboard separates current conditions from the historical logs route", (c
     ...state,
     selectedTrendMetric: "windGustMps",
   }, "trends");
+  const airQualityTrendsHtml = renderWeatherDashboard({
+    ...state,
+    selectedTrendMetric: "pm25MicrogramsPerCubicMeter",
+  }, "trends");
   const farmChartsHtml = Object.fromEntries([
     "cumulativePrecipitationMm",
     "temperatureAnomalyC",
@@ -3375,6 +3522,28 @@ test("dashboard separates current conditions from the historical logs route", (c
     trendDetail: "daily",
     trends: denseTrendHistory,
   }, "trends");
+  const denseAirQualityHistory = [2019, 2025, 2026].flatMap(
+    // provide one nonlinear air-quality step per comparison year
+    (year) => [0, 0, 0, 0, 0, 0, 35.4].map(
+      // retain daily concentration until the app converts it to aqi
+      (pm25MicrogramsPerCubicMeter, day) => ({
+        ...trend,
+        metrics: { ...trend.metrics, pm25MicrogramsPerCubicMeter },
+        validAt: `${String(year)}-01-${String(day + 1).padStart(2, "0")}T20:00:00.000Z`,
+      }),
+    ),
+  );
+  const denseRollingAirQualityHtml = renderWeatherDashboard({
+    ...state,
+    selectedTrendMetric: "pm25MicrogramsPerCubicMeter",
+    trends: denseAirQualityHistory,
+  }, "trends");
+  const denseDailyAirQualityHtml = renderWeatherDashboard({
+    ...state,
+    selectedTrendMetric: "pm25MicrogramsPerCubicMeter",
+    trendDetail: "daily",
+    trends: denseAirQualityHistory,
+  }, "trends");
   const loadingHtml = renderWeatherDashboard({
     ...state,
     error: null,
@@ -3405,6 +3574,7 @@ test("dashboard separates current conditions from the historical logs route", (c
     current: [
       {
         ...record,
+        airQuality: currentAirQualityContext(40),
         metrics: {
           ...record.metrics,
           pm25MicrogramsPerCubicMeter: 40,
@@ -3436,7 +3606,7 @@ test("dashboard separates current conditions from the historical logs route", (c
   assert.doesNotMatch(html, /No active local weather watches|class="alert-list"/u);
   assert.match(alertHtml, /<section class="alert-list" aria-label="Conditions to watch">/u);
   assert.doesNotMatch(alertHtml, /Threshold watch|<h2[^>]*>Conditions to watch|alert-strip|alert-disclaimer/u);
-  assert.match(alertHtml, /PM2\.5 is 40 µg\/m³/u);
+  assert.match(alertHtml, /Air quality is 112 AQI \(PM2\.5 NowCast\)/u);
   assert.doesNotMatch(html, /Forecast timeline|Yearly trends|Nearby station map|station-map-panel|data-station-select/u);
   assert.match(forecastHtml, /href="\/forecast" data-weather-route aria-current="page"/u);
   assert.doesNotMatch(forecastHtml, /Forecast timeline|forecast-model|forecast-scrub-help/u);
@@ -3508,8 +3678,14 @@ test("dashboard separates current conditions from the historical logs route", (c
   assert.ok(Math.abs(Number(allTrendDomain[1]) - ((72 - 32) * 5) / 9) < 0.000_001);
   assert.ok(Math.abs(Number(allTrendDomain[2]) - 5) < 0.000_001);
   assert.match(trendsHtml, /<div class="trend-metric-control" data-trend-metric-control>[\s\S]*?<h2 class="trend-chart-title">[\s\S]*?<button type="button" class="trend-metric-trigger" data-trend-metric-trigger aria-expanded="false" aria-haspopup="menu" aria-controls="trend-metric-flyover">[\s\S]*?<span>Temperature<\/span>[\s\S]*?class="trend-metric-caret"[\s\S]*?<div class="trend-metric-flyover" id="trend-metric-flyover" role="menu" aria-label="Trend measurement" hidden>[\s\S]*?data-trend-metric-option="temperatureC" role="menuitemradio" aria-checked="true">Temperature<\/button>[\s\S]*?data-trend-metric-option="apparentTemperatureC"[^>]*>Feels like<\/button>[\s\S]*?data-trend-metric-option="windSpeedMps"[^>]*>Wind speed<\/button>[\s\S]*?data-trend-metric-option="windGustMps"[^>]*>Wind gust<\/button>[\s\S]*?data-trend-metric-option="precipitationMm"[^>]*>Daily rain<\/button>[\s\S]*?data-trend-metric-option="relativeHumidityPercent"[^>]*>Humidity<\/button>[\s\S]*?data-trend-metric-option="pressureHpa"[^>]*>Pressure<\/button>/u);
-  assert.equal((trendsHtml.match(/data-trend-metric-option=/gu) ?? []).length, 15);
+  assert.match(trendsHtml, /data-trend-metric-option="pm25MicrogramsPerCubicMeter"[^>]*>Air quality<\/button>/u);
+  assert.equal((trendsHtml.match(/data-trend-metric-option=/gu) ?? []).length, 16);
   assert.match(trendsHtml, /class="trend-metric-option-group" role="presentation">[\s\S]*?Measurements[\s\S]*?class="trend-metric-option-group" role="presentation">[\s\S]*?Farm insights/u);
+  assert.match(airQualityTrendsHtml, /data-trend-chart="pm25MicrogramsPerCubicMeter"/u);
+  assert.match(airQualityTrendsHtml, /data-trend-crosshair-value="2026">62 AQI<\/output>/u);
+  assert.match(airQualityTrendsHtml, /class="trend-chart-range">[\d,]+–[\d,]+ AQI<\/span>/u);
+  assert.match(denseRollingAirQualityHtml, /data-trend-crosshair-value="2026">25 AQI<\/output>/u);
+  assert.match(denseDailyAirQualityHtml, /data-trend-crosshair-value="2026">100 AQI<\/output>/u);
   for (const [metric, chartHtml] of Object.entries(farmChartsHtml)) {
     // require one selectable rendered chart for every recommendation
     assert.match(chartHtml, new RegExp(`data-trend-chart="${metric}"`, "u"));
@@ -3679,16 +3855,16 @@ test("dashboard separates current conditions from the historical logs route", (c
   assert.match(html, /data-condition="tide"[\s\S]*?class="condition-status condition-status-dark">[\s\S]*?<span>High<\/span>[\s\S]*?<div class="condition-primary"><strong>8\.2<small>ft<\/small><\/strong>[\s\S]*?class="condition-secondary-divider">Direction<\/span>[\s\S]*?<strong>Rising<\/strong>/u);
   assert.doesNotMatch(html, /data-condition="tide"[\s\S]*?class="condition-detail">Rising<\/p>/u);
   assert.doesNotMatch(html, /condition-forecast-heading/u);
-  assert.equal((html.match(/condition-forecast-tone-green/gu) ?? []).length, 8);
+  assert.equal((html.match(/condition-forecast-tone-green/gu) ?? []).length, 7);
   assert.equal((html.match(/condition-forecast-tone-blue/gu) ?? []).length, 1);
   assert.equal((html.match(/condition-forecast-tone-orange/gu) ?? []).length, 0);
   assert.equal((html.match(/condition-forecast-tone-yellow/gu) ?? []).length, 1);
-  assert.equal((html.match(/condition-forecast-tone-neutral/gu) ?? []).length, 7);
+  assert.equal((html.match(/condition-forecast-tone-neutral/gu) ?? []).length, 8);
   assert.doesNotMatch(html, /Next 24h/u);
   assert.match(html, /data-condition="temperature"[\s\S]*?Max[\s\S]*?60<small>°F[\s\S]*?Min[\s\S]*?60<small>°F[\s\S]*?Max[\s\S]*?61<small>°F[\s\S]*?Min[\s\S]*?61<small>°F/u);
   assert.match(html, /data-condition="wind"[\s\S]*?Max[\s\S]*?9 <small>mph[\s\S]*?Max[\s\S]*?16 <small>mph/u);
   assert.match(html, /data-condition="rain"[\s\S]*?Rain[\s\S]*?Accumulation[\s\S]*?0\.1<small>in[\s\S]*?Max[\s\S]*?0\.02 <small>in\/h[\s\S]*?Total[\s\S]*?0\.01 <small>in/u);
-  assert.match(html, /data-condition="air-quality"[\s\S]*?Max[\s\S]*?<strong>7<\/strong>/u);
+  assert.match(html, /data-condition="air-quality"[\s\S]*?Daily[\s\S]*?<strong>—<\/strong>/u);
   assert.doesNotMatch(html, /data-condition="air-quality"[\s\S]*?µg\/m³/u);
   assert.match(html, /data-condition="uv-index"[\s\S]*?Max[\s\S]*?2/u);
   assert.match(html, /data-condition="pressure"[\s\S]*?Max[\s\S]*?<strong>—<\/strong>[\s\S]*?condition-forecast-label"><\/span> <strong>—<\/strong>/u);
@@ -3696,14 +3872,14 @@ test("dashboard separates current conditions from the historical logs route", (c
   assert.match(html, /data-condition="humidity"[\s\S]*?Max[\s\S]*?81<small>%/u);
   assert.match(renderWeatherDashboard({ ...state, forecastAdjustmentMode: "raw" }), /data-condition="humidity"[\s\S]*?Max[\s\S]*?78<small>%/u);
   assert.match(html, /data-condition="tide"[\s\S]*?Next low[\s\S]*?5:00 AM/u);
-  assert.match(html, /PM2\.5 health range/u);
-  assert.match(html, />Good</u);
+  assert.match(html, /PM2\.5 NowCast · US AQI/u);
+  assert.match(conditionCardHtml(html, "air-quality"), />Unavailable</u);
   assert.match(html, /Minimal sun protection needed/u);
   assert.doesNotMatch(html, /-0\.4–\+0\.9 %/u);
   assert.doesNotMatch(html, /class="current-grid"|class="metric/u);
   assert.doesNotMatch(html, /<article class="condition-card[^>]+style=/u);
   assert.equal((html.match(/class="condition-status-color"/gu) ?? []).length, 10);
-  assert.match(html, /data-condition="air-quality"[\s\S]*?class="condition-status condition-status-dark">[\s\S]*?fill="rgb\(0, 146, 63\)"/u);
+  assert.match(conditionCardHtml(html, "air-quality"), /fill="rgb\(136, 136, 130\)"/u);
   assert.match(settingsHtml, /class="material-symbols-rounded" aria-hidden="true">settings<\/span>/u);
   assert.match(html, /data-condition="temperature"[\s\S]*?>device_thermostat<\/span>/u);
   assert.match(html, /data-condition="wind"[\s\S]*?>air<\/span>/u);
@@ -3762,7 +3938,7 @@ test("dashboard separates current conditions from the historical logs route", (c
   assert.match(html, /Air Temp[\s\S]*?<strong>54<small>°F<\/small>/u);
   assert.match(html, /data-condition="wind"[\s\S]*?<div class="condition-primary"><strong>6<small>mph SW<\/small>/u);
   assert.match(html, /Gusts[\s\S]*?<strong>10<small>mph<\/small>/u);
-  assert.match(html, /data-condition="air-quality"[\s\S]*?<div class="condition-primary"><strong>7<\/strong>/u);
+  assert.match(html, /data-condition="air-quality"[\s\S]*?<div class="condition-primary"><strong>—<\/strong>/u);
   const pressure = html.match(/<article[^>]*data-condition="pressure"[\s\S]*?<\/article>/u)?.[0];
   assert.ok(pressure);
   assert.match(pressure, /<div class="condition-primary"><strong>\+1\.2<\/strong>/u);
@@ -4434,8 +4610,8 @@ test("current condition bands follow requested weather and health thresholds", (
     "Peak reading 7 m/s",
   );
   assert.deepEqual(
-    [9, 9.1, 35.5, 55.5, 125.5, 225.5].map(
-      // collect every EPA particulate band
+    [50, 51, 101, 151, 201, 301].map(
+      // collect every EPA AQI band
       (value) => airQualityBand(value).label,
     ),
     ["Good", "Moderate", "Sensitive groups", "Unhealthy", "Very unhealthy", "Hazardous"],

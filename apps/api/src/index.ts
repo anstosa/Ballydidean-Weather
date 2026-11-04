@@ -236,6 +236,7 @@ export interface ApiWeatherRecord {
 
 // add source-local tendency only to current records
 export interface ApiCurrentWeatherRecord extends ApiWeatherRecord {
+  readonly airQuality: ApiAirQualityHourlyContext | null;
   readonly pressureChange3hHpa: number | null;
 }
 
@@ -288,10 +289,16 @@ export interface ApiForecastTemperatureAdjustmentRuntime {
 }
 
 export interface ApiPropertySensorSnapshot {
+  readonly airQuality?: ApiAirQualityHourlyContext | null;
   readonly channel: number | null;
   readonly key: string;
   readonly model: string;
   readonly readings: Readonly<Record<string, number>>;
+}
+
+export interface ApiAirQualityHourlyContext {
+  readonly hourlyPm25: readonly (number | null)[];
+  readonly through: string;
 }
 
 export interface ApiTideRecord {
@@ -310,6 +317,7 @@ export interface ApiTideRecord {
 export interface ApiTrendPoint {
   readonly metrics: {
     readonly apparentTemperatureC: number | null;
+    readonly pm25MicrogramsPerCubicMeter: number | null;
     readonly precipitationMm: number | null;
     readonly pressureHpa: number | null;
     readonly relativeHumidityPercent: number | null;
@@ -1337,7 +1345,7 @@ async function handleReadRoute(
       // parse only the current query boundary
       () => parseCurrentQuery(url.searchParams, site),
     );
-    const rows = await store.getCurrent(route.siteSlug, query);
+    const rows = await store.getCurrent(route.siteSlug, { ...query, asOf: generatedAt });
     const records = mapCurrentWeatherRecords(rows, indexSources(site), generatedAt);
     return jsonResponse({ data: records, generatedAt, site });
   }
@@ -1375,10 +1383,18 @@ async function handleReadRoute(
         site.timezone,
       ),
     );
+    // expand only the default latest-product read
+    const includeAirQualityContext = forecastWindow.productSelection === undefined;
+    const forecastReadAsOf = includeAirQualityContext
+      ? new Date(Date.parse(forecastWindow.asOf) - 12 * 3_600_000).toISOString()
+      : forecastWindow.asOf;
+    const forecastReadHours = includeAirQualityContext
+      ? forecastWindow.hours + 13
+      : forecastWindow.hours;
     const rows = await store.getForecast(
       route.siteSlug,
-      forecastWindow.asOf,
-      forecastWindow.hours,
+      forecastReadAsOf,
+      forecastReadHours,
       forecastWindow.productSelection,
     );
     const pressureContextRows = await readForecastPressureContextSafely(
@@ -1428,14 +1444,28 @@ async function handleReadRoute(
       rainRun,
       rainAdjustment,
     );
+    const forecastStart = Date.parse(forecastWindow.asOf);
+    const forecastEnd = forecastStart + forecastWindow.hours * 3_600_000;
+    const data = records.filter(
+      // retain the exact public civil-day or overnight window
+      (record) => Date.parse(record.validAt) >= forecastStart && Date.parse(record.validAt) < forecastEnd,
+    );
+    const airQualityContext = includeAirQualityContext
+      ? records.filter(
+          // expose only the additional PM averaging hours outside public data
+          (record) => Date.parse(record.validAt) < forecastStart || Date.parse(record.validAt) >= forecastEnd,
+        )
+      // preserve the widget anchor window unchanged
+      : [];
     return jsonResponse({
       adjustmentRuntime,
+      airQualityContext,
       rainAdjustmentRuntime: rainAdjustmentRuntime(
         rainRun,
         generatedAt,
         rainAdjustment,
       ),
-      data: records,
+      data,
       days: forecastWindow.days,
       generatedAt,
       pressureContext: mapForecastPressureContextSafely(
@@ -1886,10 +1916,21 @@ function mapCurrentWeatherRecords(
 
   return records.map(
     // preserve source-aligned repository order
-    (record, index) => ({
-      ...record,
-      pressureChange3hHpa: rows[index]?.pressureChange3hHpa ?? null,
-    }),
+    (record, index) => {
+      const row = rows[index]!;
+      return {
+        ...record,
+        airQuality: projectAirQualityHourlyContext(
+          row.pm25HourlyConcentrations,
+          row.pm25HourlyThrough,
+        ),
+        metadata: projectMetadata(row, {
+          hourlyBySensor: row.pm25HourlyBySensor,
+          through: row.pm25HourlyThrough,
+        }),
+        pressureChange3hHpa: row.pressureChange3hHpa,
+      };
+    },
   );
 }
 
@@ -2189,6 +2230,7 @@ function mapTrendPoints(rows: readonly TrendPointRow[]): readonly ApiTrendPoint[
   return rows.map((row) => ({
     metrics: {
       apparentTemperatureC: row.apparentTemperatureC,
+      pm25MicrogramsPerCubicMeter: row.pm25MicrogramsPerCubicMeter,
       precipitationMm: row.precipitationMm,
       pressureHpa: row.pressureHpa,
       relativeHumidityPercent: row.relativeHumidityPercent,
@@ -2332,7 +2374,13 @@ export function calendarTrendWindow(
 }
 
 // project only public metadata fields
-function projectMetadata(row: WeatherRecordRow): ApiWeatherRecord["metadata"] {
+function projectMetadata(
+  row: WeatherRecordRow,
+  sensorAirQuality?: Readonly<{
+    hourlyBySensor: Readonly<Record<string, readonly (number | null)[]>> | null;
+    through: Date | string;
+  }>,
+): ApiWeatherRecord["metadata"] {
   const device =
     row.deviceVendor === null &&
     row.deviceModel === null &&
@@ -2344,7 +2392,7 @@ function projectMetadata(row: WeatherRecordRow): ApiWeatherRecord["metadata"] {
         vendor: row.deviceVendor,
       };
   const quality = projectQuality(row.qualityMetadata);
-  const provider = projectProvider(row.providerMetadata);
+  const provider = projectProvider(row.providerMetadata, sensorAirQuality);
   return {
     device,
     provider,
@@ -2376,6 +2424,10 @@ function projectQuality(
 // project allowlisted provider metadata
 function projectProvider(
   metadata: Readonly<Record<string, JsonValue>> | null,
+  sensorAirQuality?: Readonly<{
+    hourlyBySensor: Readonly<Record<string, readonly (number | null)[]>> | null;
+    through: Date | string;
+  }>,
 ): ApiWeatherRecord["metadata"]["provider"] {
   // preserve absent metadata
   if (metadata === null) {
@@ -2386,13 +2438,17 @@ function projectProvider(
     dataset: boundedString(metadata.dataset),
     elevationM: boundedNumber(metadata.elevation_m),
     gridCell: boundedString(metadata.grid_cell),
-    propertySensors: boundedPropertySensors(metadata.property_sensors),
+    propertySensors: boundedPropertySensors(metadata.property_sensors, sensorAirQuality),
   };
 }
 
 // project bounded EcoWitt property sensor snapshots
 function boundedPropertySensors(
   value: JsonValue | undefined,
+  sensorAirQuality?: Readonly<{
+    hourlyBySensor: Readonly<Record<string, readonly (number | null)[]>> | null;
+    through: Date | string;
+  }>,
 ): readonly ApiPropertySensorSnapshot[] | null {
   // require one sensor array
   if (!Array.isArray(value)) {
@@ -2429,6 +2485,12 @@ function boundedPropertySensors(
     }
 
     sensors.push({
+      ...(sensorAirQuality === undefined ? {} : {
+        airQuality: projectAirQualityHourlyContext(
+          sensorAirQuality.hourlyBySensor?.[key] ?? null,
+          sensorAirQuality.through,
+        ),
+      }),
       channel,
       key,
       model,
@@ -2437,6 +2499,31 @@ function boundedPropertySensors(
   }
 
   return sensors;
+}
+
+// project one bounded raw hourly PM2.5 context
+function projectAirQualityHourlyContext(
+  values: readonly (number | null)[] | null | undefined,
+  through: Date | string | undefined,
+): ApiAirQualityHourlyContext | null {
+  // require every newest-first NowCast slot
+  if (
+    values === null ||
+    values === undefined ||
+    through === undefined ||
+    values.length !== 12 ||
+    values.some(
+      // reject malformed particulate concentrations
+      (value) => value !== null && (!Number.isFinite(value) || value < 0),
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    hourlyPm25: values,
+    through: toIsoInstant(through),
+  };
 }
 
 // project finite numeric readings only

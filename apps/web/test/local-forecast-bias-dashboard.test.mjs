@@ -35,6 +35,11 @@ const site = {
   name: "Ballydídean", slug: "ballydidean", stations: [], timezone: "America/Los_Angeles",
 };
 
+// provide one complete source-local history for current AQI rendering
+function airQualityContext(concentration) {
+  return { hourlyPm25: Array(12).fill(concentration), through: "2026-06-21T19:00:00.000Z" };
+}
+
 // create one complete normalized record without serialized projection metadata
 function record(kind, id, validAt, metrics = {}, overrides = {}) {
   return {
@@ -72,7 +77,9 @@ function state(overrides = {}) {
     relativeHumidityPercent: 70, pm25MicrogramsPerCubicMeter: null, uvIndex: 3,
     pressureHpa: 1025, solarRadiationWm2: 800,
   }, { pressureChange3hHpa: 1 });
-  const regional = record("model_current", "regional", "2026-06-21T19:45:00.000Z");
+  const regional = record("model_current", "regional", "2026-06-21T19:45:00.000Z", {}, {
+    airQuality: airQualityContext(20),
+  });
   // maintain one continuous same-source and same-run pressure timeline
   const forecast = Array.from({ length: 40 }, (_, index) => record(
     "forecast", `hour-${index}`, new Date(now.getTime() + (index - 3) * 3_600_000).toISOString(),
@@ -83,6 +90,7 @@ function state(overrides = {}) {
   const nearby = (id, concentration, station) => record("physical_sensor", id, now.toISOString(), {
     pm25MicrogramsPerCubicMeter: concentration,
   }, {
+    airQuality: airQualityContext(concentration),
     provenance: { ...farm.provenance, providerKey: "purpleair", sourceId: id, sourceKey: id, stationSlug: station },
   });
   return {
@@ -216,12 +224,14 @@ test("rendered local summaries and air temperature chart match adjusted values",
   assert.equal(temperature[0].values[3], 12);
   assert.equal(temperature[1].values[3], 10);
   assert.equal(chart(rawHtml, "temperature").series[1].values[3], 14);
-  // verify each forecast chart's actual projected values rather than its gold class alone
-  for (const [key, expected] of [["humidity", 70], ["air-quality", 10], ["uv-index", 6], ["pressure", 0.3]]) {
+  // verify each non-AQI forecast chart's actual projected values rather than its gold class alone
+  for (const [key, expected] of [["humidity", 70], ["uv-index", 6], ["pressure", 0.3]]) {
     close(chart(adjustedHtml, key).series[0].values[3], expected);
     assert.doesNotMatch(chart(adjustedHtml, key).markup, /experimental/u);
     assert.doesNotMatch(chart(rawHtml, key).markup, /experimental/u);
   }
+  assert.equal(chart(adjustedHtml, "air-quality").series[0].values[3], null);
+  assert.equal(chart(adjustedHtml, "air-quality").series[0].label, "Daily AQI");
   const correctedMax = strongestPressureChange(combined.forecast, now, site.timezone, true);
   assert.ok(correctedMax);
   const home = renderWeatherDashboard(input, "home");

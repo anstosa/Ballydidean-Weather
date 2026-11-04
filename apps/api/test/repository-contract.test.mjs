@@ -33,6 +33,7 @@ function createCapturingPool(rows = []) {
 test("current SQL enforces active joins and parameterized station/source filters", async () => {
   const { pool, queries } = createCapturingPool();
   await getCurrentWeather(pool, "ballydidean", {
+    asOf: "2026-08-22T05:37:00.000Z",
     sourceId: "10",
     stationSlug: "open-meteo-virtual",
   });
@@ -42,6 +43,7 @@ test("current SQL enforces active joins and parameterized station/source filters
     "ballydidean",
     "open-meteo-virtual",
     "10",
+    "2026-08-22T05:37:00.000Z",
   ]);
   assert.match(queries[0].text, /si\.active/u);
   assert.match(queries[0].text, /st\.active/u);
@@ -51,6 +53,7 @@ test("current SQL enforces active joins and parameterized station/source filters
   assert.match(queries[0].text, /s\.id = \$3/u);
   assert.match(queries[0].text, /JOIN LATERAL/u);
   assert.match(queries[0].text, /candidate\.source_id = s\.id/u);
+  assert.match(queries[0].text, /candidate\.valid_at <= \$4::timestamptz/u);
   assert.match(queries[0].text, /LIMIT 1/u);
   assert.doesNotMatch(queries[0].text, /DISTINCT ON/u);
   assert.match(queries[0].text, /wr\.upstream_timezone AS "upstreamTimezone"/u);
@@ -77,6 +80,11 @@ test("current SQL enforces active joins and parameterized station/source filters
     queries[0].text,
     /pressure_after\.pressure_hpa - pressure_before\.pressure_hpa/u,
   );
+  assert.match(queries[0].text, /raw_pm25 AS MATERIALIZED/u);
+  assert.match(queries[0].text, /generate_series\(0, 11\)/u);
+  assert.match(queries[0].text, /AVG\(pm25_micrograms_per_cubic_meter\) AS concentration/u);
+  assert.match(queries[0].text, /sensor\.value ->> 'model' = 'WH41'/u);
+  assert.match(queries[0].text, /ARRAY_AGG\(main_hourly\.concentration ORDER BY slots\.age\)/u);
 });
 
 test("site discovery requires active public-capability sources", async () => {
@@ -209,7 +217,14 @@ test("trend SQL prefers local-calendar reanalysis days with current-model fallba
   assert.match(queries[0].text, /MAX\(wr\.temperature_c\) AS temperature_maximum_c/u);
   assert.match(queries[0].text, /MIN\(wr\.temperature_c\) AS temperature_minimum_c/u);
   assert.match(queries[0].text, /DEGREES\(ATAN2\([\s\S]*AVG\(SIN\(RADIANS\(wr\.wind_direction_degrees\)\)\)[\s\S]*AVG\(COS\(RADIANS\(wr\.wind_direction_degrees\)\)\)/u);
-  assert.match(queries[0].text, /WHERE source_priority = 1/u);
+  assert.match(queries[0].text, /WHERE preferred_days\.source_priority = 1/u);
+  assert.match(queries[0].text, /physical_pm_hourly AS/u);
+  assert.match(queries[0].text, /si\.timezone = 'America\/Los_Angeles'/u);
+  assert.match(queries[0].text, /interval '8 hours'/u);
+  assert.match(queries[0].text, /AVG\(wr\.pm25_micrograms_per_cubic_meter\) AS hourly_concentration/u);
+  assert.match(queries[0].text, /AVG\(hourly_concentration\) AS daily_concentration/u);
+  assert.match(queries[0].text, /HAVING COUNT\(\*\) >= 18/u);
+  assert.match(queries[0].text, /preferred_pm_days\.daily_concentration AS "pm25MicrogramsPerCubicMeter"/u);
 });
 
 test("migration readiness verifies the complete ledger with SELECT-only SQL", async () => {

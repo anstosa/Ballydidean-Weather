@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdtempSync,
@@ -14,6 +15,8 @@ import {
   CONTROL_SHA256,
   CONTROL_VERSION,
   CONTRACT_VERSION,
+  LEGACY_CONTRACT_VERSION,
+  APP_QUERY_TRANSITION,
   HISTORY_SHA256,
   SOURCE_COMMIT,
   SOURCE_ENV_SHA256,
@@ -288,6 +291,43 @@ test("protected tree validation rejects malformed paths and drift", () => {
   const drift = structuredClone(sourceTree);
   drift[0].sha256 = HASH_B;
   assert.throws(() => validateProtectedTrees(sourceTree, drift), /drifted/u);
+});
+
+// v2 grants only the exact reviewed query transition while retained v1 stays strict
+test("AQI query authorization cannot widen protected release contents", () => {
+  const queryBytes = readFileSync(new URL(`../${APP_QUERY_TRANSITION.path}`, import.meta.url));
+  assert.equal(createHash("sha256").update(queryBytes).digest("hex"), APP_QUERY_TRANSITION.targetSha256);
+  const source = [...validTree(), { path: APP_QUERY_TRANSITION.path, sha256: APP_QUERY_TRANSITION.sourceSha256 }].sort(
+    // preserve canonical tree ordering
+    (left, right) => left.path < right.path ? -1 : 1,
+  );
+  const target = structuredClone(source);
+  target.find((member) => member.path === APP_QUERY_TRANSITION.path).sha256 = APP_QUERY_TRANSITION.targetSha256;
+  assert.equal(validateProtectedTrees(source, target), true);
+  assert.throws(() => validateProtectedTrees(source, target, LEGACY_CONTRACT_VERSION), /drifted/u);
+  const legacy = { ...validPublication(), contractVersion: LEGACY_CONTRACT_VERSION };
+  assert.equal(validatePublication(legacy), legacy);
+  const publication = { ...validPublication(), sourceTree: source, targetTree: target };
+  assert.equal(validatePublication(publication), publication);
+  assert.throws(() => validatePublication({ ...publication, contractVersion: LEGACY_CONTRACT_VERSION }), /drifted/u);
+  const wrongSource = structuredClone(source);
+  wrongSource.find((member) => member.path === APP_QUERY_TRANSITION.path).sha256 = HASH_A;
+  assert.throws(() => validateProtectedTrees(wrongSource, target), /drifted/u);
+  const wrongTarget = structuredClone(target);
+  wrongTarget.find((member) => member.path === APP_QUERY_TRANSITION.path).sha256 = HASH_B;
+  assert.throws(() => validateProtectedTrees(source, wrongTarget), /drifted/u);
+  const secondDrift = structuredClone(target);
+  secondDrift[0].sha256 = HASH_B;
+  assert.throws(() => validateProtectedTrees(source, secondDrift), /drifted/u);
+  const migrationDrift = structuredClone(target);
+  migrationDrift.find((member) => member.path.endsWith("0023_forecast_product_read_index.sql")).sha256 = HASH_B;
+  assert.throws(() => validateProtectedTrees(source, migrationDrift), /drifted/u);
+  assert.throws(() => validateProtectedTrees(source, target.filter((member) => member.path !== APP_QUERY_TRANSITION.path)), /length drifted/u);
+  const added = [...target, { path: "packages/database/src/unreviewed.ts", sha256: HASH_A }].sort(
+    // keep added membership otherwise well formed
+    (left, right) => left.path < right.path ? -1 : 1,
+  );
+  assert.throws(() => validateProtectedTrees(source, added), /length drifted/u);
 });
 
 // private reads enforce ownership shape and bounded metadata

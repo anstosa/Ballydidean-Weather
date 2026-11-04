@@ -33,7 +33,7 @@ const livePayload = {
     },
   ],
   ch_pm25: [
-    { PM25: "12.4", battery: "6", channel: "1" },
+    { PM25: "12.4", PM25_24H: "99.9", PM25_RealAQI: "444", PM25_24HAQI: "555", battery: "6", channel: "1" },
   ],
   common_list: [
     { id: "0x02", unit: "F", val: "54.3" },

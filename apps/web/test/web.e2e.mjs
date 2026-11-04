@@ -104,6 +104,16 @@ const site = {
 
 const current = { ...makeRecord("101", "2026-08-22T04:50:00.000Z", 16.2), pressureChange3hHpa: -1.2 };
 const older = makeRecord("100", "2026-08-21T04:50:00.000Z", 15.1);
+
+// build one complete current-hour PM2.5 history for browser fixtures
+function airQualityContext(concentration, now = Date.parse("2026-08-22T05:37:00.000Z")) {
+  const hour = 3_600_000;
+  return {
+    hourlyPm25: Array(12).fill(concentration),
+    through: new Date(Math.floor(now / hour) * hour - hour).toISOString(),
+  };
+}
+
 const physicalCurrent = {
   ...makeRecord("301", "2026-08-22T04:52:00.000Z", 12),
   freshness: {
@@ -429,6 +439,7 @@ for (const [yearIndex, year] of [2019, 2025, 2026].entries()) {
     trends.push({
       metrics: {
         apparentTemperatureC: 8 + month + yearIndex * 0.4,
+        pm25MicrogramsPerCubicMeter: 15,
         precipitationMm: month % 3 === 0 ? 0.2 : 0,
         pressureHpa: 1012 + month * 0.3,
         relativeHumidityPercent: 82 - month,
@@ -1608,7 +1619,7 @@ test("sensor battery indicators preserve readings and selection across viewports
             // retain fixture measurements alongside the new battery fields
             (sensor) => ({ ...sensor, readings: { ...sensor.readings, ...batteryReadings[sensor.key] } }),
           ),
-          { channel: 1, key: "air-quality-1", model: "WH41", readings: { pm25MicrogramsPerCubicMeter: 12, batteryExternalPower: 1 } },
+          { airQuality: airQualityContext(12, Date.now()), channel: 1, key: "air-quality-1", model: "WH41", readings: { pm25MicrogramsPerCubicMeter: 12, batteryExternalPower: 1 } },
         ],
       },
     },
@@ -1648,6 +1659,15 @@ test("sensor battery indicators preserve readings and selection across viewports
         (badges) => badges.every((badge) => badge.textContent === ""),
       ), true);
       assert.equal(await page.locator(".property-sensor-battery.low").count(), 1);
+      const airQuality = page.locator('.property-sensor-select[data-property-sensor-view="air-quality-1"]');
+      assert.equal(await airQuality.locator(".property-sensor-label span").textContent(), "Air quality 56 AQI");
+      assert.match(
+        await page.locator('.property-sensor-marker[data-property-sensor-view="air-quality-1"] title').textContent() ?? "",
+        /Air quality 56 AQI/u,
+      );
+      await airQuality.focus();
+      await airQuality.press("Enter");
+      assert.match(await page.locator('[data-property-sensor-details="air-quality-1"]').textContent() ?? "", /Air quality 56 AQI/u);
       const offline = page.locator('.property-sensor-select[data-property-sensor-view="soil-2"]');
       assert.equal(await page.locator(".property-sensor-select").count(), fixture.state.propertySensorLayout.length);
       assert.equal(await page.locator(".property-sensor-marker").count(), fixture.state.propertySensorLayout.length);
@@ -1881,8 +1901,12 @@ test("local observations preserve current values while unvalidated uv and pressu
   const currentRecord = (kind, id, validAt, metrics, overrides = {}) => {
     const base = makeRecord(id, validAt, 14);
     const physical = kind === "physical_sensor";
+    const concentration = Object.hasOwn(metrics, "pm25MicrogramsPerCubicMeter")
+      ? metrics.pm25MicrogramsPerCubicMeter
+      : 20;
     return {
       ...base,
+      airQuality: concentration === null ? null : airQualityContext(concentration, now.getTime()),
       freshness: { ageSeconds: 0, label: "Current", status: "fresh" },
       metadata: {
         ...base.metadata,
@@ -1934,7 +1958,7 @@ test("local observations preserve current values while unvalidated uv and pressu
     },
   );
   const currentRecords = [farm, regional, nearby("nearby-a", 8, "station-a"), nearby("nearby-b", 12, "station-b")];
-  const forecastRecords = Array.from({ length: 40 }, (_, index) => {
+  const forecastRecords = Array.from({ length: 64 }, (_, index) => {
     const validAt = new Date(now.getTime() + (index - 3) * 3_600_000).toISOString();
     const base = makeRecord(`local-forecast-${String(index)}`, validAt, 14 + index / 10);
     return {
@@ -2210,11 +2234,11 @@ test("local observations preserve current values while unvalidated uv and pressu
       assert.doesNotMatch(await page.locator("body").innerText(), /experimental/iu);
       await assertForecastLayout(page, viewport.width);
       await assertCrosshairClear(page, viewport.width);
-      // compare all four displayed current-hour biases
+      // compare current-hour values while daily AQI stays unavailable for this partial day
       assert.deepEqual(
         Object.fromEntries(localFamilies.map((family) => [family, [raw[family][3], adjusted[family][3]]])),
         {
-          "air-quality": [20, 10],
+          "air-quality": [null, null],
           humidity: [50, 70],
           pressure: [0.2999999999999545, 0.2999999999999545],
           "uv-index": [6, 6],
@@ -2223,13 +2247,18 @@ test("local observations preserve current values while unvalidated uv and pressu
       // retain past hours and expire exactly at the 24-hour boundary
       for (const family of localFamilies) {
         assert.equal(adjusted[family][2], raw[family][2], `${family} changed a past hour`);
-        // only independently unchanged heuristic families retain their existing coverage
-        if (family === "humidity" || family === "air-quality") {
+        // daily AQI retains one changed standard-time day, then clears on the next complete day
+        if (family === "air-quality") {
           assert.notEqual(adjusted[family][26], raw[family][26], `${family} missed the final covered hour`);
+          assert.notEqual(adjusted[family][38], raw[family][38], `${family} lost its changed daily mean`);
+          assert.equal(adjusted[family][39], raw[family][39], `${family} crossed its next daily boundary`);
+        // humidity retains its direct hourly expiry contract
+        } else if (family === "humidity") {
+          assert.notEqual(adjusted[family][26], raw[family][26], `${family} missed the final covered hour`);
+          assert.equal(adjusted[family][27], raw[family][27], `${family} crossed its 24-hour expiry`);
         } else {
           assert.deepEqual(adjusted[family], raw[family], `${family} changed before independent validation`);
         }
-        assert.equal(adjusted[family][27], raw[family][27], `${family} crossed its 24-hour expiry`);
       }
       assert.deepEqual(adjustedTemperature[0], rawTemperature[0]);
       assert.notEqual(adjustedTemperature[1].values[3], rawTemperature[1].values[3]);
@@ -2495,11 +2524,11 @@ test("forecast history uses recorded hourly conditions before raw regional fallb
       assert.equal(adjusted["rain-rate"][0].values[3], 2);
       assert.equal(adjusted.clouds[0].values[3], 30);
       assert.equal(adjusted.humidity[0].values[3], 91);
-      assert.equal(adjusted["air-quality"][0].values[3], 10);
+      assert.equal(adjusted["air-quality"][0].values[3], 42);
       assert.equal(adjusted["uv-index"][0].values[3], 4);
       assert.equal(adjusted.pressure[0].values[3], 6);
       // keep genuine recorded zeros instead of treating them as missing
-      for (const key of chartKeys.filter((key) => key !== "tide")) {
+      for (const key of chartKeys.filter((key) => key !== "tide" && key !== "air-quality")) {
         assert.equal(
           adjusted[key].every((series) => series.values[4] === 0),
           true,
@@ -4623,6 +4652,11 @@ test("adjusted current conditions fall back per metric to a deduplicated local s
     validAt,
   }) => ({
     ...physicalCurrent,
+    airQuality: metrics.pm25MicrogramsPerCubicMeter !== undefined &&
+      metrics.pm25MicrogramsPerCubicMeter !== null &&
+      metrics.pm25MicrogramsPerCubicMeter >= 0
+      ? airQualityContext(metrics.pm25MicrogramsPerCubicMeter)
+      : null,
     freshness: {
       ageSeconds: freshnessStatus === "stale" ? 90_000 : freshnessStatus === "delayed" ? 3_600 : 120,
       label: freshnessStatus === "stale"
@@ -4648,6 +4682,7 @@ test("adjusted current conditions fall back per metric to a deduplicated local s
   });
   const regional = {
     ...current,
+    airQuality: airQualityContext(5),
     metrics: {
       ...current.metrics,
       apparentTemperatureC: 10,
@@ -4808,7 +4843,7 @@ test("adjusted current conditions fall back per metric to a deduplicated local s
     assert.match(await rain.locator(".condition-primary").textContent() ?? "", /^0\.08\s*in\/h$/u);
     assert.match(await rain.locator(".condition-secondary").textContent() ?? "", /Accumulation\s*0\.1\s*in/u);
     assert.equal(await page.locator("[data-condition='humidity'] .condition-primary").innerText(), "50%");
-    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "25");
+    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "81AQI");
     assert.equal(await page.locator("[data-condition='uv-index'] .condition-primary").innerText(), "5");
     assert.equal(await clouds.locator(".condition-primary").innerText(), "90%");
     assert.equal(await page.locator(".local-alert", { hasText: "High wind" }).count(), 0);
@@ -4825,14 +4860,14 @@ test("adjusted current conditions fall back per metric to a deduplicated local s
     assert.match(await temperature.locator(".condition-primary").textContent() ?? "", /50\s*°F/u);
     assert.match(await wind.locator(".condition-primary").textContent() ?? "", /2\s*mph SW/u);
     assert.match(await rain.locator(".condition-primary").textContent() ?? "", /^0\s*in\/h$/u);
-    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "5");
+    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "28AQI");
     assert.equal(await clouds.locator(".condition-primary").innerText(), "90%");
     assert.match(await page.locator(".section-nav-weather-icon").getAttribute("src") ?? "", /05-cloudy\.svg$/u);
     await toggle.click();
     await page.waitForFunction(
       // await restoration of the station-average reading
       () => document.querySelector("[data-forecast-adjustment-toggle]")?.getAttribute("aria-checked") === "true" &&
-        document.querySelector("[data-condition='air-quality'] .condition-primary")?.textContent?.trim() === "25",
+        document.querySelector("[data-condition='air-quality'] .condition-primary")?.textContent?.trim() === "81AQI",
     );
     assert.match(await temperature.locator(".condition-primary").textContent() ?? "", /68\s*°F/u);
     assert.match(await page.locator(".section-nav-weather-icon").getAttribute("src") ?? "", /07-light-rain\.svg$/u);
@@ -4875,7 +4910,7 @@ test("adjusted current conditions fall back per metric to a deduplicated local s
     assert.match(await wind.locator(".condition-primary").textContent() ?? "", /13\s*mph N/u);
     assert.match(await rain.locator(".condition-primary").textContent() ?? "", /^0\.08\s*in\/h$/u);
     assert.equal(await page.locator("[data-condition='humidity'] .condition-primary").innerText(), "55%");
-    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "25");
+    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "81AQI");
     assert.equal(await clouds.locator(".condition-primary").innerText(), "90%");
 
     const opposedNeighborA = localRecord({
@@ -4967,6 +5002,7 @@ test("raw current conditions never borrow local station readings or artwork", { 
   let browser;
   const quietModel = {
     ...current,
+    airQuality: airQualityContext(5),
     pressureChange3hHpa: -1,
     metrics: {
       ...current.metrics,
@@ -4983,6 +5019,7 @@ test("raw current conditions never borrow local station readings or artwork", { 
   };
   const hazardousLocal = {
     ...physicalCurrent,
+    airQuality: airQualityContext(50),
     pressureChange3hHpa: 9,
     metrics: {
       ...physicalCurrent.metrics,
@@ -5013,6 +5050,7 @@ test("raw current conditions never borrow local station readings or artwork", { 
       timezoneId: "America/Los_Angeles",
       viewport: { height: 900, width: 960 },
     });
+    await page.clock.setFixedTime(new Date("2026-08-22T05:37:00.000Z"));
     await page.goto(fixture.origin, { waitUntil: "networkidle" });
     await page.locator("[data-indoor-house]").waitFor();
     assert.match(await page.locator("[data-condition='temperature'] .condition-primary").textContent() ?? "", /95°F/u);
@@ -5058,6 +5096,7 @@ test("raw current conditions never borrow local station readings or artwork", { 
 
     const hazardousModel = {
       ...quietModel,
+      airQuality: airQualityContext(50),
       metrics: {
         ...quietModel.metrics,
         apparentTemperatureC: 35,
@@ -5071,6 +5110,7 @@ test("raw current conditions never borrow local station readings or artwork", { 
     };
     const quietLocal = {
       ...hazardousLocal,
+      airQuality: airQualityContext(4),
       metrics: {
         ...hazardousLocal.metrics,
         apparentTemperatureC: 12,
@@ -5128,6 +5168,7 @@ test("raw current conditions fill regional rain air quality and UV from the matc
   };
   const quietLocal = {
     ...physicalCurrent,
+    airQuality: airQualityContext(2),
     metrics: {
       ...physicalCurrent.metrics,
       pm25MicrogramsPerCubicMeter: 2,
@@ -5193,7 +5234,7 @@ test("raw current conditions fill regional rain air quality and UV from the matc
     await page.goto(fixture.origin, { waitUntil: "networkidle" });
 
     assert.match(await page.locator("[data-condition='rain'] .condition-primary").innerText(), /^0\s*in\/h$/u);
-    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "2");
+    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "11AQI");
     assert.equal(await page.locator("[data-condition='uv-index'] .condition-primary").innerText(), "1");
     assert.equal(await page.locator(".local-alert", { hasText: "Air quality" }).count(), 0);
     assert.equal(await page.locator(".local-alert", { hasText: "Heavy rain" }).count(), 0);
@@ -5206,15 +5247,15 @@ test("raw current conditions fill regional rain air quality and UV from the matc
       () => document.querySelector("[data-forecast-adjustment-toggle]")?.getAttribute("aria-checked") === "false",
     );
     assert.match(await page.locator("[data-condition='rain'] .condition-primary").innerText(), /^0\.31\s*in\/h$/u);
-    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "50");
+    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "41AQI");
     assert.equal(await page.locator("[data-condition='uv-index'] .condition-primary").innerText(), "9");
     assert.match(await page.locator(".local-alert", { hasText: "Heavy rain" }).innerText(), /Current rain 0\.31 in\/h/u);
-    assert.match(await page.locator(".local-alert", { hasText: "Air quality" }).innerText(), /PM2\.5 is 50/u);
+    assert.equal(await page.locator(".local-alert", { hasText: "Air quality" }).count(), 0);
     assert.match(await page.locator(".section-nav-weather-icon").getAttribute("src") ?? "", /09-heavy-rain\.svg$/u);
 
     await page.reload({ waitUntil: "networkidle" });
     assert.equal(await toggle.getAttribute("aria-checked"), "false");
-    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "50");
+    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "41AQI");
     await page.getByRole("link", { name: "Forecast", exact: true }).click();
     assert.match(await page.locator(".section-nav-weather-icon").getAttribute("src") ?? "", /09-heavy-rain\.svg$/u);
     await page.getByRole("link", { name: "Now", exact: true }).click();
@@ -5235,7 +5276,7 @@ test("raw current conditions fill regional rain air quality and UV from the matc
     }, quietLocal];
     await page.reload({ waitUntil: "networkidle" });
     assert.match(await page.locator("[data-condition='rain'] .condition-primary").innerText(), /^0\.04\s*in\/h$/u);
-    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "6");
+    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "41AQI");
     assert.equal(await page.locator("[data-condition='uv-index'] .condition-primary").innerText(), "2");
     assert.doesNotMatch(await page.locator(".local-alert", { hasText: "Heavy rain" }).innerText(), /Current rain/u);
     assert.equal(await page.locator(".local-alert", { hasText: "Air quality" }).count(), 0);
@@ -5356,8 +5397,8 @@ test("raw current forecast fallback rejects wrong stale missing and invalid hour
     await page.reload({ waitUntil: "networkidle" });
     assert.match(await page.locator("[data-condition='rain'] .condition-primary").innerText(), /^0\s*in\/h$/u);
     assert.equal(await page.locator("[data-condition='rain'] .condition-status").innerText(), "Dry");
-    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "0");
-    assert.notEqual(await page.locator("[data-condition='air-quality'] .condition-status").innerText(), "Unavailable");
+    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "—");
+    assert.equal(await page.locator("[data-condition='air-quality'] .condition-status").innerText(), "Unavailable");
     assert.equal(await page.locator("[data-condition='uv-index'] .condition-primary").innerText(), "0");
     assert.equal(await page.locator("[data-condition='uv-index'] .condition-status").innerText(), "Low");
 
@@ -5401,7 +5442,7 @@ test("raw regional current cards refresh hourly products on the background forec
       FORECAST_ADJUSTMENT_MODE_STORAGE_KEY,
     );
     await page.goto(fixture.origin, { waitUntil: "networkidle" });
-    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "5");
+    assert.equal(await page.locator("[data-condition='air-quality'] .condition-primary").innerText(), "28AQI");
     const before = [...fixture.state.requests];
     fixture.state.forecastRecords = fixture.state.forecastRecords.map(
       // make the next run visibly distinct without changing current records
@@ -5410,7 +5451,7 @@ test("raw regional current cards refresh hourly products on the background forec
     await page.clock.fastForward(15 * 60_000);
     await page.waitForFunction(
       // await the background forecast response and complete redraw
-      () => document.querySelector("[data-condition='air-quality'] .condition-primary")?.textContent === "12",
+      () => document.querySelector("[data-condition='air-quality'] .condition-primary")?.textContent === "56AQI",
     );
     assert.match(await page.locator("[data-condition='rain'] .condition-primary").innerText(), /^0\.1\s*in\/h$/u);
     assert.equal(await page.locator("[data-condition='uv-index'] .condition-primary").innerText(), "3");
@@ -6811,7 +6852,7 @@ test("real browser covers filters, pagination, last-good recovery, attribution, 
       true,
     );
     assert.equal(await page.getByRole("heading", { name: "Temperature" }).count(), 1);
-    assert.equal(await page.locator("[data-trend-metric-option]").count(), 15);
+    assert.equal(await page.locator("[data-trend-metric-option]").count(), 16);
     assert.equal(await page.locator(".trend-metric-option-group").count(), 2);
     assert.equal(await page.locator(".trend-metric-flyover").isVisible(), false);
     await trendMetricTrigger.click();
@@ -6825,6 +6866,12 @@ test("real browser covers filters, pagination, last-good recovery, attribution, 
     assert.equal(await page.locator("[data-trend-crosshair-value=median]").count(), 1);
     assert.equal(await page.locator('[data-trend-crosshair-value="2026"]').count(), 1);
     assert.match(await page.locator("[data-trend-crosshair-date]").textContent() ?? "", /^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}$/u);
+    await trendMetricTrigger.click();
+    await page.locator('[data-trend-metric-option="pm25MicrogramsPerCubicMeter"]').click();
+    await page.locator('[data-trend-chart="pm25MicrogramsPerCubicMeter"]').waitFor();
+    assert.equal(await page.getByRole("heading", { name: "Air quality" }).count(), 1);
+    assert.match(await page.locator(".trend-chart-range").innerText(), / AQI$/u);
+    assert.match(await page.locator('[data-trend-crosshair-value="2026"]').innerText(), /62 AQI$/u);
     const farmCharts = [
       ["cumulativePrecipitationMm", "Cumulative rainfall"],
       ["temperatureAnomalyC", "Temperature anomaly"],
@@ -8411,6 +8458,21 @@ test("forecast charts share one touch-controlled crosshair", { timeout: 60_000 }
         stopColors: ["rgb(105, 133, 155)"],
       },
     );
+    assert.deepEqual(
+      await page.locator('[data-forecast-chart="air-quality"]').evaluate(
+        // expose one complete predicted daily mean as AQI across its forecast hours
+        (chart) => ({
+          domain: [Number(chart.getAttribute("data-forecast-min")), Number(chart.getAttribute("data-forecast-max"))],
+          format: chart.getAttribute("data-forecast-format"),
+          series: JSON.parse(chart.getAttribute("data-forecast-series") ?? "[]"),
+        }),
+      ),
+      {
+        domain: [0, 100],
+        format: "airQuality",
+        series: [{ label: "Daily AQI", values: [null, ...Array(23).fill(42)] }],
+      },
+    );
     const expectedPressureChanges = forecast.slice(0, 24).map(
       // compare each complete same-run endpoint to three hours earlier
       (record, index) => index < 3
@@ -8586,7 +8648,7 @@ test("forecast charts share one touch-controlled crosshair", { timeout: 60_000 }
         })),
       ),
       {
-        "air-quality": [0, 14.4882614724],
+        "air-quality": [0, 100],
         clouds: [0, 100],
         pressure: [-6, 6],
         "rain-rate": [0, 25.4],
@@ -8709,6 +8771,7 @@ test("forecast charts share one touch-controlled crosshair", { timeout: 60_000 }
     assert.notEqual(centerClock, quarterHourClock);
     const centerLine = await line.boundingBox();
     const centerAirQuality = await page.locator('[data-forecast-chart="air-quality"] [data-forecast-value]').textContent();
+    assert.match(centerAirQuality ?? "", /42\s*AQI/u);
     assert.equal(
       await page.locator('[data-forecast-chart="uv-index"] .forecast-chart-value').getAttribute("class"),
       "forecast-chart-value forecast-chart-value-bottom",
@@ -10344,7 +10407,8 @@ test("real browser configures and persists every measurement unit preference", {
     assert.match(await currentRain.textContent() ?? "", /Max 0\.1 in\/h/u);
     assert.match(await currentRain.textContent() ?? "", /Accumulation\s*0\.1\s*in/u);
     assert.match(await currentRain.textContent() ?? "", /Total 0\.19 in/u);
-    assert.match(await page.locator("[data-condition='air-quality']").textContent() ?? "", /Max 10/u);
+    assert.match(await page.locator("[data-condition='air-quality']").textContent() ?? "", /Daily 42 AQI/u);
+    assert.match(await page.locator("[data-condition='air-quality']").textContent() ?? "", /41AQI/u);
     assert.doesNotMatch(await page.locator("[data-condition='air-quality']").textContent() ?? "", /µg\/m³/u);
     assert.match(await page.locator("[data-condition='uv-index']").textContent() ?? "", /Max 8/u);
     assert.match(await page.locator("[data-condition='pressure']").textContent() ?? "", /Max\s*-2\.3/u);
@@ -10371,7 +10435,7 @@ test("real browser configures and persists every measurement unit preference", {
         { color: "rgb(0, 0, 0)", condition: "clouds", opacity: "0.75" },
         { color: "rgb(0, 0, 0)", condition: "clouds", opacity: "0.75" },
         { color: "rgb(67, 151, 86)", condition: "humidity", opacity: "0.75" },
-        { color: "rgb(230, 181, 25)", condition: "air-quality", opacity: "0.75" },
+        { color: "rgb(67, 151, 86)", condition: "air-quality", opacity: "0.75" },
         { color: "rgb(230, 181, 25)", condition: "pressure", opacity: "0.75" },
         { color: "rgb(0, 0, 0)", condition: "pressure", opacity: "0.75" },
         { color: "rgb(207, 67, 55)", condition: "uv-index", opacity: "0.75" },

@@ -18,7 +18,14 @@ import {
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const CONTRACT_VERSION = "weather-schema-preserving-publication/v1";
+export const CONTRACT_VERSION = "weather-schema-preserving-publication/v2";
+export const LEGACY_CONTRACT_VERSION = "weather-schema-preserving-publication/v1";
+// authorize only the reviewed AQI application query bytes without widening schema authority
+export const APP_QUERY_TRANSITION = Object.freeze({
+  path: "packages/database/src/repositories.ts",
+  sourceSha256: "073b2308f7deb663a0bdefefc75930dedaa1b4abc6bc40b4fda04524b1cb600c",
+  targetSha256: "2a62ecf8a093c3161f838194a7c761dae4506b32a4ae0ab83e23bbfc246dd832",
+});
 export const STAGE_CONTRACT_VERSION = "weather-schema-preserving-stage/v1";
 export const SOURCE_RELEASE = "2026.11.03-3";
 export const SOURCE_COMMIT = "7e045d5bc69969e9247440ce3b70744e1f9ef6c4";
@@ -231,8 +238,12 @@ function validateTree(tree, label) {
   return tree;
 }
 
-// prove protected trees are identical
-export function validateProtectedTrees(sourceTree, targetTree) {
+// preserve protected bytes except one content-addressed application query transition
+export function validateProtectedTrees(sourceTree, targetTree, contractVersion = CONTRACT_VERSION) {
+  // keep retained legacy publications strictly byte-identical
+  if (contractVersion !== CONTRACT_VERSION && contractVersion !== LEGACY_CONTRACT_VERSION) {
+    fail("contractVersion is invalid");
+  }
   validateTree(sourceTree, "sourceTree");
   validateTree(targetTree, "targetTree");
   // reject membership drift
@@ -241,10 +252,17 @@ export function validateProtectedTrees(sourceTree, targetTree) {
   }
   // compare exact members
   for (let index = 0; index < sourceTree.length; index += 1) {
-    // reject path or byte drift
+    const source = sourceTree[index];
+    const target = targetTree[index];
+    const reviewedQuery = contractVersion === CONTRACT_VERSION
+      && source.path === APP_QUERY_TRANSITION.path
+      && target.path === APP_QUERY_TRANSITION.path
+      && source.sha256 === APP_QUERY_TRANSITION.sourceSha256
+      && target.sha256 === APP_QUERY_TRANSITION.targetSha256;
+    // reject membership drift and every unreviewed byte change
     if (
       sourceTree[index].path !== targetTree[index].path
-      || sourceTree[index].sha256 !== targetTree[index].sha256
+      || (sourceTree[index].sha256 !== targetTree[index].sha256 && !reviewedQuery)
     ) {
       fail(`protected tree drifted at ${sourceTree[index].path}`);
     }
@@ -286,7 +304,7 @@ function validateWorkflow(value, expected, targetCommit, targetRelease) {
 export function validatePublication(value, expectedTargetRelease) {
   requireExactKeys(value, PUBLICATION_KEYS, "publication");
   // bind the contract version
-  if (value.contractVersion !== CONTRACT_VERSION) {
+  if (value.contractVersion !== CONTRACT_VERSION && value.contractVersion !== LEGACY_CONTRACT_VERSION) {
     fail("contractVersion is invalid");
   }
   validateReleaseName(value.targetRelease);
@@ -336,7 +354,7 @@ export function validatePublication(value, expectedTargetRelease) {
   if (value.check.databaseId === value.publish.databaseId) {
     fail("check and publish runs must differ");
   }
-  validateProtectedTrees(value.sourceTree, value.targetTree);
+  validateProtectedTrees(value.sourceTree, value.targetTree, value.contractVersion);
   return value;
 }
 

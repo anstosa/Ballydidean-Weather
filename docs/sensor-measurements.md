@@ -40,7 +40,9 @@ telemetry/modeling concern.
 - Daily, weekly, monthly, yearly, event, and lifetime rainfall totals are
   derived from normalized interval amounts rather than stored as separate point
   measurements.
-- AQI and 24-hour PM2.5 averages are derived from the normalized PM2.5 series.
+- [App-calculated AQI](air-quality.md) uses the normalized PM2.5 series:
+  current values use the EPA NowCast and daily values use standard-time
+  24-hour averages. Vendor AQI and vendor 24-hour averages are not ingested.
 - Relative pressure is derived from the canonical measured pressure and site
   elevation rather than stored as a second pressure measurement.
 - Battery condition and radio health are device telemetry, not weather point
