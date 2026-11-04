@@ -19,9 +19,13 @@ function runBash(body, argumentsList = [], environment = {}) {
 
 test("operator keeps the direct migration narrow and does not fabricate rehearsal state", async () => {
   const source = await readFile(operator, "utf8");
-  assert.match(source, /--atomic-direct-18-23/u);
+  assert.match(source, /--atomic-direct-18-23-index-600s/u);
+  assert.doesNotMatch(source, /--atomic-direct-18-23(?:\s|$)/u);
   assert.doesNotMatch(source, /normal-stage-receipt|historical-v14-18-21-rehearsal-v1/u);
-  assert.doesNotMatch(source, /docker volume create|pg_basebackup/u);
+  assert.doesNotMatch(source, /docker volume create|pg_basebackup|scripts\/backup\.sh/u);
+  assert.match(source, /if \[\[ -z "\$ids" \]\]; then\s+return 0/u);
+  assert.match(source, /direct_revised_23_sha=7e48acb14710a625/u);
+  assert.match(source, /direct_original_backup_receipt_sha=c17966f78167775b/u);
   assert.match(source, /direct_retained_cap=20401094656/u);
   assert.match(source, /direct_peak_cap=23622320128/u);
 });
@@ -78,7 +82,7 @@ direct_require_database_quiesced() { printf 'owner-quiesce\n' >>"$log"; }
 direct_run_migration() { DIRECT_MIGRATION_EXIT=0; printf 'migration\n' >>"$log"; }
 direct_classify() { printf 'classify\n' >>"$log"; printf 'target\n'; }
 direct_finish_target() { printf 'finish\n' >>"$log"; }
-direct_activate id "$(printf '%064d' 0)" /opt/weather/current/deploy/releases/2026.11.03-2.direct-compatibility.json auth "$(printf '%064d' 2)"
+direct_activate id "$(printf '%064d' 0)" /opt/weather/current/deploy/releases/2026.11.03-3.direct-compatibility.json auth "$(printf '%064d' 2)"
 `;
   const root = spawnSync("mktemp", ["-d"], { encoding: "utf8" }).stdout.trim();
   const log = join(root, "order.log");
@@ -130,7 +134,7 @@ direct_classify() { printf 'classify\n' >>"$log"; printf 'unknown\n'; }
 direct_finish_target() { printf 'UNSAFE_FINISH\n' >>"$log"; }
 direct_exit_recovery() { printf 'recovery-preserved\n' >>"$log"; }
 die() { printf 'error: %s\n' "$*" >&2; return 1; }
-direct_activate id "$(printf '%064d' 0)" /opt/weather/current/deploy/releases/2026.11.03-2.direct-compatibility.json auth "$(printf '%064d' 2)"
+direct_activate id "$(printf '%064d' 0)" /opt/weather/current/deploy/releases/2026.11.03-3.direct-compatibility.json auth "$(printf '%064d' 2)"
 `;
   const root = spawnSync("mktemp", ["-d"], { encoding: "utf8" }).stdout.trim();
   const log = join(root, "unknown.log");
@@ -180,7 +184,7 @@ direct_classify() { printf 'target\n'; }
 direct_finish_target() { printf 'UNSAFE_TARGET_MARKERS\n' >>"$log"; }
 direct_exit_recovery() { printf 'recovery-required\n' >>"$log"; }
 die() { printf 'error: %s\n' "$*" >&2; return 1; }
-direct_activate id "$(printf '%064d' 0)" /opt/weather/current/deploy/releases/2026.11.03-2.direct-compatibility.json auth "$(printf '%064d' 2)"
+direct_activate id "$(printf '%064d' 0)" /opt/weather/current/deploy/releases/2026.11.03-3.direct-compatibility.json auth "$(printf '%064d' 2)"
 `;
   const root = spawnSync("mktemp", ["-d"], { encoding: "utf8" }).stdout.trim();
   const log = join(root, "nonzero.log");
@@ -236,9 +240,9 @@ direct_recover_inner
     assert.equal(result.status, 0, result.stderr);
     const events = await readFile(log, "utf8");
     assert.match(events,
-      /authorization:\/authorization:2026\.10\.09-2:2026\.11\.03-2/u);
+      /authorization:\/authorization:2026\.10\.09-2:2026\.11\.03-3/u);
     assert.match(events,
-      /override:\/authorization:2026\.10\.09-2:2026\.11\.03-2:start_v14_compatibility_bridge_runtime:\/source\.env/u);
+      /override:\/authorization:2026\.10\.09-2:2026\.11\.03-3:start_v14_compatibility_bridge_runtime:\/source\.env/u);
     assert.match(events, /acl-apply:\/target\.env:weather/u);
     assert.match(events, /pre-epoch-runtime:\/source\.env/u);
     assert.doesNotMatch(events, /UNSAFE_ORDINARY_RESTORE/u);
@@ -278,7 +282,7 @@ require_v14_compatibility_bridge_migration_ledger() { :; }
 migration_history_sha256() { printf '%064d\n' 1; }
 direct_journal() { printf 'OVERWRITTEN\n' >"$root/activation-journal.json"; }
 die() { printf 'error: %s\n' "$*" >&2; return 1; }
-direct_activate id "$(printf '%064d' 0)" /opt/weather/current/deploy/releases/2026.11.03-2.direct-compatibility.json auth "$(printf '%064d' 2)"
+direct_activate id "$(printf '%064d' 0)" /opt/weather/current/deploy/releases/2026.11.03-3.direct-compatibility.json auth "$(printf '%064d' 2)"
 `;
   try {
     const result = runBash(body, [root]);
@@ -315,7 +319,7 @@ direct_recover_inner
   }
 });
 
-test("a verified backup receipt prevents a second backup invocation", async () => {
+test("a verified backup adoption prevents a second backup invocation", async () => {
   const root = await mkdtemp(join(tmpdir(), "weather-direct-backup-test-"));
   const receipt = join(root, "backup-receipt.json");
   const invoked = join(root, "invoked");
@@ -336,9 +340,64 @@ direct_backup id "$(printf '%064d' 0)"
   try {
     const result = runBash(body, [receipt, invoked]);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /Reused verified backup receipt/u);
+    assert.match(result.stdout, /Reused verified backup adoption receipt/u);
     const probe = spawnSync("test", ["-e", invoked]);
     assert.notEqual(probe.status, 0);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("backup phase adopts the retained publication without invoking a dump", async () => {
+  const root = await mkdtemp(join(tmpdir(), "weather-direct-backup-adoption-"));
+  const state = join(root, "state");
+  const originalRoot = join(state, "direct-maintenance-2026.11.03-2");
+  const targetRoot = join(state, "direct-maintenance-2026.11.03-3");
+  const original = join(originalRoot, "backup-receipt.json");
+  const receipt = join(targetRoot, "backup-receipt.json");
+  await Promise.all([
+    mkdir(originalRoot, { recursive: true }),
+    mkdir(targetRoot, { recursive: true }),
+  ]);
+  await writeFile(original, `${JSON.stringify({
+    allocatedBytes: 842_956_957,
+    archive: "/var/lib/weather/backups/weather-retained.dump.age",
+    archiveBytes: 842_950_000,
+    archiveSha256: "a".repeat(64),
+    checksum: "/var/lib/weather/backups/weather-retained.dump.age.sha256",
+  })}\n`, { mode: 0o600 });
+  const body = String.raw`
+state_dir=$2
+target_root=$3
+direct_begin() { :; }
+direct_validate_identity() { :; }
+direct_require_source() { printf '/source.env\n'; }
+direct_target_environment() { printf '/target.env\n'; }
+direct_require_target() { :; }
+direct_state_root() { printf '%s\n' "$target_root"; }
+direct_validate_original_backup() { :; }
+require_normal_release_resource_gate() { :; }
+direct_validate_backup() {
+  node --input-type=module - "$1" <<'NODE'
+import { readFileSync } from "node:fs";
+const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
+if (value.contractVersion !== "weather-direct-maintenance-backup-adoption/v1" ||
+  value.targetRelease !== "2026.11.03-3" || value.state !== "adopted") process.exit(9);
+NODE
+}
+direct_backup id "$(printf '%064d' 9)"
+`;
+  try {
+    const result = runBash(body, [state, targetRoot]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /without a new publication/u);
+    const adopted = JSON.parse(await readFile(receipt, "utf8"));
+    assert.equal(adopted.originalBackupReceipt, original);
+    assert.equal(adopted.originalIdentitySha256,
+      "ee25fc43f34c4926ebd3bd577a00d783108f3caa2434094eaf7ecf5697c1f754");
+    assert.equal(adopted.archive, "/var/lib/weather/backups/weather-retained.dump.age");
+    assert.equal(adopted.archiveSha256, "a".repeat(64));
+    assert.equal(adopted.allocatedBytes, 842_956_957);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -391,7 +450,7 @@ direct_finish_target id target
     const result = runBash(body, [log, deploy, root], { PATH: `${bin}:${process.env.PATH}` });
     assert.equal(result.status, 0, result.stderr);
     const events = (await readFile(log, "utf8")).trim().split("\n");
-    assert.ok(events.includes("epoch:target:2026.11.03-2"));
+    assert.ok(events.includes("epoch:target:2026.11.03-3"));
     const health = events.indexOf("health");
     const journal = events.indexOf("journal:target_healthy");
     assert.ok(health >= 0 && journal > health);

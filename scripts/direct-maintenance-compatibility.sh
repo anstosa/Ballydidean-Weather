@@ -30,7 +30,7 @@ require_direct_source_identity() {
   [[ "$1" == "$direct_target_environment" && "$2" == "$direct_source_environment" &&
     "$(sha256sum "$2" | awk '{print $1}')" == \
       97368a14e368dcf7fd3f3f179cd222df2f848695e1cd993abf8892e69c30d4e7 &&
-    "$(env_value "$1" WEATHER_RELEASE)" == 2026.11.03-2 &&
+    "$(env_value "$1" WEATHER_RELEASE)" == 2026.11.03-3 &&
     "$(env_value "$1" WEATHER_CONTROL_PLANE_VERSION)" == 17 &&
     "$(env_value "$1" WEATHER_CONTROL_PLANE_SHA256)" == \
       6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb ]] ||
@@ -42,7 +42,7 @@ require_direct_target_ledger() {
   [[ "$1" == "$direct_source_environment" &&
     "$2" =~ ^weather_v14_compat_[0-9]+_[0-9]+$ &&
     "$(migration_history_sha256 "$1" "$2")" == \
-      3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554 ]] ||
+      1cfd6251eeb66d443e36d661299c9e49e73465fab55e5dab2cfa4ee86dd36ad2 ]] ||
     die "direct compatibility target ledger differs"
 }
 
@@ -73,7 +73,7 @@ try {
   WEATHER_ENV_FILE=$environment compose run --rm --no-deps \
     --env WEATHER_DATABASE_NAME="$database" \
     --env WEATHER_DATABASE_STATEMENT_TIMEOUT_MS=300000 migration \
-    node deploy/scripts/migrate.mjs --atomic-direct-18-23
+    node deploy/scripts/migrate.mjs --atomic-direct-18-23-index-600s
 }
 
 # roll back only this invocation's uncommitted authorization
@@ -100,11 +100,11 @@ source, target, authorization, proof = map(Path, sys.argv[1:])
 value = {
     "contractVersion": "weather-direct-maintenance-source-compatibility/v1",
     "capturedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-    "sourceRelease": "2026.10.09-2", "targetRelease": "2026.11.03-2",
+    "sourceRelease": "2026.10.09-2", "targetRelease": "2026.11.03-3",
     "sourceEnvironmentSha256": hashlib.sha256(source.read_bytes()).hexdigest(),
     "targetEnvironmentSha256": hashlib.sha256(target.read_bytes()).hexdigest(),
     "authorizationSha256": hashlib.sha256(authorization.read_bytes()).hexdigest(),
-    "targetHistorySha256": "3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554",
+    "targetHistorySha256": "1cfd6251eeb66d443e36d661299c9e49e73465fab55e5dab2cfa4ee86dd36ad2",
     "fixtureBytes": 67108864, "sourceApiAndIngestPassed": True,
     "sourceRuntimeTargetHistoryCompatible": True, "state": "compatibility_ready",
     "wrongHistoryRejected": True, "unprovenHistoryRejected": True,
@@ -135,9 +135,9 @@ direct_compatibility_main() (
   local direct_source_environment=/opt/weather/current/deploy/releases/2026.10.09-2.env
   local authorization=$2 proof=$3 temporary definition
   local publication_attempted=false authorization_identity authorization_sha
-  [[ "$direct_target_environment" == /opt/weather/current/deploy/releases/2026.11.03-2.env &&
-    "$authorization" == /opt/weather/current/deploy/releases/2026.11.03-2.migration-authorization &&
-    "$proof" == /opt/weather/current/deploy/releases/2026.11.03-2.direct-compatibility.json &&
+  [[ "$direct_target_environment" == /opt/weather/current/deploy/releases/2026.11.03-3.env &&
+    "$authorization" == /opt/weather/current/deploy/releases/2026.11.03-3.migration-authorization &&
+    "$proof" == /opt/weather/current/deploy/releases/2026.11.03-3.direct-compatibility.json &&
     "$(stat -c '%u:%g:%a:%h' "$installed")" == 0:0:755:1 &&
     "$(sha256sum "$installed" | awk '{print $1}')" == \
       ea1185e04e0da2439c856b5b6989ce4f87f087a63ff7bafa1781c577cf42b8a0 ]] ||
@@ -182,7 +182,7 @@ direct_compatibility_main() (
   eval "$definition"
   verify_direct_source_compatibility "$direct_target_environment" "$direct_source_environment" "$temporary" v14
   [[ "$(env_value "$temporary" WEATHER_MIGRATION_AUTHORIZATION_HISTORY_SHA256)" == \
-    3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554 ]] ||
+    1cfd6251eeb66d443e36d661299c9e49e73465fab55e5dab2cfa4ee86dd36ad2 ]] ||
     die "direct compatibility authorization differs"
   authorization_identity=$(stat -c '%d:%i' "$temporary")
   authorization_sha=$(sha256sum "$temporary" | awk '{print $1}')

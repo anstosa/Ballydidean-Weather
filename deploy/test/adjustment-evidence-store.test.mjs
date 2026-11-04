@@ -2551,8 +2551,8 @@ test("revision capture epoch remains exact 0021 after the live 0022 advance", as
   }
 });
 
-// admit only the exact repaired 0023 capture identity
-test("revision capture epoch accepts the exact direct 0023 identity", async () => {
+// verify one exact direct index execution manifest
+async function verifyDirectCaptureEpochIdentity(indexChecksum, expectedHistory) {
   const root = await mkdtemp(join(tmpdir(), "weather-revision-direct-epoch-"));
   try {
     const migrationRoot = join(repoRoot, "packages/database/migrations");
@@ -2567,12 +2567,13 @@ test("revision capture epoch accepts the exact direct 0023 identity", async () =
     const migrationChecksums = [...canonicalMigrationChecksums];
     migrationChecksums[migrationNames.indexOf("0020_adjustment_revision_frontier.sql")] =
       "58d50e88fa767212865e222ec02e55283ceac5b00538aa2898b5ebc2873b28f6";
+    migrationChecksums[migrationNames.indexOf("0023_forecast_product_read_index.sql")] =
+      indexChecksum;
     const migrationHistorySha256 = createHash("sha256").update(migrationNames.map(
       // serialize the database manifest without a trailing line feed
       (name, index) => `${name}:${migrationChecksums[index]}`,
     ).join("\n")).digest("hex");
-    assert.equal(migrationHistorySha256,
-      "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf");
+    assert.equal(migrationHistorySha256, expectedHistory);
     const epochAt = "2026-11-03T08:00:00.000Z";
     const genesis = createHash("sha256")
       .update("adjustment-revision-frontier/v1\n0\n").digest("hex");
@@ -2682,7 +2683,10 @@ test("revision capture epoch accepts the exact direct 0023 identity", async () =
       {
         databaseEnvelope: { ...directEnvelope, databaseManifest: {
           ...directManifest,
-          migration_history_sha256: "3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554",
+          migration_history_sha256: createHash("sha256").update(migrationNames.map(
+            // preserve the root-ledger trailing line feed as an invalid manifest
+            (name, index) => `${name}:${migrationChecksums[index]}\n`,
+          ).join("")).digest("hex"),
         } },
         deployment: directDeployment,
         error: /database ledger differs/u,
@@ -2702,6 +2706,22 @@ test("revision capture epoch accepts the exact direct 0023 identity", async () =
   } finally {
     await rm(root, { force: true, recursive: true });
   }
+}
+
+// retain the originally published direct execution identity
+test("revision capture epoch accepts the exact direct 0023 identity", async () => {
+  await verifyDirectCaptureEpochIdentity(
+    "e637542cb2e742fe8f22f60313a11f00adbc1d140a811ee718524849fcece12a",
+    "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf",
+  );
+});
+
+// admit only the explicitly approved index build budget
+test("revision capture epoch accepts the exact direct index 600s identity", async () => {
+  await verifyDirectCaptureEpochIdentity(
+    "7e48acb14710a625cdcbb796bf1bf49ab4e00bf1aeb9bb763ac86410e08663e0",
+    "3aec6846d009a2bb2cee02279dceb9bd2d3572dc1b3a83eed2ce9a1724311345",
+  );
 });
 
 // archive permanent unqualified stages before releasing both bounded online slots

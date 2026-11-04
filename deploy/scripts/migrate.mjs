@@ -16,6 +16,13 @@ export function parseMigrationEntrypointArguments(argumentsList) {
   if (argumentsList.length === 1 && argumentsList[0] === "--atomic-direct-18-23") {
     return { atomicDirect18To23: true };
   }
+  // select only the index-extended repaired direct source and target
+  if (
+    argumentsList.length === 1 &&
+    argumentsList[0] === "--atomic-direct-18-23-index-600s"
+  ) {
+    return { atomicDirect18To23Index600s: true };
+  }
   throw new Error("migration entrypoint arguments are invalid");
 }
 

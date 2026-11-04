@@ -5,9 +5,9 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const FIXED_STORE_PATH =
-  "/opt/weather/current/deploy/releases/2026.11.03-2.adjustment-evidence-store.mjs";
+  "/opt/weather/current/deploy/releases/2026.11.03-3.adjustment-evidence-store.mjs";
 export const DIRECT_MAINTENANCE_EPOCH_STORE_SHA256 =
-  "48a6935593a1a880846caceea5d3006aaab303e3a989befe49b98412755e3d7a";
+  "e9f74ec9c4e26f072b456590ffd81e6f75f39dad06007fb761c8fb0a48507c81";
 const HASH = /^[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
 const SERVER_IMAGE = /^ghcr\.io\/anstosa\/weather-server@(sha256:[a-f0-9]{64})$/u;
@@ -35,8 +35,8 @@ async function readPrivate(path, options) {
 // validate the external immutable target identity
 function validateIdentity(value) {
   const keys = ["checkRunId", "cloudflaredImage", "contractVersion", "controlPlaneSha256",
-    "postgresImage", "previousRelease", "publishRunId", "revised20Sha256", "serverImage",
-    "sourceEnvironmentSha256", "sourceRelease", "state", "targetCommit",
+    "postgresImage", "previousRelease", "publishRunId", "revised20Sha256", "revised23Sha256",
+    "serverImage", "sourceEnvironmentSha256", "sourceRelease", "state", "targetCommit",
     "targetHistorySha256", "targetRelease", "webImage"];
   const server = SERVER_IMAGE.exec(value?.serverImage);
   const web = WEB_IMAGE.exec(value?.webImage);
@@ -44,11 +44,15 @@ function validateIdentity(value) {
   if (JSON.stringify(Object.keys(value ?? {}).sort()) !== JSON.stringify(keys.sort()) ||
     value.contractVersion !== "weather-direct-maintenance-target/v1" ||
     value.sourceRelease !== "2026.10.09-2" || value.previousRelease !== "2026.10.09-1" ||
-    value.targetRelease !== "2026.11.03-2" || value.state !== "publication_ready" ||
+    value.targetRelease !== "2026.11.03-3" || value.state !== "publication_ready" ||
     value.controlPlaneSha256 !==
       "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb" ||
+    value.revised20Sha256 !==
+      "58d50e88fa767212865e222ec02e55283ceac5b00538aa2898b5ebc2873b28f6" ||
+    value.revised23Sha256 !==
+      "7e48acb14710a625cdcbb796bf1bf49ab4e00bf1aeb9bb763ac86410e08663e0" ||
     value.targetHistorySha256 !==
-      "3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554" ||
+      "1cfd6251eeb66d443e36d661299c9e49e73465fab55e5dab2cfa4ee86dd36ad2" ||
     !COMMIT.test(value.targetCommit) || server === null || web === null) {
     throw new Error("direct epoch target identity differs");
   }
@@ -97,14 +101,14 @@ export async function runDirectMaintenanceEpoch(identityPath, identitySha256, op
     throw new Error("direct epoch evidence store export differs");
   }
   await store.runAdjustmentArchiveCommand(
-    ["revision-capture-epoch-init-v1", "2026.11.03-2"],
+    ["revision-capture-epoch-init-v1", "2026.11.03-3"],
     {
       captureEpochDeployment: {
         controlPlaneSha256:
           "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
         controlPlaneVersion: "17",
         sourceCommit: deployment.sourceCommit,
-        sourceRelease: "2026.11.03-2",
+        sourceRelease: "2026.11.03-3",
         sourceServerImageDigest: deployment.sourceServerImageDigest,
         sourceWebImageDigest: deployment.sourceWebImageDigest,
       },

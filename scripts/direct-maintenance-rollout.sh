@@ -4,11 +4,15 @@ set -euo pipefail
 # fixed one-task release identities
 readonly direct_source_release=2026.10.09-2
 readonly direct_previous_release=2026.10.09-1
-readonly direct_target_release=2026.11.03-2
+readonly direct_target_release=2026.11.03-3
+readonly direct_original_target_release=2026.11.03-2
+readonly direct_original_identity_sha=ee25fc43f34c4926ebd3bd577a00d783108f3caa2434094eaf7ecf5697c1f754
+readonly direct_original_backup_receipt_sha=c17966f78167775b194b300d4d099e7a8836264ecefd52c363d769167affd8e9
 readonly direct_source_env_sha=97368a14e368dcf7fd3f3f179cd222df2f848695e1cd993abf8892e69c30d4e7
 readonly direct_control_sha=6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb
 readonly direct_revised_20_sha=58d50e88fa767212865e222ec02e55283ceac5b00538aa2898b5ebc2873b28f6
-readonly direct_target_history=3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554
+readonly direct_revised_23_sha=7e48acb14710a625cdcbb796bf1bf49ab4e00bf1aeb9bb763ac86410e08663e0
+readonly direct_target_history=1cfd6251eeb66d443e36d661299c9e49e73465fab55e5dab2cfa4ee86dd36ad2
 readonly direct_retained_cap=20401094656
 readonly direct_peak_cap=23622320128
 readonly direct_installed_update=/opt/weather/current/deploy/scripts/update.sh
@@ -24,7 +28,7 @@ direct_backup_sha=
 direct_source_env=
 direct_target_env=
 direct_source_history=
-direct_migration_name=weather_direct_18_23_2026_11_03_2
+direct_migration_name=weather_direct_18_23_2026_11_03_3
 
 # print the closed phase interface
 direct_usage() {
@@ -125,21 +129,22 @@ direct_validate_identity() {
   local sha=$2
   direct_require_sha "$path" "$sha"
   node --input-type=module - "$path" "$direct_source_env_sha" "$direct_control_sha" \
-    "$direct_revised_20_sha" "$direct_target_history" <<'NODE'
+    "$direct_revised_20_sha" "$direct_revised_23_sha" "$direct_target_history" <<'NODE'
 import { readFileSync } from "node:fs";
-const [path, sourceEnv, control, revised20, targetHistory] = process.argv.slice(2);
+const [path, sourceEnv, control, revised20, revised23, targetHistory] = process.argv.slice(2);
 const value = JSON.parse(readFileSync(path, "utf8"));
 const keys = ["checkRunId", "cloudflaredImage", "contractVersion", "controlPlaneSha256",
-  "postgresImage", "previousRelease", "publishRunId", "revised20Sha256", "serverImage",
-  "sourceEnvironmentSha256", "sourceRelease", "state", "targetCommit",
+  "postgresImage", "previousRelease", "publishRunId", "revised20Sha256", "revised23Sha256",
+  "serverImage", "sourceEnvironmentSha256", "sourceRelease", "state", "targetCommit",
   "targetHistorySha256", "targetRelease", "webImage"];
 const image = /^[^@\s]+@sha256:[a-f0-9]{64}$/u;
 // admit only the externally proven fixed publication
 if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys.sort()) ||
   value.contractVersion !== "weather-direct-maintenance-target/v1" ||
   value.sourceRelease !== "2026.10.09-2" || value.previousRelease !== "2026.10.09-1" ||
-  value.targetRelease !== "2026.11.03-2" || value.sourceEnvironmentSha256 !== sourceEnv ||
+  value.targetRelease !== "2026.11.03-3" || value.sourceEnvironmentSha256 !== sourceEnv ||
   value.controlPlaneSha256 !== control || value.revised20Sha256 !== revised20 ||
+  value.revised23Sha256 !== revised23 ||
   value.targetHistorySha256 !== targetHistory || value.state !== "publication_ready" ||
   !/^[a-f0-9]{40}$/u.test(value.targetCommit) ||
   !Number.isSafeInteger(value.checkRunId) || value.checkRunId < 1 ||
@@ -167,7 +172,7 @@ const keys = ["authorizationSha256", "capturedAt", "contractVersion", "fixtureBy
 // require genuine 64 MiB source-runtime compatibility, never a rehearsal alias
 if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys.sort()) ||
   value.contractVersion !== "weather-direct-maintenance-source-compatibility/v1" ||
-  value.sourceRelease !== "2026.10.09-2" || value.targetRelease !== "2026.11.03-2" ||
+  value.sourceRelease !== "2026.10.09-2" || value.targetRelease !== "2026.11.03-3" ||
   value.targetHistorySha256 !== targetHistory || value.fixtureBytes !== 67_108_864 ||
   value.sourceRuntimeTargetHistoryCompatible !== true ||
   value.fullSizeRehearsal !== "explicitly-waived" || value.sourceApiAndIngestPassed !== true ||
@@ -357,13 +362,18 @@ direct_publish_json() {
   sync -f "$(dirname "$target")"
 }
 
-# validate the exact encrypted backup publication
-direct_validate_backup() {
+# locate the retained original backup receipt without relabeling it
+direct_original_backup_receipt() {
+  printf '%s/direct-maintenance-%s/backup-receipt.json\n' \
+    "$state_dir" "$direct_original_target_release"
+}
+
+# validate the retained original encrypted backup publication
+direct_validate_original_backup() {
   local receipt=$1
-  local identity_sha=$2
   local archive checksum expected archive_bytes maximum_bytes allocated_bytes actual_allocated
-  direct_require_private "$receipt"
-  node --input-type=module - "$receipt" "$identity_sha" <<'NODE'
+  direct_require_sha "$receipt" "$direct_original_backup_receipt_sha"
+  node --input-type=module - "$receipt" "$direct_original_identity_sha" <<'NODE'
 import { readFileSync } from "node:fs";
 const [path, identitySha] = process.argv.slice(2);
 const value = JSON.parse(readFileSync(path, "utf8"));
@@ -403,76 +413,86 @@ NODE
     die "direct rollout backup checksum differs"
 }
 
-# invoke the encrypted backup at most once
+# validate the new target's truthful adoption of the retained backup
+direct_validate_backup() {
+  local receipt=$1
+  local identity_sha=$2
+  local original original_sha
+  direct_require_private "$receipt"
+  original=$(direct_original_backup_receipt)
+  direct_validate_original_backup "$original"
+  original_sha=$(sha256sum "$original" | awk '{print $1}')
+  node --input-type=module - "$receipt" "$identity_sha" "$original" "$original_sha" \
+    "$direct_original_identity_sha" <<'NODE'
+import { readFileSync } from "node:fs";
+const [path, identitySha, originalPath, originalSha, originalIdentitySha] =
+  process.argv.slice(2);
+const value = JSON.parse(readFileSync(path, "utf8"));
+const original = JSON.parse(readFileSync(originalPath, "utf8"));
+const keys = ["adoptedAt", "allocatedBytes", "archive", "archiveBytes", "archiveSha256",
+  "checksum", "contractVersion", "identitySha256", "originalBackupReceipt",
+  "originalBackupReceiptSha256", "originalIdentitySha256", "sourceRelease", "state",
+  "targetRelease"];
+const copied = ["allocatedBytes", "archive", "archiveBytes", "archiveSha256", "checksum"];
+// bind the new target to the same already-published encrypted archive
+if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys.sort()) ||
+  value.contractVersion !== "weather-direct-maintenance-backup-adoption/v1" ||
+  value.identitySha256 !== identitySha || value.originalBackupReceipt !== originalPath ||
+  value.originalBackupReceiptSha256 !== originalSha ||
+  value.originalIdentitySha256 !== originalIdentitySha ||
+  value.sourceRelease !== "2026.10.09-2" || value.targetRelease !== "2026.11.03-3" ||
+  value.state !== "adopted" || !Number.isFinite(Date.parse(value.adoptedAt)) ||
+  !copied.every((key) => value[key] === original[key])) {
+  throw new Error("direct rollout backup adoption differs");
+}
+NODE
+}
+
+# adopt the existing backup without creating another publication
 direct_backup() {
   local identity=$1
   local identity_sha=$2
-  local source database logical maximum required root attempt receipt output archive checksum
-  local archive_sha archive_bytes allocated captured body
+  local root attempt receipt original original_sha captured body
   direct_begin
   direct_validate_identity "$identity" "$identity_sha"
-  source=$(direct_require_source)
+  direct_require_source >/dev/null
   direct_require_target "$(direct_target_environment)" "$identity"
   root=$(direct_state_root)
   attempt="$root/backup-attempt.json"
   receipt=$(direct_backup_receipt)
-  # reuse only a complete verified backup
+  # reuse only a complete verified adoption
   if [[ -e "$receipt" || -L "$receipt" ]]; then
     direct_validate_backup "$receipt" "$identity_sha"
-    printf 'Reused verified backup receipt %s.\n' "$receipt"
+    printf 'Reused verified backup adoption receipt %s.\n' "$receipt"
     return
   fi
-  # never repeat an uncertain or failed backup attempt
+  # reject every new backup attempt for the successor target
   if [[ -e "$attempt" || -L "$attempt" ]]; then
-    die "direct rollout backup was already attempted without a receipt"
+    die "direct rollout successor backup attempt is forbidden"
   fi
   require_normal_release_resource_gate
-  database=$(env_value "$source" WEATHER_DATABASE_NAME)
-  logical=$(WEATHER_ENV_FILE=$source compose exec -T postgres \
-    psql --no-psqlrc --set=ON_ERROR_STOP=1 --username postgres --dbname "$database" \
-    --tuples-only --no-align --command 'SELECT pg_database_size(current_database())')
-  [[ "$logical" =~ ^[1-9][0-9]*$ && ${#logical} -le 18 ]] ||
-    die "direct rollout logical database size differs"
-  maximum=$((logical + 1073741824))
-  required=$((maximum + 2147483648))
-  direct_require_free /var/lib/weather "$required"
+  original=$(direct_original_backup_receipt)
+  direct_validate_original_backup "$original"
+  original_sha=$(sha256sum "$original" | awk '{print $1}')
   captured=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  body=$(node --input-type=module -e '
-const [identitySha256, capturedAt] = process.argv.slice(1);
-process.stdout.write(JSON.stringify({capturedAt,
-  contractVersion:"weather-direct-maintenance-backup-attempt/v1", identitySha256,
-  sourceRelease:"2026.10.09-2", state:"started", targetRelease:"2026.11.03-2"}));
-' "$identity_sha" "$captured")
-  direct_publish_json "$attempt" "$body"
-  output=$(/opt/weather/current/deploy/scripts/backup.sh --env-file "$source" \
-    --max-output-bytes "$maximum")
-  archive=$(sed -n 's/^Backup complete: //p' <<<"$output")
-  checksum=$(sed -n 's/^Checksum: //p' <<<"$output")
-  [[ "$archive" == /var/lib/weather/backups/weather-*.dump.age &&
-    "$checksum" == "$archive.sha256" ]] || die "direct rollout backup output differs"
-  direct_require_private "$checksum"
-  (cd "$(dirname "$archive")" && sha256sum --check "$(basename "$checksum")") >/dev/null ||
-    die "direct rollout backup checksum differs"
-  archive_sha=$(sha256sum "$archive" | awk '{print $1}')
-  archive_bytes=$(stat -c '%s' "$archive")
-  direct_require_backup_archive "$archive" "$archive_bytes" "$maximum"
-  allocated=$(( ($(stat -c '%b' "$archive") + $(stat -c '%b' "$checksum")) * 512 ))
-  ((archive_bytes <= maximum && allocated >= archive_bytes)) ||
-    die "direct rollout backup accounting differs"
-  captured=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  body=$(node --input-type=module -e '
-const [identitySha256, archive, checksum, archiveSha256, logicalDatabaseBytes,
-  maxOutputBytes, archiveBytes, allocatedBytes, capturedAt] = process.argv.slice(1);
-process.stdout.write(JSON.stringify({allocatedBytes:Number(allocatedBytes), archive,
-  archiveBytes:Number(archiveBytes), archiveSha256, capturedAt, checksum,
-  contractVersion:"weather-direct-maintenance-backup/v1", identitySha256,
-  logicalDatabaseBytes:Number(logicalDatabaseBytes), maxOutputBytes:Number(maxOutputBytes),
-  sourceRelease:"2026.10.09-2", state:"published", targetRelease:"2026.11.03-2"}));
-' "$identity_sha" "$archive" "$checksum" "$archive_sha" "$logical" "$maximum" \
-    "$archive_bytes" "$allocated" "$captured")
+  body=$(node --input-type=module - "$original" "$identity_sha" "$original_sha" \
+    "$direct_original_identity_sha" "$captured" <<'NODE'
+import { readFileSync } from "node:fs";
+const [originalPath, identitySha256, originalBackupReceiptSha256,
+  originalIdentitySha256, adoptedAt] = process.argv.slice(2);
+const original = JSON.parse(readFileSync(originalPath, "utf8"));
+process.stdout.write(JSON.stringify({adoptedAt, allocatedBytes: original.allocatedBytes,
+  archive: original.archive, archiveBytes: original.archiveBytes,
+  archiveSha256: original.archiveSha256, checksum: original.checksum,
+  contractVersion:"weather-direct-maintenance-backup-adoption/v1", identitySha256,
+  originalBackupReceipt: originalPath, originalBackupReceiptSha256,
+  originalIdentitySha256, sourceRelease:"2026.10.09-2", state:"adopted",
+  targetRelease:"2026.11.03-3"}));
+NODE
+)
   direct_publish_json "$receipt" "$body"
   direct_validate_backup "$receipt" "$identity_sha"
-  printf 'Published one encrypted direct rollout backup: %s\n' "$archive"
+  printf 'Adopted retained encrypted backup without a new publication: %s\n' "$receipt"
 }
 
 # validate fresh one-backup external cap authorization
@@ -498,7 +518,7 @@ if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys.sort()) ||
   value.identitySha256 !== identitySha || value.backupReceiptSha256 !== backupSha ||
   value.backupPublications !== 1 || value.retainedBytesMaximum !== Number(retainedCap) ||
   value.peakBytesMaximum !== Number(peakCap) || value.authorized !== true ||
-  value.sourceRelease !== "2026.10.09-2" || value.targetRelease !== "2026.11.03-2" ||
+  value.sourceRelease !== "2026.10.09-2" || value.targetRelease !== "2026.11.03-3" ||
   value.state !== "activation_ready" || !Number.isFinite(captured) ||
   age < -300_000 || age > 900_000) throw new Error("activation authorization differs");
 NODE
@@ -526,8 +546,8 @@ process.stdout.write(JSON.stringify({capturedAt, containerId,
   backupReceiptSha256, compatibilityProofSha256,
   contractVersion:"weather-direct-maintenance-journal/v1", exitCode, identitySha256,
   migrationName, sourceHistorySha256, targetHistorySha256:
-    "3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554",
-  sourceRelease:"2026.10.09-2", state, targetRelease:"2026.11.03-2"}));
+    "1cfd6251eeb66d443e36d661299c9e49e73465fab55e5dab2cfa4ee86dd36ad2",
+  sourceRelease:"2026.10.09-2", state, targetRelease:"2026.11.03-3"}));
 ' "$state" "$container" "$exit_code" "$captured" "$direct_identity_sha" \
     "$direct_migration_name" "$direct_source_history" "$direct_compatibility_sha" \
     "$direct_backup_sha")
@@ -555,8 +575,8 @@ const states = new Set(["prepared", "running", "launch_failed", "removed", "comm
 if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(keys.sort()) ||
   value.contractVersion !== "weather-direct-maintenance-journal/v1" ||
   value.identitySha256 !== identitySha || value.sourceRelease !== "2026.10.09-2" ||
-  value.targetRelease !== "2026.11.03-2" ||
-  value.migrationName !== "weather_direct_18_23_2026_11_03_2" ||
+  value.targetRelease !== "2026.11.03-3" ||
+  value.migrationName !== "weather_direct_18_23_2026_11_03_3" ||
   value.compatibilityProofSha256 !== compatibilitySha ||
   value.backupReceiptSha256 !== backupSha || value.targetHistorySha256 !== targetHistory ||
   !states.has(value.state) || !/^[a-f0-9]{64}$/u.test(value.sourceHistorySha256)) {
@@ -690,7 +710,7 @@ direct_quiesce_migration() {
     die "direct rollout migration container cardinality differs"
   # leave an absent exact container unchanged
   if [[ -z "$ids" ]]; then
-    return
+    return 0
   fi
   direct_require_migration_container "$ids" "$target"
   running=$(docker container inspect --format '{{.State.Running}}' "$ids")
@@ -710,7 +730,7 @@ direct_run_migration() {
   # preserve partial launch state for exact-name reconciliation
   output=$(WEATHER_ENV_FILE=$target compose run --detach --no-deps \
     --name "$direct_migration_name" migration \
-    node deploy/scripts/migrate.mjs --atomic-direct-18-23 2>&1) || launch_status=$?
+    node deploy/scripts/migrate.mjs --atomic-direct-18-23-index-600s 2>&1) || launch_status=$?
   ids=$(docker ps --all --no-trunc --quiet --filter "name=^/${direct_migration_name}$")
   # classify a launch failure only after proving no container exists
   if [[ -z "$ids" ]]; then

@@ -32,7 +32,7 @@ const canonicalSourceHashes = {
   "packages/forecast-adjustment/src/calendar.ts": "014aaeddadee2c47b47169f5e6a7a292f70a53193292381b6a22406d995052da",
   "packages/forecast-adjustment/src/candidate.ts": "4bdfbef5165786aca995e929b513872f8f30d3d87248fc7f07046d7ee9e8672e",
   "packages/forecast-adjustment/src/evaluate.ts": "20480348e34a2a6f9972404e9fe02c9112c4eba5c3d800c818f6f731b083f74a",
-  "packages/forecast-adjustment/src/maintenance-capture-epoch.ts": "8d28fbd11905277942bb52596017800f2f69dd82acb4cbeda6fff3198fb25969",
+  "packages/forecast-adjustment/src/maintenance-capture-epoch.ts": "7e850738195947bab7bf4733935edd8429e341dd93cd61fa1169956975f3050c",
   "packages/forecast-adjustment/src/maintenance-policy.ts": "5df440a43655c1525e32849aec772989ee032b70e21f26f3e849658928a8e8c5",
   "packages/forecast-adjustment/src/maintenance-revision-projection.ts": "66f2718173500154de3ec255adc4a84c2186f6eca5e1259cc7bea3b0900f2ffd",
   "packages/forecast-adjustment/src/maintenance-runtime-package.ts": "bf65ff19151cdae04682cb3dc39975703c08296286e37bafed8c1273b78bab6b",

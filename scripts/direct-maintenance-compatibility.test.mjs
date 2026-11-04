@@ -72,7 +72,7 @@ direct_fixture_migrate /target.env weather_v14_compat_123_456
   assert.equal(calls.length, 2);
   assert.match(calls[0], /names\.slice\(0, 18\)/u);
   assert.match(calls[0], /await runMigrations\(pool, prefix\)/u);
-  assert.match(calls[1], /--atomic-direct-18-23/u);
+  assert.match(calls[1], /--atomic-direct-18-23-index-600s/u);
   assert.match(calls[1], /WEATHER_DATABASE_STATEMENT_TIMEOUT_MS=300000/u);
   // reject a full-size clone in either fixture phase
   for (const call of calls) {
@@ -90,7 +90,7 @@ die() { printf '%s\\n' "$1" >&2; return 1; }
 # return only the supplied public test ledger
 migration_history_sha256() { printf '%s' "$TEST_HISTORY"; }
 require_direct_target_ledger "$1" "$2"`;
-  const environment = { ...process.env, TEST_HISTORY: "3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554" };
+  const environment = { ...process.env, TEST_HISTORY: "1cfd6251eeb66d443e36d661299c9e49e73465fab55e5dab2cfa4ee86dd36ad2" };
   assert.equal(spawnSync("bash", ["-c", command, "test", "/source.env", "weather_v14_compat_123_456"], { cwd: root, env: environment }).status, 0);
   assert.notEqual(spawnSync("bash", ["-c", command, "test", "/source.env", "weather"], { cwd: root, env: environment }).status, 0);
   assert.notEqual(spawnSync("bash", ["-c", command, "test", "/other.env", "weather_v14_compat_123_456"], { cwd: root, env: environment }).status, 0);

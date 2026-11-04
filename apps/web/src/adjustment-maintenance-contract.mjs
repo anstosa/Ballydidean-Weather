@@ -4825,6 +4825,11 @@ var CAPTURE_EPOCH_IDENTITIES = Object.freeze([
     controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
     controlPlaneVersion: "17",
     databaseMigrationHistorySha256: "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf"
+  },
+  {
+    controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+    controlPlaneVersion: "17",
+    databaseMigrationHistorySha256: "3aec6846d009a2bb2cee02279dceb9bd2d3572dc1b3a83eed2ce9a1724311345"
   }
 ]);
 

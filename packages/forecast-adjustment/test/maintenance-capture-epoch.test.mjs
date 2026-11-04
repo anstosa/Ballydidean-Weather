@@ -64,6 +64,25 @@ test("capture epoch witness accepts the reviewed version 17 identity", () => {
   );
 });
 
+// bind the approved index timeout to its exact database manifest
+test("capture epoch witness accepts only the reviewed index 600s identity", () => {
+  const identity = {
+    controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+    controlPlaneVersion: "17",
+    databaseMigrationHistorySha256: "3aec6846d009a2bb2cee02279dceb9bd2d3572dc1b3a83eed2ce9a1724311345",
+  };
+  assert.equal(verifyAdjustmentRevisionCaptureEpochWitness(witnessBytes(identity))
+    .databaseMigrationHistorySha256, identity.databaseMigrationHistorySha256);
+  assert.throws(() => verifyAdjustmentRevisionCaptureEpochWitness(witnessBytes({
+    ...identity,
+    databaseMigrationHistorySha256: "1cfd6251eeb66d443e36d661299c9e49e73465fab55e5dab2cfa4ee86dd36ad2",
+  })), /identity differs/u);
+  assert.throws(() => verifyAdjustmentRevisionCaptureEpochWitness(witnessBytes({
+    ...identity,
+    controlPlaneSha256: "7".repeat(64),
+  })), /identity differs/u);
+});
+
 // reject a rehashed nonzero or incomplete database boundary
 test("capture epoch witness rejects alternate frontier and history claims", () => {
   assert.throws(

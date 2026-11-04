@@ -1365,6 +1365,8 @@ const ADJUSTMENT_ROLLING_REGISTRATION_MIGRATION_HISTORY_SHA256 =
   "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424";
 const ADJUSTMENT_DIRECT_MIGRATION_HISTORY_SHA256 =
   "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf";
+const ADJUSTMENT_DIRECT_INDEX_600S_MIGRATION_HISTORY_SHA256 =
+  "3aec6846d009a2bb2cee02279dceb9bd2d3572dc1b3a83eed2ce9a1724311345";
 const ADJUSTMENT_CAPTURE_EPOCH_CONTROL_PLANE_17_SHA256 =
   "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb";
 const ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGERS = Object.freeze([Object.freeze({
@@ -1376,6 +1378,11 @@ const ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGERS = Object.freeze([Object.freeze({
   checksum: "e637542cb2e742fe8f22f60313a11f00adbc1d140a811ee718524849fcece12a",
   count: 23,
   historySha256: ADJUSTMENT_DIRECT_MIGRATION_HISTORY_SHA256,
+  name: "0023_forecast_product_read_index.sql",
+}), Object.freeze({
+  checksum: "7e48acb14710a625cdcbb796bf1bf49ab4e00bf1aeb9bb763ac86410e08663e0",
+  count: 23,
+  historySha256: ADJUSTMENT_DIRECT_INDEX_600S_MIGRATION_HISTORY_SHA256,
   name: "0023_forecast_product_read_index.sql",
 })]);
 
@@ -1546,7 +1553,9 @@ export function validateAdjustmentRevisionCaptureEpochWitness(value) {
         ADJUSTMENT_ROLLING_REGISTRATION_MIGRATION_HISTORY_SHA256) ||
     (value.controlPlaneVersion === "17" &&
       value.controlPlaneSha256 === ADJUSTMENT_CAPTURE_EPOCH_CONTROL_PLANE_17_SHA256 &&
-      value.databaseMigrationHistorySha256 === ADJUSTMENT_DIRECT_MIGRATION_HISTORY_SHA256);
+      [ADJUSTMENT_DIRECT_MIGRATION_HISTORY_SHA256,
+        ADJUSTMENT_DIRECT_INDEX_600S_MIGRATION_HISTORY_SHA256]
+        .includes(value.databaseMigrationHistorySha256));
   // bind the one-time witness to one reviewed control-history identity
   if (value.activationKind !== "inert_v14_pre_activation" ||
     value.archiveCommitOrdinal !== "0" ||

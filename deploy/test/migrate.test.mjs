@@ -15,11 +15,17 @@ test("migration entrypoint accepts only the closed atomic flags", () => {
   assert.deepEqual(parseMigrationEntrypointArguments(["--atomic-direct-18-23"]), {
     atomicDirect18To23: true,
   });
+  assert.deepEqual(
+    parseMigrationEntrypointArguments(["--atomic-direct-18-23-index-600s"]),
+    { atomicDirect18To23Index600s: true },
+  );
   // refuse duplicates and unknown arguments before database initialization
   for (const argumentsList of [["--atomic"], ["--atomic-maintenance-v14", "21"],
     ["--atomic-maintenance-v14", "--atomic-maintenance-v14"],
     ["--atomic-normal-21-23", "--atomic-normal-21-23"],
     ["--atomic-direct-18-23", "--atomic-direct-18-23"],
+    ["--atomic-direct-18-23-index-600s", "--atomic-direct-18-23-index-600s"],
+    ["--atomic-direct-18-23-index-600s", "--atomic-direct-18-23"],
     ["--atomic-direct-18-23", "--atomic-normal-21-23"],
     ["--atomic-direct-18-23", "18", "23"],
     ["--atomic-maintenance-v14", "--atomic-normal-21-23"]]) {
