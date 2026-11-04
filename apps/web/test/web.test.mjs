@@ -855,6 +855,86 @@ test("property sensor gateway rows omit battery indicators", () => {
   assert.doesNotMatch(html, /class="property-sensor-battery/u);
 });
 
+// keep the saved inventory independent of the gateway's currently reporting subset
+test("property sensor maps retain offline placements, details, and unplaced reporting counts", () => {
+  const layout = {
+    displayName: "Orchard soil",
+    icon: "rain",
+    latitude: 47.9505,
+    longitude: -122.4281,
+    sensorKey: "soil-1",
+    updatedAt: "2026-08-22T04:59:00.000Z",
+  };
+  const state = {
+    ...forecastState([], null),
+    current: [{
+      ...ecowittRecord,
+      metadata: {
+        ...ecowittRecord.metadata,
+        provider: {
+          ...ecowittRecord.metadata.provider,
+          propertySensors: [
+            { ...ecowittRecord.metadata.provider.propertySensors[0], readings: { soilMoisturePercent: 42, batteryLevel: 2 } },
+            { channel: 1, key: "temperature-1", model: "WN31", readings: { temperatureC: 20 } },
+          ],
+        },
+      },
+    }],
+    propertySensorLayout: [
+      layout,
+      { ...layout, sensorKey: "soil-2", displayName: "Pasture soil" },
+      { ...layout, sensorKey: "gateway", displayName: "Gateway" },
+    ],
+    selectedPropertySensorKey: "soil-2",
+  };
+  const html = renderWeatherDashboard(state, "map");
+  assert.match(html, /3 placed/u);
+  assert.equal((html.match(/class="property-sensor-select"/gu) ?? []).length, 3);
+  assert.equal((html.match(/class="property-sensor-marker(?: selected)?"/gu) ?? []).length, 3);
+  assert.equal((html.match(/class="property-sensor-offline"/gu) ?? []).length, 2);
+  assert.match(html, /1 reporting sensor still needs a position in Admin/u);
+  assert.match(html, /data-property-sensor-details="soil-2"[^]*?No current readings\. This sensor is not reporting\./u);
+  const offline = html.match(/<button[^>]*data-property-sensor-view="soil-2"[^]*?<\/button>/u)?.[0];
+  assert.ok(offline);
+  assert.match(offline, /aria-expanded="true"/u);
+  assert.match(offline, /No current readings/u);
+  assert.match(offline, /class="property-sensor-offline"[^>]*>Offline<\/span>/u);
+  assert.doesNotMatch(offline, /property-sensor-battery|Moisture 42|Reporting/u);
+
+  // retain every placement when the whole source is missing or stale
+  for (const current of [[], state.current.map(
+    // keep old readings available without presenting them as live
+    (record) => ({ ...record, freshness: { ageSeconds: 86400, label: "Stale", status: "stale" } }),
+  )]) {
+    const unavailable = renderWeatherDashboard({ ...state, current }, "map");
+    assert.equal((unavailable.match(/class="property-sensor-offline"/gu) ?? []).length, 3);
+    assert.doesNotMatch(unavailable, /class="property-sensor-battery|Moisture 42/u);
+    assert.match(unavailable, /3 placed/u);
+  }
+
+  // replace offline status with a live reading and battery when that same key returns
+  const recovered = renderWeatherDashboard({
+    ...state,
+    current: [{
+      ...state.current[0],
+      metadata: {
+        ...state.current[0].metadata,
+        provider: {
+          ...state.current[0].metadata.provider,
+          propertySensors: [
+            ...state.current[0].metadata.provider.propertySensors,
+            { channel: 2, key: "soil-2", model: "WH52", readings: { soilMoisturePercent: 37, batteryLevel: 5 } },
+          ],
+        },
+      },
+    }],
+  }, "map");
+  assert.equal((recovered.match(/class="property-sensor-select"/gu) ?? []).length, 3);
+  assert.equal((recovered.match(/class="property-sensor-offline"/gu) ?? []).length, 1);
+  assert.match(recovered, /data-property-sensor-details="soil-2"[^]*?Moisture 37 %/u);
+  assert.match(recovered, /aria-label="Battery level 5 of 5"/u);
+});
+
 // render one focused home-alert state
 function renderAlertState({
   current = [record],

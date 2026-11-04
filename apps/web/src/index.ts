@@ -4416,13 +4416,17 @@ export class WeatherDashboardController {
       // require one currently reported sensor key
       (candidate) => candidate.key === sensorKey,
     );
+    const placed = this.#state.propertySensorLayout?.some(
+      // retain configured sensors while their readings are unavailable
+      (layout) => layout.sensorKey === sensorKey,
+    ) ?? false;
 
-    // reject stale rendered sensor identities
-    if (sensor === undefined) {
+    // reject identities absent from both reporting sensors and saved placements
+    if (sensor === undefined && !placed) {
       return;
     }
 
-    this.patch({ selectedPropertySensorKey: sensor.key });
+    this.patch({ selectedPropertySensorKey: sensorKey });
   }
 
   // persist one shared property sensor name and position
@@ -9524,17 +9528,32 @@ function renderPropertySensorMap(state: DashboardState): string {
     return "";
   }
 
-  const sensors = propertySensorSnapshots(state);
+  const sensors = propertySensorSnapshots({
+    current: state.current.filter(
+      // do not present stale gateway snapshots as currently reporting
+      (record) => record.freshness.status !== "stale",
+    ),
+  });
+  const sensorsByKey = new Map(
+    sensors.map(
+      // pair saved placements with currently reporting hardware
+      (sensor) => [sensor.key, sensor],
+    ),
+  );
   const layoutByKey = new Map(
     (state.propertySensorLayout ?? []).map(
       // index each server-wide sensor placement
       (entry) => [entry.sensorKey, entry],
     ),
   );
-  const placed = sensors.flatMap((sensor) => {
-    const layout = layoutByKey.get(sensor.key);
-    return layout === undefined ? [] : [{ layout, sensor }];
-  });
+  const placed = [...layoutByKey.values()].map(
+    // retain every saved sensor even when the gateway omits its snapshot
+    (layout) => ({ layout, sensor: sensorsByKey.get(layout.sensorKey) ?? null }),
+  );
+  const unplaced = sensors.filter(
+    // count reporting hardware without a saved location independently of offline rows
+    (sensor) => !layoutByKey.has(sensor.key),
+  ).length;
   const viewport = createFixedMapViewport(
     site.latitude,
     site.longitude,
@@ -9550,8 +9569,8 @@ function renderPropertySensorMap(state: DashboardState): string {
       sensor,
       viewport,
       state.units,
-      state.selectedPropertySensorKey === sensor.key,
-      markerOffsets.get(sensor.key) ?? { x: 0, y: 0 },
+      state.selectedPropertySensorKey === layout.sensorKey,
+      markerOffsets.get(layout.sensorKey) ?? { x: 0, y: 0 },
     ),
   ).join("");
   const sensorRows = placed.map(
@@ -9560,7 +9579,7 @@ function renderPropertySensorMap(state: DashboardState): string {
       layout,
       sensor,
       state.units,
-      state.selectedPropertySensorKey === sensor.key,
+      state.selectedPropertySensorKey === layout.sensorKey,
     ),
   ).join("");
 
@@ -9593,8 +9612,8 @@ function renderPropertySensorMap(state: DashboardState): string {
             : `<ol class="property-sensor-list" aria-label="Placed property sensors">${sensorRows}</ol>`}
         </div>
       </div>
-      ${sensors.length > placed.length
-        ? `<p class="property-map-note">${String(sensors.length - placed.length)} reporting sensor${sensors.length - placed.length === 1 ? " still needs" : "s still need"} a position in Admin.</p>`
+      ${unplaced > 0
+        ? `<p class="property-map-note">${String(unplaced)} reporting sensor${unplaced === 1 ? " still needs" : "s still need"} a position in Admin.</p>`
         : ""}
     </section>
   `;
@@ -9631,7 +9650,6 @@ function renderSkeletonFields(): string {
 function propertySensorMarkerOffsets(
   placed: readonly Readonly<{
     layout: PropertySensorLayout;
-    sensor: PropertySensorSnapshot;
   }>[],
   viewport: MapViewport,
 ): ReadonlyMap<string, Readonly<{ x: number; y: number }>> {
@@ -9658,7 +9676,7 @@ function propertySensorMarkerOffsets(
   const offsets = new Map<string, Readonly<{ x: number; y: number }>>();
 
   // assign the nearest collision-free visible offset
-  for (const { layout, sensor } of placed) {
+  for (const { layout } of placed) {
     const anchor = projectMapPoint(layout.latitude, layout.longitude, viewport);
     const offset = candidates.find(
       // retain one in-bounds point clear of earlier markers
@@ -9681,7 +9699,7 @@ function propertySensorMarkerOffsets(
         );
       },
     ) ?? { x: 0, y: 0 };
-    offsets.set(sensor.key, offset);
+    offsets.set(layout.sensorKey, offset);
     occupied.push({ x: anchor.x + offset.x, y: anchor.y + offset.y });
   }
 
@@ -10347,7 +10365,7 @@ function isPropertySensorIcon(value: unknown): value is PropertySensorIcon {
 }
 
 // collect each latest EcoWitt hardware snapshot once
-function propertySensorSnapshots(state: DashboardState): readonly PropertySensorSnapshot[] {
+function propertySensorSnapshots(state: Pick<DashboardState, "current">): readonly PropertySensorSnapshot[] {
   const sensors = new Map<string, PropertySensorSnapshot>();
 
   // inspect current records in response priority order
@@ -10367,17 +10385,17 @@ function propertySensorSnapshots(state: DashboardState): readonly PropertySensor
 // render one map-positioned sensor label and primary reading
 function renderPropertySensorMarker(
   layout: PropertySensorLayout,
-  sensor: PropertySensorSnapshot,
+  sensor: PropertySensorSnapshot | null,
   viewport: MapViewport,
   units: UnitPreferences,
   selected: boolean,
   offset: Readonly<{ x: number; y: number }>,
 ): string {
   const point = projectMapPoint(layout.latitude, layout.longitude, viewport);
-  const reading = primaryPropertySensorReading(sensor, units);
-  const icon = layout.icon ?? defaultPropertySensorIcon(sensor);
+  const reading = sensor === null ? "Offline" : primaryPropertySensorReading(sensor, units);
+  const icon = layout.icon ?? (sensor === null ? "temperature" : defaultPropertySensorIcon(sensor));
   return `
-    <a class="property-sensor-marker${selected ? " selected" : ""}" href="#property-sensor-details-${escapeHtml(sensor.key)}" data-property-sensor-view="${escapeHtml(sensor.key)}" data-property-map-anchor data-property-map-x="${point.x.toFixed(2)}" data-property-map-y="${point.y.toFixed(2)}" transform="translate(${point.x.toFixed(2)} ${point.y.toFixed(2)})" aria-label="Show details for ${escapeHtml(layout.displayName)}" aria-expanded="${String(selected)}" aria-controls="property-sensor-details-${escapeHtml(sensor.key)}">
+    <a class="property-sensor-marker${selected ? " selected" : ""}" href="#property-sensor-details-${escapeHtml(layout.sensorKey)}" data-property-sensor-view="${escapeHtml(layout.sensorKey)}" data-property-map-anchor data-property-map-x="${point.x.toFixed(2)}" data-property-map-y="${point.y.toFixed(2)}" transform="translate(${point.x.toFixed(2)} ${point.y.toFixed(2)})" aria-label="Show details for ${escapeHtml(layout.displayName)}${sensor === null ? " (offline)" : ""}" aria-expanded="${String(selected)}" aria-controls="property-sensor-details-${escapeHtml(layout.sensorKey)}">
       <line class="property-sensor-marker-leader" x1="0" y1="0" x2="${offset.x.toFixed(2)}" y2="${offset.y.toFixed(2)}"/>
       <circle class="property-sensor-marker-anchor" r="3"/>
       <g class="property-sensor-marker-head" transform="translate(${offset.x.toFixed(2)} ${offset.y.toFixed(2)})">
@@ -10393,18 +10411,18 @@ function renderPropertySensorMarker(
 // render one selectable property sensor list row
 function renderPropertySensorListItem(
   layout: PropertySensorLayout,
-  sensor: PropertySensorSnapshot,
+  sensor: PropertySensorSnapshot | null,
   units: UnitPreferences,
   selected: boolean,
 ): string {
-  const icon = layout.icon ?? defaultPropertySensorIcon(sensor);
+  const icon = layout.icon ?? (sensor === null ? "temperature" : defaultPropertySensorIcon(sensor));
   const details = selected ? renderPropertySensorDetails(layout, sensor, units) : "";
   return `
     <li class="property-sensor-item${selected ? " selected" : ""}">
-      <button class="property-sensor-select" type="button" data-property-sensor-view="${escapeHtml(sensor.key)}" aria-expanded="${String(selected)}" aria-controls="property-sensor-details-${escapeHtml(sensor.key)}">
+      <button class="property-sensor-select" type="button" data-property-sensor-view="${escapeHtml(layout.sensorKey)}" aria-expanded="${String(selected)}" aria-controls="property-sensor-details-${escapeHtml(layout.sensorKey)}">
         <span class="property-sensor-list-icon">${renderMaterialIcon(propertySensorMaterialIcon(icon))}</span>
-        <span class="property-sensor-label"><strong>${escapeHtml(layout.displayName)}</strong><span>${escapeHtml(primaryPropertySensorReading(sensor, units))}</span></span>
-        ${renderPropertySensorBattery(sensor)}
+        <span class="property-sensor-label"><strong>${escapeHtml(layout.displayName)}</strong><span>${sensor === null ? "No current readings" : escapeHtml(primaryPropertySensorReading(sensor, units))}</span></span>
+        ${sensor === null ? '<span class="property-sensor-offline" title="Not reporting">Offline</span>' : renderPropertySensorBattery(sensor)}
       </button>
       ${details}
     </li>
@@ -10441,19 +10459,19 @@ function renderPropertySensorBattery(sensor: PropertySensorSnapshot): string {
 // render every available reading and hardware detail
 function renderPropertySensorDetails(
   layout: PropertySensorLayout,
-  sensor: PropertySensorSnapshot,
+  sensor: PropertySensorSnapshot | null,
   units: UnitPreferences,
 ): string {
-  const readings = propertySensorReadingLabels(sensor, units);
+  const readings = sensor === null ? ["No current readings. This sensor is not reporting."] : propertySensorReadingLabels(sensor, units);
   return `
-    <div class="property-sensor-details" id="property-sensor-details-${escapeHtml(sensor.key)}" data-property-sensor-details="${escapeHtml(sensor.key)}" role="region" aria-live="polite" aria-label="Details for ${escapeHtml(layout.displayName)}">
+    <div class="property-sensor-details" id="property-sensor-details-${escapeHtml(layout.sensorKey)}" data-property-sensor-details="${escapeHtml(layout.sensorKey)}" role="region" aria-live="polite" aria-label="Details for ${escapeHtml(layout.displayName)}">
       <div class="property-sensor-readings">
         ${readings.map(
           // render every current sensor measurement
           (reading) => `<span>${escapeHtml(reading)}</span>`,
         ).join("")}
       </div>
-      <p class="property-sensor-meta"><strong>EcoWitt ${escapeHtml(sensor.model)}</strong>${sensor.channel === null ? "" : ` · channel ${String(sensor.channel)}`} · ${escapeHtml(sensor.key)}</p>
+      <p class="property-sensor-meta"><strong>EcoWitt${sensor === null ? " sensor" : ` ${escapeHtml(sensor.model)}`}</strong>${sensor === null || sensor.channel === null ? "" : ` · channel ${String(sensor.channel)}`} · ${escapeHtml(layout.sensorKey)}</p>
       <p class="property-sensor-meta"><strong>Position</strong> ${layout.latitude.toFixed(6)}, ${layout.longitude.toFixed(6)}</p>
     </div>
   `;

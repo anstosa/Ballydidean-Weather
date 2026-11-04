@@ -3662,6 +3662,14 @@ h2 {
   color: var(--md-sys-color-error);
 }
 
+/* replace unavailable battery icons with a clear offline state */
+.property-sensor-offline {
+  color: var(--md-sys-color-error);
+  font-size: 0.66rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .property-sensor-list-icon,
 .property-admin-sensor-icon {
   display: grid;

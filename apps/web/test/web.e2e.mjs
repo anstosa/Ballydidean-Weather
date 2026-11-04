@@ -1617,6 +1617,7 @@ test("sensor battery indicators preserve readings and selection across viewports
     { ...propertySensorLayout[0], sensorKey: "temperature-1", displayName: "Living room temperature" },
     { ...propertySensorLayout[0], sensorKey: "gateway", displayName: "Gateway" },
     { ...propertySensorLayout[0], sensorKey: "air-quality-1", displayName: "Externally powered air quality" },
+    { ...propertySensorLayout[0], sensorKey: "soil-2", displayName: "Offline pasture soil", icon: "rain" },
   );
   const screenshots = process.env.WEATHER_SCREENSHOT_DIR ?? "/tmp";
   mkdirSync(screenshots, { recursive: true });
@@ -1647,6 +1648,24 @@ test("sensor battery indicators preserve readings and selection across viewports
         (badges) => badges.every((badge) => badge.textContent === ""),
       ), true);
       assert.equal(await page.locator(".property-sensor-battery.low").count(), 1);
+      const offline = page.locator('.property-sensor-select[data-property-sensor-view="soil-2"]');
+      assert.equal(await page.locator(".property-sensor-select").count(), fixture.state.propertySensorLayout.length);
+      assert.equal(await page.locator(".property-sensor-marker").count(), fixture.state.propertySensorLayout.length);
+      assert.equal(await offline.locator(".property-sensor-battery").count(), 0);
+      assert.equal(await offline.locator(".property-sensor-offline").textContent(), "Offline");
+      assert.equal(await offline.locator(".property-sensor-label span").textContent(), "No current readings");
+      assert.equal(await offline.locator(".property-sensor-offline").evaluate(
+        // share the existing red error color rather than relying on text alone
+        (status) => getComputedStyle(status).color,
+      ), await page.locator(".property-sensor-battery.low").evaluate(
+        // retain the already reviewed low-battery error color
+        (status) => getComputedStyle(status).color,
+      ));
+      await offline.focus();
+      await offline.press("Enter");
+      await page.locator('[data-property-sensor-details="soil-2"]').waitFor();
+      assert.equal(await offline.getAttribute("aria-expanded"), "true");
+      assert.match(await page.locator('[data-property-sensor-details="soil-2"]').textContent(), /not reporting/u);
       await soil.focus();
       await soil.press("Enter");
       await page.locator('[data-property-sensor-details="soil-1"]').waitFor();
@@ -1656,7 +1675,7 @@ test("sensor battery indicators preserve readings and selection across viewports
       assert.equal(await page.locator(".property-sensor-select").evaluateAll(
         // keep every remote battery within its row while allowing the gateway without one
         (rows) => rows.every((row) => {
-          const indicator = row.querySelector(".property-sensor-battery");
+          const indicator = row.querySelector(".property-sensor-battery, .property-sensor-offline");
           // gateways intentionally have no battery indicator
           if (indicator === null) {
             return row.getAttribute("data-property-sensor-view") === "gateway";
@@ -1667,6 +1686,8 @@ test("sensor battery indicators preserve readings and selection across viewports
           return badge.left >= bounds.left && badge.right <= bounds.right;
         }),
       ), true);
+      await page.locator('.property-sensor-marker[data-property-sensor-view="soil-2"] .property-sensor-marker-head').click();
+      assert.equal(await offline.getAttribute("aria-expanded"), "true");
       await page.screenshot({ path: join(screenshots, `${name}.png`), fullPage: true });
       assert.deepEqual(errors, []);
       await page.close();
