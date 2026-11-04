@@ -160,6 +160,12 @@ deploy/scripts/ssh-run.sh dashboard-rollback
 deploy/scripts/ssh-run.sh dashboard-rollback-core
 ```
 
+Keep the committed core release's web image cached even while a dashboard
+override is active: recovery verifies the complete core image set. If that
+image is missing, restore the exact `WEATHER_WEB_IMAGE` digest from the committed
+core release environment before retrying recovery; do not substitute the
+dashboard image or rewrite release metadata.
+
 `dashboard-rollback` selects the retained previous dashboard. After multiple
 dashboard updates, use `dashboard-rollback-core` to return directly to the exact
 core web and remove all override markers after its health checks pass.
@@ -217,18 +223,29 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '10s';
 ALTER TABLE public.weather_records SET (
-  autovacuum_vacuum_scale_factor = 0.001,
-  autovacuum_vacuum_insert_scale_factor = 0.001,
-  autovacuum_analyze_scale_factor = 0.001
+  autovacuum_vacuum_scale_factor = 0.0005,
+  autovacuum_vacuum_insert_scale_factor = 0.0005,
+  autovacuum_analyze_scale_factor = 0.0005
 );
 COMMIT;
 ```
 
-At roughly 11.7 million rows, these retain the default base thresholds while
-making maintenance eligible after approximately 12,000 changed rows instead of
-more than a million. Verify the overrides after restoring a database, and watch
-maintenance duration, application latency, and query heap fetches for 48–72 hours.
-These are workload-specific starting values, not a universal PostgreSQL preset.
+At roughly 12.5 million rows, these retain the default base thresholds while
+making maintenance eligible after approximately 6,300 changed rows instead of
+more than a million. The previous `0.001` factors had not triggered maintenance
+after roughly 7,000 changes following the October 27, 2026 host restart. On
+October 28, forecast reads took 5–11 seconds and exceeded the web edge's
+five-second deadline. The bounded maintenance above reduced the latest-product
+query's heap fetches from 35,794 to 6; desktop and mobile forecast requests then
+returned successfully in 611–1,000 milliseconds. The factors were lowered to
+`0.0005` to make automatic maintenance eligible sooner.
+
+Verify the overrides after restoring a database, and watch maintenance duration,
+application latency, and query heap fetches for 48–72 hours. These are
+workload-specific starting values, not a universal PostgreSQL preset. At that
+time, the latest forecast still scanned historical product identities;
+maintenance alone reduced heap reads but did not remove that archive-growth
+cost.
 To return to inherited defaults, use the same short lock timeout with
 `ALTER TABLE public.weather_records RESET (autovacuum_vacuum_scale_factor,
 autovacuum_vacuum_insert_scale_factor, autovacuum_analyze_scale_factor)`.
