@@ -177,6 +177,84 @@ rewrite core metadata or manually swap the web container. Once the override
 markers are removed, the immutable `2026.10.09-2`/`2026.10.09-3` handoff remains
 available through its original reviewed operations.
 
+## Schema-preserving application releases
+
+The revised schema-23 release `2026.11.03-3` uses the dedicated
+`scripts/schema-preserving-release.sh` application-only lane. Do not run ordinary
+`stage`, `activate`, `rollback`, or `recover` for its application descendants:
+those installed commands still describe the older schema-21 upgrade.
+
+This lane admits only the complete reviewed revised schema-23 history. It
+preserves the installed version-17 deployment bundle, database, PostgreSQL and
+tunnel images, canary switches, model settings, catalog, and genuine capture
+epoch. It does not clone or migrate the database, apply grants, initialize model
+state, or create another database backup. The unchanged `schema-release` remains
+`2026.11.03-3`; `current-release`, `previous-release`, and `active.env` describe
+the independently released application images.
+
+Publish the immutable target tag only after its exact branch commit passes
+`Check`. The normal ARM64 publication workflow must finish its image-boundary
+inspection and confirm that published configurations equal the inspected
+configurations. From the exact tagged checkout, prepare a private publication
+document with:
+
+```bash
+node scripts/prepare-schema-preserving-publication.mjs \
+  TARGET_RELEASE /absolute/private/directory/publication.json
+```
+
+The preparer verifies the local and GitHub tag, exact successful workflows,
+published digest artifacts, ARM64 image configurations, and unchanged protected
+deployment/database/model file contents. It does not pull images or fetch another
+database. Retain its publication document with the release evidence.
+
+An authorized host administrator installs the two-file operator bundle with
+`scripts/install-schema-preserving-release.sh BUNDLE_DIRECTORY BUNDLE_SHA256`.
+The bundle contains only `schema-preserving-release.mjs` and
+`schema-preserving-release.sh`. Its SHA-256 hashes the two `sha256sum` manifest
+lines in that basename order, including the final newline. The installer
+verifies the exact existing source and control identities, installs the bundle
+under `/opt/weather/operators/schema-preserving-release/BUNDLE_SHA256/`, and
+adds a separately recorded systemd recovery drop-in. It reloads and verifies the
+effective unit without restarting the service; the original stop command is
+retained. Its ten-minute start allowance covers retained infrastructure and
+application health windows, including a slow cold boot. Installed deployment
+files and their version-17 digest are unchanged.
+
+Use the installed, content-addressed helper for the entire lifecycle:
+
+```bash
+operator=/opt/weather/operators/schema-preserving-release/BUNDLE_SHA256/schema-preserving-release.sh
+sudo "$operator" stage TARGET_RELEASE /absolute/root/private/publication.json PUBLICATION_SHA256
+sudo "$operator" activate TARGET_RELEASE
+sudo "$operator" status
+# restore only the retained application images
+sudo "$operator" rollback
+# reconcile an interrupted switch or service restart
+sudo "$operator" recover
+```
+
+If staging is interrupted before activation, `sudo "$operator" retire-stage
+TARGET_RELEASE` quarantines only that uncommitted stage and its unused release
+environment before an exact retry. It preserves the failed evidence and refuses
+current/previous releases, committed health receipts, or an active transaction.
+It never deletes an application image or a database file.
+
+Staging checks both application images against the live database through
+read-only API-role transactions. Activation replaces only API, worker, and web
+containers. A private journal records the exact staged pair before the switch;
+health and protected-state checks precede the `current-release` commit point.
+Recovery selects the committed side of that journal. Restart recovery starts
+retained infrastructure without recreating its containers and never invokes a
+migration. Unknown histories, unrelated release pairs, altered receipts, changed
+protected state, or modified boot commands fail closed.
+
+Keep the installed bundle, recovery drop-in, installation receipt, staged
+receipts, and current/previous images. Removing the auxiliary recovery path while
+an application descendant is active is unsafe. Future adjustment-family release
+operations still require a separate ancestry-aware controller repair; this lane
+deliberately does not relabel historical model or capture evidence.
+
 ## Optional capacity diagnostics
 
 The direct deployment path does not require a capacity sample. Run the retained

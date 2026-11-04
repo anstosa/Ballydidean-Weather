@@ -1618,7 +1618,7 @@ test("sensor battery indicators preserve readings and selection across viewports
     { ...propertySensorLayout[0], sensorKey: "gateway", displayName: "Gateway" },
     { ...propertySensorLayout[0], sensorKey: "air-quality-1", displayName: "Externally powered air quality" },
   );
-  const screenshots = join(repositoryRoot, ".weather-data/sensor-battery/browser-local");
+  const screenshots = process.env.WEATHER_SCREENSHOT_DIR ?? "/tmp";
   mkdirSync(screenshots, { recursive: true });
 
   try {
