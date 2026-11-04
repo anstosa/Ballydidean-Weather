@@ -769,6 +769,57 @@ function forecastState(records, runtime, forecastDays = 1) {
   };
 }
 
+// distinguish battery levels from binary low-battery flags
+test("property sensor rows show battery levels, low flags, and unavailable readings", () => {
+  const cases = [
+    { readings: { batteryLevel: 5 }, label: "Battery level 5 of 5", text: "5/5", tone: "ok" },
+    { readings: { batteryLevel: 2 }, label: "Battery level 2 of 5", text: "2/5", tone: "ok" },
+    { readings: { batteryLevel: 1 }, label: "Battery level 1 of 5 (low)", text: "1/5", tone: "low" },
+    { readings: { batteryLevel: 0 }, label: "Battery level 0 of 5 (low)", text: "0/5", tone: "low" },
+    { readings: { batteryLow: 0 }, label: "Battery OK", text: "OK", tone: "ok" },
+    { readings: { batteryLow: 1 }, label: "Battery low", text: "Low", tone: "low" },
+    { readings: { batteryExternalPower: 1 }, label: "External power", text: "DC", tone: "powered" },
+    { readings: { batteryExternalPower: 0 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
+    { readings: { batteryExternalPower: 2 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
+    { readings: {}, label: "Battery status unavailable", text: "—", tone: "unknown" },
+    { readings: { batteryLevel: 9 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
+    { readings: { batteryLevel: -1 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
+    { readings: { batteryLevel: 2.5 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
+    { readings: { batteryLow: 2 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
+  ];
+
+  // exercise each hardware status without changing its weather readings
+  for (const expected of cases) {
+    const sensor = {
+      ...ecowittRecord.metadata.provider.propertySensors[0],
+      readings: { soilMoisturePercent: 42, ...expected.readings },
+    };
+    const current = {
+      ...ecowittRecord,
+      metadata: {
+        ...ecowittRecord.metadata,
+        provider: { ...ecowittRecord.metadata.provider, propertySensors: [sensor] },
+      },
+    };
+    const html = renderWeatherDashboard({
+      ...forecastState([], null),
+      current: [current],
+      propertySensorLayout: [{
+        displayName: "Orchard soil",
+        icon: "rain",
+        latitude: 47.9505,
+        longitude: -122.4281,
+        sensorKey: "soil-1",
+        updatedAt: "2026-08-22T04:59:00.000Z",
+      }],
+    }, "map");
+    assert.ok(html.includes(`class="property-sensor-battery ${expected.tone}" role="img" aria-label="${expected.label}" title="${expected.label}"`));
+    assert.ok(html.includes(`<span aria-hidden="true">${expected.text}</span>`));
+    assert.match(html, /Moisture 42 %/u);
+    assert.doesNotMatch(html, /Battery[^"<]*%/u);
+  }
+});
+
 // render one focused home-alert state
 function renderAlertState({
   current = [record],

@@ -50,6 +50,9 @@ interface RainSelection {
 }
 
 export interface EcowittSensorReadings {
+  readonly batteryExternalPower?: number;
+  readonly batteryLevel?: number;
+  readonly batteryLow?: number;
   readonly blackGlobeTemperatureC?: number;
   readonly dailyPrecipitationMm?: number;
   readonly pm25MicrogramsPerCubicMeter?: number;
@@ -261,6 +264,8 @@ export function normalizeEcowittSensorSnapshots(
   const common = requireArray(root.common_list, "common_list");
   const indoor = optionalArray(root.wh25, "wh25");
   const rain = selectRainGroup(root);
+  const piezoRain = optionalArray(root.piezoRain, "piezoRain");
+  const traditionalRain = optionalArray(root.rain, "rain");
   const sensors: EcowittSensorSnapshot[] = [];
   const gateway = indoor[0];
 
@@ -289,6 +294,9 @@ export function normalizeEcowittSensorSnapshots(
   }
 
   const ws90Readings: Record<keyof EcowittSensorReadings, number | null> = {
+    batteryExternalPower: null,
+    batteryLevel: optionalBatteryValue(findById(piezoRain, "0x13"), 5),
+    batteryLow: null,
     blackGlobeTemperatureC: null,
     dailyPrecipitationMm: rain?.kind === "piezo"
       ? rainAccumulation(rain.group, "0x10", "daily rain")
@@ -337,6 +345,7 @@ export function normalizeEcowittSensorSnapshots(
   });
 
   const globeReadings = compactSensorReadings({
+    batteryLevel: optionalBatteryValue(findCommon(common, "0xA1"), 5),
     blackGlobeTemperatureC: temperatureMetric(
       findCommon(common, "0xA1"),
       "black globe temperature",
@@ -366,6 +375,10 @@ export function normalizeEcowittSensorSnapshots(
       key: "rain-gauge",
       model: "WH40H",
       readings: compactSensorReadings({
+        batteryLevel: optionalBatteryValue(
+          findById(traditionalRain, "0x13"),
+          5,
+        ),
         dailyPrecipitationMm: rainAccumulation(
           rain.group,
           "0x10",
@@ -388,6 +401,7 @@ export function normalizeEcowittSensorSnapshots(
       key: `temperature-${String(channel)}`,
       model: channel === 5 ? "WN30" : "WN31",
       readings: compactSensorReadings({
+        batteryLow: optionalBatteryValue(entry, 1),
         relativeHumidityPercent: percentMetric(
           measurementFromField(entry, "humidity", "channel humidity"),
           "relativeHumidityPercent",
@@ -410,6 +424,7 @@ export function normalizeEcowittSensorSnapshots(
       key: `soil-${String(channel)}`,
       model: "WH52",
       readings: compactSensorReadings({
+        batteryLevel: optionalBatteryValue(entry, 5),
         soilElectricalConductivityMicrosiemensPerCm: soilEcMetric(entry),
         soilMoisturePercent: percentMetric(
           measurementFromField(entry, "humidity", "soil moisture"),
@@ -433,6 +448,8 @@ export function normalizeEcowittSensorSnapshots(
       key: `air-quality-${String(channel)}`,
       model: "WH41",
       readings: compactSensorReadings({
+        batteryExternalPower: optionalBatteryExternalPower(entry),
+        batteryLevel: optionalBatteryValue(entry, 5),
         pm25MicrogramsPerCubicMeter: particulateMetric(entry),
       }),
     });
@@ -895,6 +912,35 @@ function sensorChannel(entry: unknown, field: string): number {
   }
 
   return Number(channel);
+}
+
+// parse one optional bounded battery state
+function optionalBatteryValue(entry: unknown, maximum: 1 | 5): number | null {
+  const object = isObject(entry) ? entry : null;
+  const raw = object?.battery;
+  const value = typeof raw === "string" && /^[0-9]$/u.test(raw)
+    ? Number(raw)
+    : raw;
+
+  // omit missing or unrecognized provider states
+  if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > maximum) {
+    return null;
+  }
+
+  return Number(value);
+}
+
+// detect one externally powered battery sentinel
+function optionalBatteryExternalPower(entry: unknown): number | null {
+  const object = isObject(entry) ? entry : null;
+  const raw = object?.battery;
+
+  // retain only the WH41 external-power sentinel
+  if (raw !== 6 && raw !== "6") {
+    return null;
+  }
+
+  return 1;
 }
 
 // parse one standard ID entry

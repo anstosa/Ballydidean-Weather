@@ -33,13 +33,13 @@ const livePayload = {
     },
   ],
   ch_pm25: [
-    { PM25: "12.4", channel: "1" },
+    { PM25: "12.4", battery: "6", channel: "1" },
   ],
   common_list: [
     { id: "0x02", unit: "F", val: "54.3" },
     { id: "0x07", val: "96%" },
     { id: "3", unit: "F", val: "53.6" },
-    { id: "0xA1", unit: "F", val: "54.3" },
+    { battery: "4", id: "0xA1", unit: "F", val: "54.3" },
     { id: "0xA2", unit: "F", val: "53.6" },
     { id: "0x0B", val: "5.00 mph" },
     { id: "0x0C", val: "10.00 mph" },
@@ -50,6 +50,7 @@ const livePayload = {
   piezoRain: [
     { id: "0x0E", val: "0.02 in/Hr" },
     { id: "0x10", val: "0.15 in" },
+    { battery: "3", id: "0x13" },
   ],
   wh25: [
     { abs: "29.80 inHg", inhumi: "70%", intemp: "65.3", rel: "29.88 inHg", unit: "F" },
@@ -73,6 +74,16 @@ function responseFetcher(networkPayload = { mac: request.expectedMac }) {
 
     return new Response("not found", { status: 404 });
   };
+}
+
+// require one normalized property sensor by key
+function propertySensor(record, key) {
+  const sensor = record.metadata.provider.property_sensors.find(
+    // match one stable hardware key
+    (candidate) => candidate.key === key,
+  );
+  assert.ok(sensor);
+  return sensor;
 }
 
 // constrain the adapter to the configured private gateway
@@ -136,6 +147,7 @@ test("Ecowitt live payload normalizes core, heat, air, and soil measurements", (
       key: "weather-array",
       model: "WS90",
       readings: {
+        batteryLevel: 3,
         dailyPrecipitationMm: record.metrics.precipitationMm,
         precipitationRateMmPerHour: 0.508,
         relativeHumidityPercent: 96,
@@ -152,6 +164,7 @@ test("Ecowitt live payload normalizes core, heat, air, and soil measurements", (
       key: "black-globe",
       model: "WN38",
       readings: {
+        batteryLevel: 4,
         blackGlobeTemperatureC: record.metrics.blackGlobeTemperatureC,
         wetBulbGlobeTemperatureC: record.metrics.wetBulbGlobeTemperatureC,
       },
@@ -161,6 +174,7 @@ test("Ecowitt live payload normalizes core, heat, air, and soil measurements", (
       key: "temperature-1",
       model: "WN31",
       readings: {
+        batteryLow: 0,
         relativeHumidityPercent: 65,
         temperatureC: 20,
       },
@@ -170,6 +184,7 @@ test("Ecowitt live payload normalizes core, heat, air, and soil measurements", (
       key: "soil-1",
       model: "WH52",
       readings: {
+        batteryLevel: 5,
         soilElectricalConductivityMicrosiemensPerCm: 10,
         soilMoisturePercent: 42,
         temperatureC: 17.72222222222222,
@@ -179,9 +194,163 @@ test("Ecowitt live payload normalizes core, heat, air, and soil measurements", (
       channel: 1,
       key: "air-quality-1",
       model: "WH41",
-      readings: { pm25MicrogramsPerCubicMeter: 12.4 },
+      readings: {
+        batteryExternalPower: 1,
+        pm25MicrogramsPerCubicMeter: 12.4,
+      },
     },
   ]);
+});
+
+// preserve only the gateway's documented battery state ranges
+test("Ecowitt property sensors retain bounded battery states", () => {
+  const variants = [
+    { soil: 0, temperature: 1 },
+    { soil: 5, temperature: 0 },
+  ];
+
+  // exercise numeric boundaries independently from the string fixture
+  for (const variant of variants) {
+    const payload = {
+      ...livePayload,
+      ch_aisle: [{ ...livePayload.ch_aisle[0], battery: variant.temperature }],
+      ch_ec: [{ ...livePayload.ch_ec[0], battery: variant.soil }],
+    };
+    const record = normalizeEcowittLivePayload(payload, request, receivedAt);
+    const temperature = propertySensor(record, "temperature-1");
+    const soil = propertySensor(record, "soil-1");
+
+    assert.equal(temperature.readings.batteryLow, variant.temperature);
+    assert.equal(soil.readings.batteryLevel, variant.soil);
+  }
+});
+
+// omit malformed battery metadata without losing healthy weather readings
+test("Ecowitt property sensors omit unknown battery states", () => {
+  const invalidStates = [
+    undefined,
+    null,
+    "",
+    " ",
+    "9",
+    9,
+    "1.0",
+    1.5,
+    true,
+    false,
+    [],
+    {},
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    "-1",
+    "1 low",
+  ];
+
+  // require every invalid shape to remain non-fatal
+  for (const invalidState of invalidStates) {
+    const payload = {
+      ...livePayload,
+      ch_aisle: [{ ...livePayload.ch_aisle[0], battery: invalidState }],
+      ch_ec: [{ ...livePayload.ch_ec[0], battery: invalidState }],
+      ch_pm25: [{ ...livePayload.ch_pm25[0], battery: invalidState }],
+      common_list: livePayload.common_list.map(
+        // replace only the black-globe battery state
+        (entry) => entry.id === "0xA1"
+          ? { ...entry, battery: invalidState }
+          : entry,
+      ),
+      piezoRain: livePayload.piezoRain.map(
+        // replace only the weather-array battery state
+        (entry) => entry.id === "0x13"
+          ? { ...entry, battery: invalidState }
+          : entry,
+      ),
+      rain: [
+        { id: "0x0E", val: "0.01 in/Hr" },
+        { id: "0x10", val: "0.10 in" },
+        { battery: invalidState, id: "0x13" },
+      ],
+    };
+    const record = normalizeEcowittLivePayload(payload, request, receivedAt);
+    const temperature = propertySensor(record, "temperature-1");
+    const soil = propertySensor(record, "soil-1");
+    const weatherArray = propertySensor(record, "weather-array");
+    const globe = propertySensor(record, "black-globe");
+    const rain = propertySensor(record, "rain-gauge");
+    const airQuality = propertySensor(record, "air-quality-1");
+
+    assert.equal("batteryLow" in temperature.readings, false);
+    assert.equal("batteryLevel" in soil.readings, false);
+    assert.equal("batteryLevel" in weatherArray.readings, false);
+    assert.equal("batteryLevel" in globe.readings, false);
+    assert.equal("batteryLevel" in rain.readings, false);
+    assert.equal("batteryLevel" in airQuality.readings, false);
+    assert.equal("batteryExternalPower" in airQuality.readings, false);
+    assert.equal(temperature.readings.temperatureC, 20);
+    assert.equal(soil.readings.soilMoisturePercent, 42);
+  }
+});
+
+// associate coexisting rain batteries with their exact hardware groups
+test("Ecowitt rain sensors retain independent battery levels", () => {
+  const payload = {
+    ...livePayload,
+    rain: [
+      { id: "0x0E", val: "0.01 in/Hr" },
+      { id: "0x10", val: "0.10 in" },
+      { battery: "2", id: "0x13" },
+    ],
+  };
+  const record = normalizeEcowittLivePayload(payload, request, receivedAt);
+  const weatherArray = propertySensor(record, "weather-array");
+  const rain = propertySensor(record, "rain-gauge");
+
+  assert.equal(weatherArray.readings.batteryLevel, 3);
+  assert.equal(rain.readings.batteryLevel, 2);
+  assert.equal("dailyPrecipitationMm" in weatherArray.readings, false);
+  assert.equal(rain.readings.dailyPrecipitationMm, 2.54);
+});
+
+// reserve battery state six for externally powered WH41 sensors
+test("Ecowitt external-power sentinel remains specific to air quality", () => {
+  const payload = {
+    ...livePayload,
+    ch_aisle: [{ ...livePayload.ch_aisle[0], battery: 6 }],
+    ch_ec: [{ ...livePayload.ch_ec[0], battery: 6 }],
+    ch_pm25: [{ ...livePayload.ch_pm25[0], battery: 6 }],
+    common_list: livePayload.common_list.map(
+      // replace only the black-globe battery state
+      (entry) => entry.id === "0xA1" ? { ...entry, battery: 6 } : entry,
+    ),
+    piezoRain: livePayload.piezoRain.map(
+      // replace only the weather-array battery state
+      (entry) => entry.id === "0x13" ? { ...entry, battery: 6 } : entry,
+    ),
+    rain: [
+      { id: "0x0E", val: "0.01 in/Hr" },
+      { id: "0x10", val: "0.10 in" },
+      { battery: 6, id: "0x13" },
+    ],
+  };
+  const record = normalizeEcowittLivePayload(payload, request, receivedAt);
+  const keys = [
+    "temperature-1",
+    "soil-1",
+    "weather-array",
+    "black-globe",
+    "rain-gauge",
+  ];
+
+  // reject the sentinel from every battery-level family
+  for (const key of keys) {
+    const sensor = propertySensor(record, key);
+    assert.equal("batteryLevel" in sensor.readings, false);
+    assert.equal("batteryExternalPower" in sensor.readings, false);
+  }
+
+  const airQuality = propertySensor(record, "air-quality-1");
+  assert.equal("batteryLevel" in airQuality.readings, false);
+  assert.equal(airQuality.readings.batteryExternalPower, 1);
 });
 
 // retain interval rain without summing the gateway's daily total repeatedly
@@ -215,8 +384,15 @@ test("Ecowitt rain cursor stores only the daily-counter delta", () => {
 
 // verify gateway identity before accepting local data
 test("Ecowitt fetch binds snapshots to the configured MAC", async () => {
+  const requests = [];
+  const fetcher = responseFetcher();
+  // record the complete gateway request surface
+  const trackedFetcher = async (input, init) => {
+    requests.push(new URL(String(input)).pathname);
+    return await fetcher(input, init);
+  };
   const batch = await fetchEcowittLive(request, {
-    fetch: responseFetcher(),
+    fetch: trackedFetcher,
     maxAttempts: 1,
     now: () => new Date(receivedAt),
   });
@@ -227,6 +403,7 @@ test("Ecowitt fetch binds snapshots to the configured MAC", async () => {
   assert.ok(Math.abs(batch.providerCursor.rain_daily_total_mm - 3.81) < 1e-12);
   assert.equal(batch.responseMetadata.rain_gauge, "piezo");
   assert.equal(batch.responseMetadata.soil_channel_count, 1);
+  assert.deepEqual(requests, ["/get_network_info", "/get_livedata_info"]);
   await assert.rejects(
     fetchEcowittLive(request, {
       fetch: responseFetcher({ mac: "00:11:22:33:44:55" }),

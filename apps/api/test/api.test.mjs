@@ -743,6 +743,7 @@ test("current accepts station and source and returns bounded public metadata", a
   assert.doesNotMatch(JSON.stringify(body), /private-request-id|request_id/u);
 });
 
+// preserve numeric battery metadata while filtering unsafe sensor readings
 test("current exposes only bounded EcoWitt property sensor snapshots", async () => {
   const { handler } = createFixture({
     // return one record with provider-private sensor snapshots
@@ -756,11 +757,14 @@ test("current exposes only bounded EcoWitt property sensor snapshots", async () 
               key: "soil-1",
               model: "WH52",
               readings: {
+                batteryLevel: 2,
                 soilMoisturePercent: 42,
                 temperatureC: 17.7,
                 unsafe: "not-a-number",
               },
             },
+            { channel: 1, key: "temperature-1", model: "WN31", readings: { batteryLow: 0, temperatureC: 20 } },
+            { channel: 1, key: "air-quality-1", model: "WH41", readings: { batteryExternalPower: 1, pm25MicrogramsPerCubicMeter: 12 } },
             { key: "../invalid", model: "Unknown", readings: {} },
           ],
         },
@@ -778,10 +782,13 @@ test("current exposes only bounded EcoWitt property sensor snapshots", async () 
       key: "soil-1",
       model: "WH52",
       readings: {
+        batteryLevel: 2,
         soilMoisturePercent: 42,
         temperatureC: 17.7,
       },
     },
+    { channel: 1, key: "temperature-1", model: "WN31", readings: { batteryLow: 0, temperatureC: 20 } },
+    { channel: 1, key: "air-quality-1", model: "WH41", readings: { batteryExternalPower: 1, pm25MicrogramsPerCubicMeter: 12 } },
   ]);
 });
 

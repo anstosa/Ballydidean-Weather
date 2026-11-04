@@ -3600,7 +3600,7 @@ h2 {
 
 .property-sensor-select {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.65rem;
   width: 100%;
@@ -3639,6 +3639,31 @@ h2 {
 
 .property-sensor-label span {
   margin-top: 0.15rem;
+}
+
+/* keep battery status readable without shrinking the sensor reading */
+.property-sensor-battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.66rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.property-sensor-battery svg {
+  width: 1.5rem;
+  height: 1rem;
+  flex: none;
+}
+
+.property-sensor-battery.ok {
+  color: var(--md-sys-color-primary);
+}
+
+.property-sensor-battery.low {
+  color: var(--md-sys-color-error);
 }
 
 .property-sensor-list-icon,

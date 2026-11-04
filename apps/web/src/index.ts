@@ -10404,10 +10404,34 @@ function renderPropertySensorListItem(
       <button class="property-sensor-select" type="button" data-property-sensor-view="${escapeHtml(sensor.key)}" aria-expanded="${String(selected)}" aria-controls="property-sensor-details-${escapeHtml(sensor.key)}">
         <span class="property-sensor-list-icon">${renderMaterialIcon(propertySensorMaterialIcon(icon))}</span>
         <span class="property-sensor-label"><strong>${escapeHtml(layout.displayName)}</strong><span>${escapeHtml(primaryPropertySensorReading(sensor, units))}</span></span>
+        ${renderPropertySensorBattery(sensor)}
       </button>
       ${details}
     </li>
   `;
+}
+
+// preserve the gateway's distinct level and low-battery encodings
+function renderPropertySensorBattery(sensor: PropertySensorSnapshot): string {
+  const level = sensor.readings.batteryLevel;
+  const low = sensor.readings.batteryLow;
+  const externalPower = sensor.readings.batteryExternalPower === 1;
+  const hasLevel = level !== undefined && Number.isInteger(level) && level >= 0 && level <= 5;
+  const hasStatus = low === 0 || low === 1;
+  const tone = externalPower ? "powered" : hasLevel ? (level <= 1 ? "low" : "ok") : hasStatus ? (low === 1 ? "low" : "ok") : "unknown";
+  const label = externalPower ? "External power" : hasLevel
+    ? `Battery level ${String(level)} of 5${tone === "low" ? " (low)" : ""}`
+    : hasStatus ? (low === 1 ? "Battery low" : "Battery OK") : "Battery status unavailable";
+  const text = externalPower ? "DC" : hasLevel ? `${String(level)}/5` : hasStatus ? (low === 1 ? "Low" : "OK") : "—";
+  // use a check for binary health rather than implying a full charge
+  const indicator = externalPower ? '<path d="m12 4-4 5h4l-2 3"/>' : hasLevel
+    ? `<rect x="4" y="5" width="${String(level * 2.6)}" height="6" rx="0.5" fill="currentColor"/>`
+    : hasStatus
+      ? low === 1
+        ? '<rect x="4" y="5" width="2.6" height="6" rx="0.5" fill="currentColor"/>'
+        : '<path d="m6 8 3 3 5-6"/>'
+      : '<path d="M8 8h5"/>';
+  return `<span class="property-sensor-battery ${tone}" role="img" aria-label="${label}" title="${label}"><svg viewBox="0 0 24 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="2" width="19" height="12" rx="2"/><path d="M23 6v4"/>${indicator}</svg><span aria-hidden="true">${text}</span></span>`;
 }
 
 // render every available reading and hardware detail

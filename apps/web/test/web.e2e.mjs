@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -1587,6 +1587,84 @@ async function startFixtureServer() {
     state,
   };
 }
+
+// keep battery status accessible and contained on desktop and mobile
+test("sensor battery indicators preserve readings and selection across viewports", { timeout: 60_000 }, async () => {
+  const fixture = await startFixtureServer();
+  let browser;
+  const batteryReadings = {
+    "soil-1": { batteryLevel: 2 },
+    "temperature-1": { batteryLow: 0 },
+    "temperature-2": { batteryLow: 1 },
+  };
+  fixture.state.currentRecords = [{
+    ...physicalCurrent,
+    metadata: {
+      ...physicalCurrent.metadata,
+      provider: {
+        ...physicalCurrent.metadata.provider,
+        propertySensors: [
+          ...physicalCurrent.metadata.provider.propertySensors.map(
+            // retain fixture measurements alongside the new battery fields
+            (sensor) => ({ ...sensor, readings: { ...sensor.readings, ...batteryReadings[sensor.key] } }),
+          ),
+          { channel: 1, key: "air-quality-1", model: "WH41", readings: { pm25MicrogramsPerCubicMeter: 12, batteryExternalPower: 1 } },
+        ],
+      },
+    },
+  }];
+  fixture.state.propertySensorLayout.push(
+    { ...propertySensorLayout[0], sensorKey: "temperature-1", displayName: "Living room temperature" },
+    { ...propertySensorLayout[0], sensorKey: "gateway", displayName: "Gateway" },
+    { ...propertySensorLayout[0], sensorKey: "air-quality-1", displayName: "Externally powered air quality" },
+  );
+  const screenshots = join(repositoryRoot, ".weather-data/sensor-battery/browser-local");
+  mkdirSync(screenshots, { recursive: true });
+
+  try {
+    browser = await launchBrowser();
+    // exercise the actual rendered rows in both responsive layouts
+    for (const [name, viewport] of [
+      ["desktop", { width: 1440, height: 1000 }],
+      ["mobile", { width: 390, height: 844 }],
+    ]) {
+      const page = await createFixturePage(browser, { viewport, timezoneId: site.timezone });
+      const errors = [];
+      // retain uncaught client failures
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(`${fixture.origin}/map`);
+      const soil = page.locator('.property-sensor-select[data-property-sensor-view="soil-1"]');
+      await soil.getByRole("img", { name: "Battery level 2 of 5", exact: true }).waitFor();
+      assert.equal(await soil.locator(".property-sensor-label span").textContent(), "Moisture 42 %");
+      assert.equal(await page.getByRole("img", { name: "Battery low", exact: true }).count(), 1);
+      assert.equal(await page.getByRole("img", { name: "Battery OK", exact: true }).count(), 1);
+      assert.equal(await page.getByRole("img", { name: "External power", exact: true }).count(), 1);
+      assert.equal(await page.getByRole("img", { name: "Battery status unavailable", exact: true }).count(), 1);
+      assert.equal(await page.locator(".property-sensor-battery.low").count(), 1);
+      await soil.focus();
+      await soil.press("Enter");
+      await page.locator('[data-property-sensor-details="soil-1"]').waitFor();
+      assert.equal(await soil.getAttribute("aria-expanded"), "true");
+      assert.equal(await soil.getByRole("img", { name: "Battery level 2 of 5", exact: true }).isVisible(), true);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      assert.equal(await page.locator(".property-sensor-select").evaluateAll(
+        // keep every battery badge within its interactive row
+        (rows) => rows.every((row) => {
+          const badge = row.querySelector(".property-sensor-battery").getBoundingClientRect();
+          const bounds = row.getBoundingClientRect();
+          return badge.left >= bounds.left && badge.right <= bounds.right;
+        }),
+      ), true);
+      await page.screenshot({ path: join(screenshots, `${name}.png`), fullPage: true });
+      assert.deepEqual(errors, []);
+      await page.close();
+    }
+  } finally {
+    await browser?.close();
+    // close only this test's fixture listener
+    await new Promise((resolve) => fixture.server.close(resolve));
+  }
+});
 
 // verify daylight cloud correction and automatic fail-raw behavior in the rendered dashboard
 test("WS90 current sunlight survives while unvalidated future clouds stay regional", { timeout: 120_000 }, async () => {
