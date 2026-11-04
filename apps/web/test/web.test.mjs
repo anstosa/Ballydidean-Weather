@@ -769,23 +769,23 @@ function forecastState(records, runtime, forecastDays = 1) {
   };
 }
 
-// distinguish battery levels from binary low-battery flags
-test("property sensor rows show battery levels, low flags, and unavailable readings", () => {
+// retain accessible battery status without visible text
+test("property sensor rows show icon-only battery levels, low flags, and unavailable readings", () => {
   const cases = [
-    { readings: { batteryLevel: 5 }, label: "Battery level 5 of 5", text: "5/5", tone: "ok" },
-    { readings: { batteryLevel: 2 }, label: "Battery level 2 of 5", text: "2/5", tone: "ok" },
-    { readings: { batteryLevel: 1 }, label: "Battery level 1 of 5 (low)", text: "1/5", tone: "low" },
-    { readings: { batteryLevel: 0 }, label: "Battery level 0 of 5 (low)", text: "0/5", tone: "low" },
-    { readings: { batteryLow: 0 }, label: "Battery OK", text: "OK", tone: "ok" },
-    { readings: { batteryLow: 1 }, label: "Battery low", text: "Low", tone: "low" },
-    { readings: { batteryExternalPower: 1 }, label: "External power", text: "DC", tone: "powered" },
-    { readings: { batteryExternalPower: 0 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
-    { readings: { batteryExternalPower: 2 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
-    { readings: {}, label: "Battery status unavailable", text: "—", tone: "unknown" },
-    { readings: { batteryLevel: 9 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
-    { readings: { batteryLevel: -1 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
-    { readings: { batteryLevel: 2.5 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
-    { readings: { batteryLow: 2 }, label: "Battery status unavailable", text: "—", tone: "unknown" },
+    { readings: { batteryLevel: 5 }, label: "Battery level 5 of 5", fillWidth: 13, tone: "ok" },
+    { readings: { batteryLevel: 2 }, label: "Battery level 2 of 5", fillWidth: 5.2, tone: "ok" },
+    { readings: { batteryLevel: 1 }, label: "Battery level 1 of 5 (low)", fillWidth: 2.6, tone: "low" },
+    { readings: { batteryLevel: 0 }, label: "Battery level 0 of 5 (low)", fillWidth: 0, tone: "low" },
+    { readings: { batteryLow: 0 }, label: "Battery OK", fillWidth: 13, tone: "ok" },
+    { readings: { batteryLow: 1 }, label: "Battery low", fillWidth: 2.6, tone: "low" },
+    { readings: { batteryExternalPower: 1 }, label: "External power", tone: "powered" },
+    { readings: { batteryExternalPower: 0 }, label: "Battery status unavailable", tone: "unknown" },
+    { readings: { batteryExternalPower: 2 }, label: "Battery status unavailable", tone: "unknown" },
+    { readings: {}, label: "Battery status unavailable", tone: "unknown" },
+    { readings: { batteryLevel: 9 }, label: "Battery status unavailable", tone: "unknown" },
+    { readings: { batteryLevel: -1 }, label: "Battery status unavailable", tone: "unknown" },
+    { readings: { batteryLevel: 2.5 }, label: "Battery status unavailable", tone: "unknown" },
+    { readings: { batteryLow: 2 }, label: "Battery status unavailable", tone: "unknown" },
   ];
 
   // exercise each hardware status without changing its weather readings
@@ -814,10 +814,45 @@ test("property sensor rows show battery levels, low flags, and unavailable readi
       }],
     }, "map");
     assert.ok(html.includes(`class="property-sensor-battery ${expected.tone}" role="img" aria-label="${expected.label}" title="${expected.label}"`));
-    assert.ok(html.includes(`<span aria-hidden="true">${expected.text}</span>`));
+    const battery = html.match(/<span class="property-sensor-battery[^]*?<\/span>/u)?.[0];
+    assert.ok(battery);
+    assert.equal(battery.replace(/<[^>]+>/gu, ""), "");
+    // preserve level fill and show binary ok with the full five-level fill
+    if (expected.fillWidth !== undefined) {
+      assert.ok(battery.includes(`width="${expected.fillWidth}" height="6"`));
+    }
     assert.match(html, /Moisture 42 %/u);
     assert.doesNotMatch(html, /Battery[^"<]*%/u);
   }
+});
+
+// never show a gateway battery even if a future payload includes one
+test("property sensor gateway rows omit battery indicators", () => {
+  const gateway = {
+    channel: null,
+    key: "gateway",
+    model: "GW3000",
+    readings: { temperatureC: 20, batteryLevel: 5 },
+  };
+  const html = renderWeatherDashboard({
+    ...forecastState([], null),
+    current: [{
+      ...ecowittRecord,
+      metadata: {
+        ...ecowittRecord.metadata,
+        provider: { ...ecowittRecord.metadata.provider, propertySensors: [gateway] },
+      },
+    }],
+    propertySensorLayout: [{
+      displayName: "Gateway",
+      latitude: 47.9505,
+      longitude: -122.4281,
+      sensorKey: "gateway",
+      updatedAt: "2026-08-22T04:59:00.000Z",
+    }],
+  }, "map");
+  assert.match(html, /data-property-sensor-view="gateway"/u);
+  assert.doesNotMatch(html, /class="property-sensor-battery/u);
 });
 
 // render one focused home-alert state

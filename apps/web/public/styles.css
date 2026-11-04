@@ -3641,15 +3641,11 @@ h2 {
   margin-top: 0.15rem;
 }
 
-/* keep battery status readable without shrinking the sensor reading */
+/* keep battery icons compact beside sensor readings */
 .property-sensor-battery {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
   color: var(--md-sys-color-on-surface-variant);
-  font-size: 0.66rem;
-  font-weight: 600;
-  white-space: nowrap;
 }
 
 .property-sensor-battery svg {

@@ -1637,9 +1637,15 @@ test("sensor battery indicators preserve readings and selection across viewports
       await soil.getByRole("img", { name: "Battery level 2 of 5", exact: true }).waitFor();
       assert.equal(await soil.locator(".property-sensor-label span").textContent(), "Moisture 42 %");
       assert.equal(await page.getByRole("img", { name: "Battery low", exact: true }).count(), 1);
-      assert.equal(await page.getByRole("img", { name: "Battery OK", exact: true }).count(), 1);
+      const ok = page.getByRole("img", { name: "Battery OK", exact: true });
+      assert.equal(await ok.count(), 1);
+      assert.equal(await ok.locator('rect[fill="currentColor"]').getAttribute("width"), "13");
       assert.equal(await page.getByRole("img", { name: "External power", exact: true }).count(), 1);
-      assert.equal(await page.getByRole("img", { name: "Battery status unavailable", exact: true }).count(), 1);
+      assert.equal(await page.locator('.property-sensor-select[data-property-sensor-view="gateway"] .property-sensor-battery').count(), 0);
+      assert.equal(await page.locator(".property-sensor-battery").evaluateAll(
+        // expose status only through icons, tooltips and accessible labels
+        (badges) => badges.every((badge) => badge.textContent === ""),
+      ), true);
       assert.equal(await page.locator(".property-sensor-battery.low").count(), 1);
       await soil.focus();
       await soil.press("Enter");
@@ -1648,9 +1654,15 @@ test("sensor battery indicators preserve readings and selection across viewports
       assert.equal(await soil.getByRole("img", { name: "Battery level 2 of 5", exact: true }).isVisible(), true);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       assert.equal(await page.locator(".property-sensor-select").evaluateAll(
-        // keep every battery badge within its interactive row
+        // keep every remote battery within its row while allowing the gateway without one
         (rows) => rows.every((row) => {
-          const badge = row.querySelector(".property-sensor-battery").getBoundingClientRect();
+          const indicator = row.querySelector(".property-sensor-battery");
+          // gateways intentionally have no battery indicator
+          if (indicator === null) {
+            return row.getAttribute("data-property-sensor-view") === "gateway";
+          }
+
+          const badge = indicator.getBoundingClientRect();
           const bounds = row.getBoundingClientRect();
           return badge.left >= bounds.left && badge.right <= bounds.right;
         }),
