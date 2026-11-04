@@ -80,6 +80,8 @@ test("current SQL enforces active joins and parameterized station/source filters
     queries[0].text,
     /pressure_after\.pressure_hpa - pressure_before\.pressure_hpa/u,
   );
+  // preserve timestamp selectivity instead of paying for JIT on the live dataset
+  assert.match(queries[0].text, /WITH bounds AS NOT MATERIALIZED/u);
   assert.match(queries[0].text, /raw_pm25 AS MATERIALIZED/u);
   assert.match(queries[0].text, /generate_series\(0, 11\)/u);
   assert.match(queries[0].text, /AVG\(pm25_micrograms_per_cubic_meter\) AS concentration/u);

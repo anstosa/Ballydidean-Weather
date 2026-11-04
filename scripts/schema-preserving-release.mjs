@@ -24,7 +24,7 @@ export const LEGACY_CONTRACT_VERSION = "weather-schema-preserving-publication/v1
 export const APP_QUERY_TRANSITION = Object.freeze({
   path: "packages/database/src/repositories.ts",
   sourceSha256: "073b2308f7deb663a0bdefefc75930dedaa1b4abc6bc40b4fda04524b1cb600c",
-  targetSha256: "2a62ecf8a093c3161f838194a7c761dae4506b32a4ae0ab83e23bbfc246dd832",
+  targetSha256: "2715e7641fde21303ffcbf47a0cdf0157cc9f32f11211b8a66bad11f1e7aee59",
 });
 export const STAGE_CONTRACT_VERSION = "weather-schema-preserving-stage/v1";
 export const SOURCE_RELEASE = "2026.11.03-3";

@@ -2042,7 +2042,8 @@ export async function getCurrentWeather(
       ) pressure_after ON true
       -- build source-local hourly particulate means for the EPA NowCast input
       LEFT JOIN LATERAL (
-        WITH bounds AS (
+        -- keep timestamp selectivity visible and avoid expensive per-request JIT
+        WITH bounds AS NOT MATERIALIZED (
           SELECT date_trunc('hour', $4::timestamptz) - interval '1 hour' AS through_start
         ),
         slots AS (
