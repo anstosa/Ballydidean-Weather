@@ -32,6 +32,7 @@ test("atomic maintenance bridge restores 18 on failure and commits all three fil
   timeout: 180_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "weather-atomic-maintenance-"));
+  const bridgeRoot = await mkdtemp(join(tmpdir(), "weather-atomic-maintenance-bridge-"));
   const server = await startPostgres(17, "atomic-maintenance-migration");
   const admin = createTestPool(server);
   let owner;
@@ -39,6 +40,7 @@ test("atomic maintenance bridge restores 18 on failure and commits all three fil
     await prepareRuntimeRoles(admin);
     owner = createTestPool(server, "weather_test", "weather_owner", "owner-test");
     const names = await copyPrefix(root, 18);
+    await copyPrefix(bridgeRoot, 21);
     await runMigrations(owner, root);
     let finalFileReached = false;
     // inject an actual database abort only after the preceding frozen files ran
@@ -61,7 +63,7 @@ test("atomic maintenance bridge restores 18 on failure and commits all three fil
         };
       },
     };
-    await assert.rejects(runMigrations(faultPool, migrationDirectory, {
+    await assert.rejects(runMigrations(faultPool, bridgeRoot, {
       atomicMaintenanceV14: true,
     }), /division by zero/u);
     assert.equal(finalFileReached, true);
@@ -77,12 +79,19 @@ test("atomic maintenance bridge restores 18 on failure and commits all three fil
       actions: null, frontier: null, schedule: null,
     });
     await assert.rejects(runMigrations(owner, root, { atomicMaintenanceV14: true }), /exact 18-to-21/u);
-    const applied = await runMigrations(owner, migrationDirectory, { atomicMaintenanceV14: true });
-    assert.deepEqual(applied.applied, names.slice(18));
+    const applied = await runMigrations(owner, bridgeRoot, { atomicMaintenanceV14: true });
+    assert.deepEqual(applied.applied, names.slice(18, 21));
     assert.equal(applied.current.length, 18);
-    const retry = await runMigrations(owner, migrationDirectory, { atomicMaintenanceV14: true });
+    const retry = await runMigrations(owner, bridgeRoot, { atomicMaintenanceV14: true });
     assert.deepEqual(retry.applied, []);
-    assert.deepEqual(retry.current, names);
+    assert.deepEqual(retry.current, names.slice(0, 21));
+    // refuse an extended target after the reviewed bridge ledger is complete
+    await copyPrefix(root, 21);
+    await writeFile(join(root, "0022_unreviewed.sql"), "SELECT 1;\n");
+    await assert.rejects(runMigrations(owner, root, { atomicMaintenanceV14: true }), /exact 18-to-21/u);
+    const ordinary = await runMigrations(owner, migrationDirectory);
+    assert.deepEqual(ordinary.applied, names.slice(21));
+    assert.deepEqual(ordinary.current, names.slice(0, 21));
     const witnessUnsigned = { activationKind: "inert_v14_pre_activation", archiveCommitOrdinal: "0",
       catalogFrontierSha256: adjustmentSha256(Buffer.from("adjustment-revision-frontier/v1\n0\n")),
       contractVersion: "adjustment-revision-capture-epoch-witness/v1", controlPlaneSha256: "a".repeat(64),
@@ -191,14 +200,11 @@ test("atomic maintenance bridge restores 18 on failure and commits all three fil
       assert.equal(Number((await client.query("SELECT count(*) FROM adjustment_shadow_registrations_v2")).rows[0].count), 1);
     } finally { client.release(); }
     assert.equal((await readLifecycle()).entries[0].metadata.generation, 1);
-    // refuse an extended target even after the reviewed ledger is already complete
-    await copyPrefix(root, 21);
-    await writeFile(join(root, "0022_unreviewed.sql"), "SELECT 1;\n");
-    await assert.rejects(runMigrations(owner, root, { atomicMaintenanceV14: true }), /exact 18-to-21/u);
   } finally {
     await owner?.end();
     await admin.end();
     await stopPostgres(server);
     await rm(root, { recursive: true, force: true });
+    await rm(bridgeRoot, { recursive: true, force: true });
   }
 });

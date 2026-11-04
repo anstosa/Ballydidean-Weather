@@ -15,9 +15,22 @@ export const ADJUSTMENT_REVISION_CAPTURE_EPOCH_VERSION =
   "adjustment-revision-capture-epoch-witness/v1" as const;
 
 const GENESIS_FRONTIER_SHA256 = "5d932b9623819be9432877a513194158708719497d755155f5ed9a4b501b48af";
-const MIGRATION_HISTORY_SHA256S = Object.freeze([
-  "c683c4f937c7f02b00f6ab49f75268eead81d2a221a8a9a23e38f9e4802a11b0",
-  "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
+// enumerate reviewed control-history identities
+const CAPTURE_EPOCH_IDENTITIES: ReadonlyArray<{
+  readonly controlPlaneSha256?: string;
+  readonly controlPlaneVersion: "14" | "17";
+  readonly databaseMigrationHistorySha256: string;
+}> = Object.freeze([
+  { controlPlaneVersion: "14",
+    databaseMigrationHistorySha256: "c683c4f937c7f02b00f6ab49f75268eead81d2a221a8a9a23e38f9e4802a11b0" },
+  { controlPlaneVersion: "14",
+    databaseMigrationHistorySha256: "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424" },
+  { controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+    controlPlaneVersion: "17",
+    databaseMigrationHistorySha256: "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf" },
+  { controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+    controlPlaneVersion: "17",
+    databaseMigrationHistorySha256: "3aec6846d009a2bb2cee02279dceb9bd2d3572dc1b3a83eed2ce9a1724311345" },
 ]);
 const HASH = /^[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
@@ -35,7 +48,7 @@ export interface AdjustmentRevisionCaptureEpochWitness {
   readonly catalogFrontierSha256: string;
   readonly contractVersion: typeof ADJUSTMENT_REVISION_CAPTURE_EPOCH_VERSION;
   readonly controlPlaneSha256: string;
-  readonly controlPlaneVersion: "14";
+  readonly controlPlaneVersion: "14" | "17";
   readonly databaseMigrationHistorySha256: string;
   readonly epochAt: string;
   readonly servingSnapshotSha256: string;
@@ -70,11 +83,16 @@ export function verifyAdjustmentRevisionCaptureEpochWitness(
   }
   const witness = value as unknown as AdjustmentRevisionCaptureEpochWitness;
   const { witnessSha256: _witnessSha256, ...unsigned } = witness;
-  // bind the actual inert-v14 zero frontier and complete migration history
+  // match one closed identity tuple
+  const identityMatches = CAPTURE_EPOCH_IDENTITIES.some((identity) =>
+    identity.controlPlaneVersion === witness.controlPlaneVersion &&
+    identity.databaseMigrationHistorySha256 === witness.databaseMigrationHistorySha256 &&
+    (identity.controlPlaneSha256 === undefined ||
+      identity.controlPlaneSha256 === witness.controlPlaneSha256));
+  // bind the actual zero frontier and reviewed control-history pair
   if (witness.contractVersion !== ADJUSTMENT_REVISION_CAPTURE_EPOCH_VERSION ||
       witness.activationKind !== "inert_v14_pre_activation" || witness.archiveCommitOrdinal !== "0" ||
-      witness.catalogFrontierSha256 !== GENESIS_FRONTIER_SHA256 || witness.controlPlaneVersion !== "14" ||
-      !MIGRATION_HISTORY_SHA256S.includes(witness.databaseMigrationHistorySha256) || !validInstant(witness.epochAt) ||
+      witness.catalogFrontierSha256 !== GENESIS_FRONTIER_SHA256 || !identityMatches || !validInstant(witness.epochAt) ||
       !COMMIT.test(witness.sourceCommit) || !RELEASE.test(witness.sourceRelease) ||
       !IMAGE_DIGEST.test(witness.sourceServerImageDigest) || !IMAGE_DIGEST.test(witness.sourceWebImageDigest) ||
       !HASH.test(witness.controlPlaneSha256) || !HASH.test(witness.servingSnapshotSha256) ||

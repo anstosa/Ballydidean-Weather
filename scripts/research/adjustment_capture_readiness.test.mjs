@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
 import { chmod, link, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -19,6 +20,22 @@ const CONTROL_SHA256 = "d".repeat(64);
 const EPOCH_AT = "2026-10-08T12:00:00.000Z";
 const SNAPSHOT_AT = "2026-10-08T12:00:01.000Z";
 const WITNESS_SHA256 = "e".repeat(64);
+const repoRoot = resolve(import.meta.dirname, "../..");
+const migrationRoot = join(repoRoot, "packages/database/migrations");
+const migrationNames = readdirSync(migrationRoot)
+  .filter((name) => name.endsWith(".sql")).sort();
+const migrationChecksums = migrationNames.map((name) =>
+  sha256(readFileSync(join(migrationRoot, name))));
+const rollingMigrationNames = migrationNames.slice(0, 21);
+const rollingMigrationChecksums = migrationChecksums.slice(0, 21);
+const rollingHistorySha256 = sha256(Buffer.from(rollingMigrationNames.map(
+  // serialize the retained capture ledger
+  (name, index) => `${name}:${rollingMigrationChecksums[index]}`,
+).join("\n")));
+const catalogHistorySha256 = sha256(Buffer.from(migrationNames.map(
+  // serialize the additive live catalog ledger
+  (name, index) => `${name}:${migrationChecksums[index]}`,
+).join("\n")));
 
 // hash one fixture member
 function sha256(bytes) {
@@ -78,12 +95,34 @@ async function cleanupReleaseFixture(fixture) {
   await rm(fixture.root, { force: true, recursive: true });
 }
 
+// create one exact database manifest fixture
+function databaseManifest(names = migrationNames, checksums = migrationChecksums) {
+  return {
+    contract_version: "adjustment-evaluation-export-manifest/v1",
+    migration_checksums: [...checksums],
+    migration_history_sha256: sha256(Buffer.from(names.map(
+      // serialize the exact selected ledger
+      (name, index) => `${name}:${checksums[index]}`,
+    ).join("\n"))),
+    migration_names: [...names],
+    query_contract_sha256:
+      "c860039c72818a9b813ed9f9d93f5d8e115f4144e99d698734e9159ca3457bd4",
+    query_contract_version: "adjustment-evaluation-export-query/v1",
+    row_schema_sha256:
+      "c21782034130d003e4af48fada4c8f6545f6f1c4dff550f92d0523c7d96d20e2",
+    schema_migration: "0017_adjustment_evaluation_export.sql",
+    site_key: "ballydidean",
+    site_timezone: "America/Los_Angeles",
+  };
+}
+
 // create one complete injected readiness authority set
 function readinessPorts(overrides = {}) {
   const witness = {
     catalogFrontierSha256: HASH_A,
     controlPlaneSha256: CONTROL_SHA256,
     controlPlaneVersion: "14",
+    databaseMigrationHistorySha256: rollingHistorySha256,
     epochAt: EPOCH_AT,
     servingSnapshotSha256: HASH_B,
     sourceCommit: SOURCE_COMMIT,
@@ -94,14 +133,7 @@ function readinessPorts(overrides = {}) {
   return {
     fetchDatabaseLedger: async () => ({
       contractVersion: "adjustment-database-ledger/v3",
-      databaseManifest: {
-        migration_history_sha256: HASH_A,
-        migration_names: [
-          ...Array.from({ length: 20 }, (_, index) =>
-            `${String(index + 1).padStart(4, "0")}_fixture.sql`),
-          "0021_adjustment_rolling_registration.sql",
-        ],
-      },
+      databaseManifest: databaseManifest(),
       snapshotAt: SNAPSHOT_AT,
     }),
     fetchEpochSnapshot: async () => ({
@@ -240,13 +272,35 @@ test("capture readiness crossbinds installed, local, epoch, database, and live s
       taskInodes: "0",
     },
     contractVersion: "adjustment-maintenance-capture-readiness/v1",
-    databaseMigrationHistorySha256: HASH_A,
+    databaseMigrationHistorySha256: catalogHistorySha256,
     ready: true,
     reason: "ready",
     releaseManifestSha256: HASH_B,
     sourceCommit: SOURCE_COMMIT,
     sourceRelease: "2026.10.08-1",
   });
+});
+
+// retain the exact 0021 live pairing while admitting only its exact 0022 successor
+test("capture readiness accepts only witness-21 with live-21 or live-22", async () => {
+  const rolling = await inspectAdjustmentMaintenanceCaptureReadiness(readinessPorts({
+    fetchDatabaseLedger: async () => ({
+      contractVersion: "adjustment-database-ledger/v3",
+      databaseManifest: databaseManifest(rollingMigrationNames, rollingMigrationChecksums),
+      snapshotAt: SNAPSHOT_AT,
+    }),
+  }));
+  assert.equal(rolling.ready, true);
+  assert.equal(rolling.databaseMigrationHistorySha256, rollingHistorySha256);
+
+  const catalogWitness = await inspectAdjustmentMaintenanceCaptureReadiness(readinessPorts({
+    fetchEpochWitness: async () => ({
+      ...(await readinessPorts().fetchEpochWitness()),
+      databaseMigrationHistorySha256: catalogHistorySha256,
+    }),
+  }));
+  assert.equal(catalogWitness.ready, false);
+  assert.equal(catalogWitness.reason, "capture_epoch_mismatch");
 });
 
 // allow a genuine family-only successor while retaining the epoch runner closure
@@ -307,6 +361,27 @@ test("capture readiness refuses incomplete or mismatched authorities", async (co
         databaseManifest: { migration_history_sha256: HASH_A, migration_names: [] },
         snapshotAt: SNAPSHOT_AT,
       }),
+    }),
+    reason: "database_ledger_unavailable",
+  }, {
+    name: "unreviewed ledger suffix",
+    options: readinessPorts({
+      fetchDatabaseLedger: async () => {
+        const manifest = databaseManifest();
+        manifest.migration_names.push("0023_unreviewed.sql");
+        manifest.migration_checksums.push("f".repeat(64));
+        manifest.migration_history_sha256 = sha256(Buffer.from(
+          manifest.migration_names.map(
+            // hash the unsupported complete suffix
+            (name, index) => `${name}:${manifest.migration_checksums[index]}`,
+          ).join("\n"),
+        ));
+        return {
+          contractVersion: "adjustment-database-ledger/v3",
+          databaseManifest: manifest,
+          snapshotAt: SNAPSHOT_AT,
+        };
+      },
     }),
     reason: "database_ledger_unavailable",
   }, {

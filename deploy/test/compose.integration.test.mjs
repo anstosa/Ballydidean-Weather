@@ -14,6 +14,7 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const deployRoot = join(repoRoot, "deploy");
 const runIntegration = process.env.WEATHER_RUN_DEPLOY_INTEGRATION === "1";
 const baselineServerRelease = "2026.09.01-9";
+const lifecycleControlPlaneVersion = "17";
 const fixedV13SourceRevision = "072af3f880431ff9020a2ec2ada222210e45f00b";
 // retain the exact immutable published source-one commit
 const fixedV13TargetRevision = "56b327d9c750946f6f6963b6fe1fa5c9bba791ca";
@@ -488,6 +489,21 @@ secrets:
   ${secret("weather_postgres_admin_password")}  ${secret("weather_postgres_owner_password")}  ${secret("weather_migration_owner_password")}  ${secret("weather_postgres_api_password")}  ${secret("weather_api_password")}  ${secret("weather_postgres_ingest_password")}  ${secret("weather_postgres_training_export_password")}  ${secret("weather_worker_ingest_password")}  ${secret("weather_tempest_api_key")}  ${secret("weather_xweather_client_id")}  ${secret("weather_xweather_client_secret")}  ${secret("cloudflare_tunnel_token")}`,
   );
 }
+
+// keep the rollback fixture on the updater's exact current contract
+test("local lifecycle fixture tracks the current control plane", async () => {
+  const result = await executeFile(
+    "bash",
+    [
+      "-c",
+      'source "$1"; printf "%s\\n" "$control_plane_version"',
+      "weather-compose-control-version",
+      join(deployRoot, "scripts/update.sh"),
+    ],
+    { cwd: repoRoot },
+  );
+  assert.equal(result.stdout.trim(), lifecycleControlPlaneVersion);
+});
 
 test(
   "local Compose proves lifecycle, persistence, isolation, secrets, and encrypted restore",
@@ -1313,7 +1329,8 @@ verify_fixed_v13_source_compatibility "$target_env" "$source_env" "$authorizatio
           "SELECT string_agg(name || ':' || checksum, ',' ORDER BY name) FROM schema_migrations",
         )
       ).stdout.trim();
-      assert.match(mainMigrationBefore, /(?:^|,)0021_adjustment_rolling_registration\.sql:[a-f0-9]{64}$/u);
+      assert.match(mainMigrationBefore, /(?:^|,)0022_forecast_product_catalog\.sql:[a-f0-9]{64}(?=,|$)/u);
+      assert.match(mainMigrationBefore, /(?:^|,)0023_forecast_product_read_index\.sql:[a-f0-9]{64}$/u);
       assert.doesNotMatch(mainMigrationBefore, /(?:^|,)9999_candidate_contract\.sql:/u);
 
       // initialize one persistent historical lifecycle database
@@ -1671,7 +1688,7 @@ verify_previous_image_compatibility "$compatibility_env" "$previous_compatibilit
             "WEATHER_FORECAST_ADJUSTMENT_WIND_CANARY_KILL_SWITCH=0",
             "WEATHER_FORECAST_ADJUSTMENT_TEMPERATURE_CANARY_KILL_SWITCH=1",
             `WEATHER_CONTROL_PLANE_SHA256=${controlPlane}`,
-            "WEATHER_CONTROL_PLANE_VERSION=14",
+            `WEATHER_CONTROL_PLANE_VERSION=${lifecycleControlPlaneVersion}`,
             "",
           ].join("\n"),
           { mode: 0o600 },
@@ -1810,7 +1827,7 @@ printf 'release-recovered:%s\\n' "$(WEATHER_ENV_FILE=$previous_env compose exec 
       assert.match(rollbackCommands, /acl-after-recover:verified/u);
       assert.match(
         rollbackCommands,
-        /stale-activate-before\nerror: cannot activate release 2026\.08\.22-2 while runtime release 2026\.08\.22-1 differs from retained schema release 2026\.08\.22-3\nstale-activate-after/u,
+        /stale-activate-before\nerror: normal activation requires one exact forward staged release\nstale-activate-after/u,
       );
       assert.match(rollbackCommands, /release-recovered:2026\.08\.22-1/u);
       assert.equal(await readFile(join(releaseState, "schema-release"), "utf8"), "2026.08.22-3\n");

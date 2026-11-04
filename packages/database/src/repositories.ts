@@ -232,6 +232,39 @@ export interface HistoryQuery {
   readonly to?: string;
 }
 
+// retain only fields consumed by the fixed forecast observation projections
+export interface ForecastObservationInputRow extends QueryResultRow {
+  readonly apparentTemperatureC: number | null;
+  readonly cloudCoverPercent: number | null;
+  readonly id: string;
+  readonly lastReceivedAt: Date | string;
+  readonly pm25MicrogramsPerCubicMeter: number | null;
+  readonly precipitationRateMmPerHour: number | null;
+  readonly pressureHpa: number | null;
+  readonly providerKey: string;
+  readonly relativeHumidityPercent: number | null;
+  readonly solarRadiationWm2: number | null;
+  readonly sourceId: string;
+  readonly sourceKey: string;
+  readonly sourceKind: "model_current" | "physical_sensor";
+  readonly stationSlug: string;
+  readonly temperatureC: number | null;
+  readonly uvIndex: number | null;
+  readonly validAt: Date | string;
+  readonly windDirectionDegrees: number | null;
+  readonly windGustMps: number | null;
+  readonly windSpeedMps: number | null;
+}
+
+export interface ForecastObservationInput {
+  readonly projectionFrom: Date | string;
+  readonly queryFrom: Date | string;
+  readonly records: readonly ForecastObservationInputRow[];
+  readonly siteSlug: "ballydidean";
+  readonly timezone: "America/Los_Angeles";
+  readonly through: Date | string;
+}
+
 export interface CurrentQuery {
   readonly sourceId?: string;
   readonly stationSlug?: string;
@@ -2045,9 +2078,11 @@ export async function getWeatherForecast(
               AND product.valid_at = $2
           )`
     : `candidate.product_run_at = (
-            SELECT MAX(product.product_run_at)
-            FROM weather_records product
+            SELECT product.product_run_at
+            FROM public.forecast_products product
             WHERE product.source_id = s.id
+            ORDER BY product.product_run_at DESC
+            LIMIT 1
           )`;
   const rawResult = await pool.query<WeatherRecordRow>(
     `
@@ -2165,7 +2200,7 @@ export async function getWeatherForecast(
   }
 }
 
-// read one complete retained vintage around local midnight
+// qualify covering-index identities before fetching exact retained midnight rows
 export async function getForecastPressureContext(
   pool: Pool,
   query: ForecastPressureContextQuery,
@@ -2189,36 +2224,100 @@ export async function getForecastPressureContext(
       JOIN sites si ON si.id = st.site_id
       JOIN providers p ON p.id = s.provider_id
       JOIN LATERAL (
-        SELECT candidate.product_run_at
-        FROM weather_records candidate
-        WHERE candidate.source_id = s.id
-          AND candidate.source_kind = 'forecast'
-          AND candidate.product_run_at >= $4
-          AND candidate.product_run_at <= $5
-          AND candidate.valid_at >= $2
-          AND candidate.valid_at < $3
-          AND candidate.pressure_hpa > '-Infinity'::double precision
-          AND candidate.pressure_hpa < 'Infinity'::double precision
-        GROUP BY candidate.product_run_at
-        HAVING COUNT(*) = 6
-          AND MIN(candidate.valid_at) = $2
-          AND MAX(candidate.valid_at) = $3::timestamptz - interval '1 hour'
-          AND BOOL_AND(candidate.valid_at = date_trunc('hour', candidate.valid_at))
-        ORDER BY candidate.product_run_at DESC
+        WITH slots AS MATERIALIZED (
+          SELECT generated.slot
+          FROM generate_series(
+            $2::timestamptz,
+            $3::timestamptz - interval '1 hour',
+            interval '1 hour'
+          ) AS generated(slot)
+        ), identity_keys AS MATERIALIZED (
+          -- singleton boundaries use exact covering-index suffix ranges
+          SELECT
+            point.source_id,
+            point.source_kind,
+            point.valid_at,
+            point.product_run_at
+          FROM slots
+          CROSS JOIN LATERAL (
+            SELECT
+              identity.source_id,
+              identity.source_kind,
+              identity.valid_at,
+              identity.product_run_at
+            FROM weather_records identity
+            WHERE identity.source_id = s.id
+              AND identity.source_kind = 'forecast'
+              AND ROW(identity.valid_at, identity.product_run_at)
+                >= ROW(slots.slot, $4::timestamptz)
+              AND ROW(identity.valid_at, identity.product_run_at)
+                <= ROW(slots.slot, $5::timestamptz)
+              AND identity.product_run_at >= $4
+              AND identity.product_run_at <= $5
+            -- retain the parameterized range without removing rows
+            OFFSET 0
+          ) point
+          UNION ALL
+          -- strict gaps preserve every nonhour identity without duplicating boundaries
+          SELECT
+            gap.source_id,
+            gap.source_kind,
+            gap.valid_at,
+            gap.product_run_at
+          FROM slots
+          CROSS JOIN LATERAL (
+            SELECT
+              identity.source_id,
+              identity.source_kind,
+              identity.valid_at,
+              identity.product_run_at
+            FROM weather_records identity
+            WHERE identity.source_id = s.id
+              AND identity.source_kind = 'forecast'
+              AND identity.valid_at > slots.slot
+              AND identity.valid_at < slots.slot + interval '1 hour'
+              AND identity.product_run_at >= $4
+              AND identity.product_run_at <= $5
+            -- retain the parameterized range without removing rows
+            OFFSET 0
+          ) gap
+        )
+        SELECT product.product_run_at, qualified.record_ids
+        FROM public.forecast_products product
+        JOIN LATERAL (
+          SELECT
+            array_agg(raw.id ORDER BY raw.valid_at ASC, raw.id ASC) AS record_ids
+          FROM identity_keys identity
+          JOIN weather_records raw
+            ON raw.source_id = identity.source_id
+            AND raw.source_kind = 'forecast'
+            -- equal inclusive bounds retain every component of the unique identity
+            AND ROW(raw.valid_at, raw.product_run_at) >= ROW(
+              identity.valid_at, identity.product_run_at
+            )
+            AND ROW(raw.valid_at, raw.product_run_at) <= ROW(
+              identity.valid_at, identity.product_run_at
+            )
+          WHERE identity.source_id = product.source_id
+            AND identity.product_run_at = product.product_run_at
+            AND raw.pressure_hpa > '-Infinity'::double precision
+            AND raw.pressure_hpa < 'Infinity'::double precision
+          HAVING COUNT(*) = 6
+            AND MIN(raw.valid_at) = $2
+            AND MAX(raw.valid_at) = $3::timestamptz - interval '1 hour'
+            AND BOOL_AND(raw.valid_at = date_trunc('hour', raw.valid_at))
+        ) qualified ON true
+        WHERE product.source_id = s.id
+          AND product.product_run_at >= $4
+          AND product.product_run_at <= $5
+        ORDER BY product.product_run_at DESC
         LIMIT 1
       ) context_run ON true
       JOIN LATERAL (
         SELECT ${weatherRecordLateralSelection()}
         FROM weather_records candidate
-        WHERE candidate.source_id = s.id
-          AND candidate.source_kind = 'forecast'
-          AND candidate.product_run_at = context_run.product_run_at
-          AND candidate.valid_at >= $2
-          AND candidate.valid_at < $3
-          AND candidate.pressure_hpa > '-Infinity'::double precision
-          AND candidate.pressure_hpa < 'Infinity'::double precision
+        WHERE candidate.id = ANY(context_run.record_ids)
         ORDER BY candidate.valid_at ASC, candidate.id ASC
-        LIMIT 6
       ) wr ON true
       WHERE si.slug = $1
         AND si.active
@@ -3155,6 +3254,131 @@ export async function listTideRecords(
   );
 
   return result.rows;
+}
+
+// read one complete fixed-site projection input in one snapshot
+export async function listForecastObservationInputs(
+  pool: Pool,
+  asOfValue: string,
+): Promise<ForecastObservationInput | null> {
+  const asOf = validateUtcInstant(asOfValue, "asOf");
+  const result = await pool.query<ForecastObservationInputRow & {
+    projectionFrom: Date | string;
+    queryFrom: Date | string;
+    siteSlug: string;
+    timezone: string;
+    through: Date | string;
+  }>(
+    `
+      WITH target_site AS (
+        SELECT
+          si.id,
+          si.slug,
+          si.timezone,
+          (($1::timestamptz AT TIME ZONE si.timezone)::date::timestamp
+            AT TIME ZONE si.timezone) AS projection_from
+        FROM sites si
+        WHERE si.slug = 'ballydidean'
+          AND si.timezone = 'America/Los_Angeles'
+          AND si.active
+      ), geometry AS (
+        SELECT
+          target_site.*,
+          LEAST(
+            target_site.projection_from - interval '3 hours',
+            $1::timestamptz - interval '24 hours 20 minutes'
+          ) AS query_from
+        FROM target_site
+      )
+      SELECT
+        geometry.slug AS "siteSlug",
+        geometry.timezone,
+        geometry.projection_from AS "projectionFrom",
+        geometry.query_from AS "queryFrom",
+        $1::timestamptz AS through,
+        input.id,
+        input.valid_at AS "validAt",
+        input.last_received_at AS "lastReceivedAt",
+        input.source_id AS "sourceId",
+        input.source_key AS "sourceKey",
+        input.source_kind AS "sourceKind",
+        input.station_slug AS "stationSlug",
+        input.provider_key AS "providerKey",
+        input.temperature_c AS "temperatureC",
+        input.apparent_temperature_c AS "apparentTemperatureC",
+        input.wind_speed_mps AS "windSpeedMps",
+        input.wind_gust_mps AS "windGustMps",
+        input.wind_direction_degrees AS "windDirectionDegrees",
+        input.precipitation_rate_mm_per_hour AS "precipitationRateMmPerHour",
+        input.cloud_cover_percent AS "cloudCoverPercent",
+        input.relative_humidity_percent AS "relativeHumidityPercent",
+        input.pm25_micrograms_per_cubic_meter AS "pm25MicrogramsPerCubicMeter",
+        input.uv_index AS "uvIndex",
+        input.pressure_hpa AS "pressureHpa",
+        input.solar_radiation_wm2 AS "solarRadiationWm2"
+      FROM geometry
+      LEFT JOIN LATERAL (
+        SELECT
+          wr.id, wr.valid_at, wr.last_received_at, wr.source_id,
+          s.source_key, s.source_kind, st.slug AS station_slug,
+          p.provider_key, wr.temperature_c, wr.apparent_temperature_c,
+          wr.wind_speed_mps, wr.wind_gust_mps, wr.wind_direction_degrees,
+          wr.precipitation_rate_mm_per_hour, wr.cloud_cover_percent,
+          wr.relative_humidity_percent, wr.pm25_micrograms_per_cubic_meter,
+          wr.uv_index, wr.pressure_hpa, wr.solar_radiation_wm2
+        FROM stations st
+        JOIN sources s ON s.station_id = st.id
+        JOIN providers p ON p.id = s.provider_id
+        JOIN weather_records wr ON wr.source_id = s.id
+        WHERE st.site_id = geometry.id
+          AND st.active
+          AND s.active
+          AND p.active
+          AND s.source_kind IN ('physical_sensor', 'model_current')
+          AND ${CURRENT_SOURCE_PREDICATE}
+          AND wr.valid_at >= geometry.query_from
+          AND wr.valid_at < $1::timestamptz
+        ORDER BY
+          CASE s.source_kind WHEN 'physical_sensor' THEN 0 ELSE 1 END,
+          wr.valid_at DESC,
+          wr.id DESC
+        LIMIT 20001
+      ) input ON true
+      ORDER BY
+        CASE input.source_kind WHEN 'physical_sensor' THEN 0 ELSE 1 END,
+        input.valid_at DESC NULLS LAST,
+        input.id DESC NULLS LAST
+    `,
+    [asOf],
+  );
+  const first = result.rows[0];
+
+  // distinguish an unavailable site from one with no retained inputs
+  if (first === undefined) {
+    return null;
+  }
+
+  const records: ForecastObservationInputRow[] = [];
+  // discard only the left-lateral empty sentinel
+  for (const row of result.rows) {
+    if ((row.id as string | null) !== null) {
+      records.push(row);
+    }
+  }
+
+  // refuse an incomplete archive instead of truncating projection input
+  if (records.length > 20_000) {
+    throw new RangeError("forecast observation input row limit exceeded");
+  }
+
+  return {
+    projectionFrom: first.projectionFrom,
+    queryFrom: first.queryFrom,
+    records,
+    siteSlug: "ballydidean",
+    timezone: "America/Los_Angeles",
+    through: first.through,
+  };
 }
 
 // read bounded cursor history

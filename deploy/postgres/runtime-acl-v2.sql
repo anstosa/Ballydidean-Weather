@@ -218,6 +218,84 @@ BEGIN
 END;
 $adjustment_evaluation_export_acl$;
 
+-- expose only the additive forecast product catalog when its full graph exists
+DO $forecast_product_catalog_acl$
+DECLARE
+  catalog_column record;
+  catalog_object_count integer;
+BEGIN
+  SELECT count(*) INTO catalog_object_count
+  FROM (
+    SELECT relation.oid
+    FROM pg_class relation
+    JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND relation.relname = 'forecast_products'
+    UNION ALL
+    SELECT procedure.oid
+    FROM pg_proc procedure
+    JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
+    WHERE namespace.nspname = 'public'
+      AND procedure.proname IN (
+        'weather_sync_forecast_products_after_insert',
+        'weather_sync_forecast_products_after_delete',
+        'weather_sync_forecast_products_after_truncate'
+      )
+    UNION ALL
+    SELECT trigger.oid
+    FROM pg_trigger trigger
+    JOIN pg_class relation ON relation.oid = trigger.tgrelid
+    JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND relation.relname = 'weather_records'
+      AND NOT trigger.tgisinternal
+      AND trigger.tgname IN (
+        'weather_records_forecast_products_insert',
+        'weather_records_forecast_products_delete',
+        'weather_records_forecast_products_truncate'
+      )
+  ) object;
+
+  -- retain schema 0018 through 0021 only when every catalog object is absent
+  IF catalog_object_count = 0 THEN
+    IF EXISTS (SELECT 1 FROM schema_migrations
+      WHERE name = '0022_forecast_product_catalog.sql') THEN
+      RAISE EXCEPTION 'forecast product catalog schema is partially absent';
+    END IF;
+    RETURN;
+  END IF;
+  -- reject a partial catalog before granting any reader
+  IF catalog_object_count <> 7 OR NOT EXISTS (
+    SELECT 1 FROM schema_migrations
+    WHERE name = '0022_forecast_product_catalog.sql'
+      AND checksum = '8d04170868414cd17e78cde2a4d6dd8144dfd606cba4e171686523f045cb77d2'
+  ) THEN
+    RAISE EXCEPTION 'forecast product catalog schema is incomplete';
+  END IF;
+
+  REVOKE ALL ON TABLE forecast_products
+  FROM PUBLIC, weather_api, weather_ingest, weather_training_export;
+  -- erase direct column grants before the table-scoped reader grant
+  FOR catalog_column IN
+    SELECT attribute.attname AS column_name
+    FROM pg_attribute attribute
+    WHERE attribute.attrelid = 'public.forecast_products'::regclass
+      AND attribute.attnum > 0
+      AND NOT attribute.attisdropped
+  LOOP
+    EXECUTE format(
+      'REVOKE ALL (%I) ON forecast_products FROM PUBLIC, weather_api, weather_ingest, weather_training_export',
+      catalog_column.column_name
+    );
+  END LOOP;
+  REVOKE ALL ON FUNCTION weather_sync_forecast_products_after_insert(),
+    weather_sync_forecast_products_after_delete(),
+    weather_sync_forecast_products_after_truncate()
+  FROM PUBLIC, weather_api, weather_ingest, weather_training_export;
+  GRANT SELECT ON TABLE forecast_products TO weather_api;
+END;
+$forecast_product_catalog_acl$;
+
 ALTER ROLE weather_training_export
   WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 -- clear database-specific role defaults

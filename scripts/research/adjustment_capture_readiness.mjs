@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
+import { validateAdjustmentV14RollingDatabaseManifest } from
+  "../../deploy/scripts/adjustment-evaluation-package.mjs";
 import { inspectAdjustmentArchiveLocalReadiness } from "./adjustment_archive_job.mjs";
 import { ADJUSTMENT_FIT_PUBLIC_CODE_ALLOWLIST } from "./adjustment_fit_inputs.mjs";
 import { captureAdjustmentFitRuntimeReadiness } from "./adjustment_fit_sandbox.mjs";
@@ -18,6 +20,8 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const RELEASE_PATTERN = /^\d{4}\.\d{2}\.\d{2}-[1-9]\d?$/u;
 const INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const FAMILIES = Object.freeze(["temperature", "wind", "rain"]);
+const CAPTURE_EPOCH_MIGRATION_HISTORY_SHA256 =
+  "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424";
 const FIT_SOURCE_FILES = Object.freeze([...new Set(
   Object.values(ADJUSTMENT_FIT_PUBLIC_CODE_ALLOWLIST).flat().map(
     // retain every family source once
@@ -289,14 +293,17 @@ export async function inspectAdjustmentMaintenanceCaptureReadiness(options = {})
     result.reason = "database_ledger_unavailable";
     return captureReadinessResult(result);
   }
-  const manifest = database?.databaseManifest;
+  let manifest;
 
-  // recheck the typed full-0021 projection before using its clock
+  // recheck one exact supported live ledger before using its clock
+  try {
+    manifest = validateAdjustmentV14RollingDatabaseManifest(database?.databaseManifest);
+  } catch {
+    result.reason = "database_ledger_unavailable";
+    return captureReadinessResult(result);
+  }
   if (database?.contractVersion !== "adjustment-database-ledger/v3" ||
-    manifest === null || typeof manifest !== "object" || Array.isArray(manifest) ||
-    !Array.isArray(manifest.migration_names) || manifest.migration_names.length !== 21 ||
-    manifest.migration_names.at(-1) !== "0021_adjustment_rolling_registration.sql" ||
-    !SHA256_PATTERN.test(manifest.migration_history_sha256 ?? "")) {
+    !SHA256_PATTERN.test(manifest.migration_history_sha256)) {
     result.reason = "database_ledger_unavailable";
     return captureReadinessResult(result);
   }
@@ -313,8 +320,9 @@ export async function inspectAdjustmentMaintenanceCaptureReadiness(options = {})
     return captureReadinessResult(result);
   }
 
-  // bind the retained zero proof to its create-once witness
-  if (snapshot.archiveCommitOrdinal !== "0" || snapshot.entryCount !== 0 ||
+  // bind the retained 0021 zero proof to the exact 0021 or 0022 live ledger
+  if (witness.databaseMigrationHistorySha256 !== CAPTURE_EPOCH_MIGRATION_HISTORY_SHA256 ||
+    snapshot.archiveCommitOrdinal !== "0" || snapshot.entryCount !== 0 ||
     !Array.isArray(snapshot.entries) || snapshot.entries.length !== 0 ||
     snapshot.frontierSha256 !== witness.catalogFrontierSha256 ||
     snapshot.snapshotSha256 !== witness.servingSnapshotSha256 ||

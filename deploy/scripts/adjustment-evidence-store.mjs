@@ -1361,20 +1361,29 @@ export const ADJUSTMENT_REVISION_CAPTURE_EPOCH_PATH =
 export const ADJUSTMENT_REVISION_CAPTURE_EPOCH_SNAPSHOT_PATH =
   "/opt/weather/current/deploy/state/adjustment-capture-epoch-snapshot.json";
 const ADJUSTMENT_REVISION_CAPTURE_EPOCH_MAXIMUM_BYTES = 16 * 1024;
-const ADJUSTMENT_REVISION_FRONTIER_MIGRATION_HISTORY_SHA256 =
-  "c683c4f937c7f02b00f6ab49f75268eead81d2a221a8a9a23e38f9e4802a11b0";
 const ADJUSTMENT_ROLLING_REGISTRATION_MIGRATION_HISTORY_SHA256 =
   "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424";
+const ADJUSTMENT_DIRECT_MIGRATION_HISTORY_SHA256 =
+  "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf";
+const ADJUSTMENT_DIRECT_INDEX_600S_MIGRATION_HISTORY_SHA256 =
+  "3aec6846d009a2bb2cee02279dceb9bd2d3572dc1b3a83eed2ce9a1724311345";
+const ADJUSTMENT_CAPTURE_EPOCH_CONTROL_PLANE_17_SHA256 =
+  "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb";
 const ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGERS = Object.freeze([Object.freeze({
-  checksum: "56027b4f2cb2c3c83e746f14dac753b75d573753934898fa7a52f78faa56499c",
-  count: 20,
-  historySha256: ADJUSTMENT_REVISION_FRONTIER_MIGRATION_HISTORY_SHA256,
-  name: "0020_adjustment_revision_frontier.sql",
-}), Object.freeze({
   checksum: "ca29db99377001fca2e2e4268fd80d1cbe7b876f71f2d5ba04e575712cb9f13b",
   count: 21,
   historySha256: ADJUSTMENT_ROLLING_REGISTRATION_MIGRATION_HISTORY_SHA256,
   name: "0021_adjustment_rolling_registration.sql",
+}), Object.freeze({
+  checksum: "e637542cb2e742fe8f22f60313a11f00adbc1d140a811ee718524849fcece12a",
+  count: 23,
+  historySha256: ADJUSTMENT_DIRECT_MIGRATION_HISTORY_SHA256,
+  name: "0023_forecast_product_read_index.sql",
+}), Object.freeze({
+  checksum: "7e48acb14710a625cdcbb796bf1bf49ab4e00bf1aeb9bb763ac86410e08663e0",
+  count: 23,
+  historySha256: ADJUSTMENT_DIRECT_INDEX_600S_MIGRATION_HISTORY_SHA256,
+  name: "0023_forecast_product_read_index.sql",
 })]);
 
 const OBJECT_MAXIMUM_BYTES = 512 * 1_024;
@@ -1383,6 +1392,7 @@ const RECEIPT_MAXIMUM_BYTES = 16 * 1_024;
 const MAXIMUM_COMPRESSION_RATIO = 64;
 const MAXIMUM_ROWS = 240;
 const MAXIMUM_V2_ROWS = 241;
+const COMPRESSION_CACHE_MAXIMUM_ENTRIES = 8;
 const MAXIMUM_IDENTITIES = 8_192;
 const MAXIMUM_CHANNEL_ASSERTIONS = 256;
 const SCHEDULER_HISTORY_LIMIT = 4 * 365;
@@ -1400,6 +1410,9 @@ const ADJUSTMENT_ROLLING_SCHEDULE_SHA256 =
 const OBJECT_FILENAME_PATTERN = /^sha256-([a-f0-9]{64})\.json\.gz$/u;
 const RECEIPT_FILENAME_PATTERN = /^sha256-([a-f0-9]{64})\.json$/u;
 const CHANNEL_FILENAME_PATTERN = /^sha256-([a-f0-9]{64})\.json$/u;
+const CAPTURE_TEMPORARY_FILENAME_PATTERN = /^\.capture-[a-f0-9-]+\.tmp$/u;
+const CAPTURE_REFRESH_RETRY_COUNT = 200;
+const CAPTURE_REFRESH_RETRY_MILLISECONDS = 10;
 const SCHEDULE_HOURS = [0, 6, 12, 18];
 const ISSUANCE_CHANNELS = ["legacy_unattributed", "public_get", "scheduler_request"];
 const WINDOWS = ["days=1", "days=5", "days=10", "overnight"];
@@ -1533,16 +1546,22 @@ export function validateAdjustmentRevisionCaptureEpochWitness(value) {
   requireInstant(value.epochAt, "adjustment revision capture epoch time");
   const releasePattern = /^\d{4}\.\d{2}\.\d{2}-[1-9][0-9]?$/u;
   const imageDigestPattern = /^sha256:[a-f0-9]{64}$/u;
-  // bind the one-time witness to the exact inert-v14 pre-activation identity
+  // match one closed witness identity
+  const identityMatches =
+    (value.controlPlaneVersion === "14" &&
+      value.databaseMigrationHistorySha256 ===
+        ADJUSTMENT_ROLLING_REGISTRATION_MIGRATION_HISTORY_SHA256) ||
+    (value.controlPlaneVersion === "17" &&
+      value.controlPlaneSha256 === ADJUSTMENT_CAPTURE_EPOCH_CONTROL_PLANE_17_SHA256 &&
+      [ADJUSTMENT_DIRECT_MIGRATION_HISTORY_SHA256,
+        ADJUSTMENT_DIRECT_INDEX_600S_MIGRATION_HISTORY_SHA256]
+        .includes(value.databaseMigrationHistorySha256));
+  // bind the one-time witness to one reviewed control-history identity
   if (value.activationKind !== "inert_v14_pre_activation" ||
     value.archiveCommitOrdinal !== "0" ||
     value.catalogFrontierSha256 !== adjustmentRevisionGenesisFrontier() ||
     value.contractVersion !== ADJUSTMENT_REVISION_CAPTURE_EPOCH_CONTRACT_VERSION ||
-    value.controlPlaneVersion !== "14" ||
-    !ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGERS.some(
-      // admit only one complete reviewed activation ledger
-      (ledger) => value.databaseMigrationHistorySha256 === ledger.historySha256,
-    ) ||
+    !identityMatches ||
     typeof value.sourceCommit !== "string" || !/^[a-f0-9]{40}$/u.test(value.sourceCommit) ||
     typeof value.sourceRelease !== "string" || !releasePattern.test(value.sourceRelease) ||
     typeof value.sourceServerImageDigest !== "string" ||
@@ -1790,8 +1809,12 @@ function validateAdjustmentRevisionCaptureEpochDeployment(value) {
   ], "adjustment revision capture epoch deployment");
   requireSha256(value.controlPlaneSha256,
     "adjustment revision capture epoch control plane");
+  // retain legacy control while pinning version 17
+  const controlIdentityMatches = value.controlPlaneVersion === "14" ||
+    (value.controlPlaneVersion === "17" &&
+      value.controlPlaneSha256 === ADJUSTMENT_CAPTURE_EPOCH_CONTROL_PLANE_17_SHA256);
   // reuse the complete witness validator after construction for remaining fields
-  if (value.controlPlaneVersion !== "14" ||
+  if (!controlIdentityMatches ||
     !/^[a-f0-9]{40}$/u.test(value.sourceCommit) ||
     !/^\d{4}\.\d{2}\.\d{2}-[1-9][0-9]?$/u.test(value.sourceRelease) ||
     !/^sha256:[a-f0-9]{64}$/u.test(value.sourceServerImageDigest) ||
@@ -1819,12 +1842,14 @@ function validateAdjustmentRevisionCaptureEpochDatabaseEnvelope(value) {
       ).join("\n")))
     : null;
   const reviewedLedger = ADJUSTMENT_CAPTURE_EPOCH_DATABASE_LEDGERS.find(
-    // select only an exact reviewed full-history identity
-    (ledger) => manifest.migration_history_sha256 === ledger.historySha256,
+    // select only an exact reviewed manifest identity
+    (ledger) => ledger.historySha256 === manifest.migration_history_sha256,
   );
-  // require one disjoint complete reviewed ledger rather than a compatible prefix
-  if (manifest.contract_version !== "adjustment-evaluation-export-manifest/v1" ||
-    reviewedLedger === undefined || !Array.isArray(manifest.migration_names) ||
+  // require one exact complete capture ledger rather than a compatible prefix
+  if (reviewedLedger === undefined ||
+    manifest.contract_version !== "adjustment-evaluation-export-manifest/v1" ||
+    manifest.migration_history_sha256 !== reviewedLedger.historySha256 ||
+    !Array.isArray(manifest.migration_names) ||
     manifest.migration_names.length !== reviewedLedger.count ||
     !Array.isArray(manifest.migration_checksums) ||
     manifest.migration_checksums.length !== reviewedLedger.count ||
@@ -8564,6 +8589,7 @@ export class AdjustmentMaintenanceAnchorStore {
 export class AdjustmentEvidenceStore {
   #allocatedBytes = 0;
   #blockedIdentities = new Set();
+  #compressionCache = new Map();
   #initialized = false;
   #objectCount = 0;
   #options;
@@ -8590,7 +8616,10 @@ export class AdjustmentEvidenceStore {
   constructor(options = {}) {
     this.#options = {
       beforeObjectWrite: options.beforeObjectWrite ?? (() => undefined),
+      compressObject: options.compressObject ?? ((bytes) =>
+        gzipSync(bytes, { level: 9, mtime: 0 })),
       now: options.now ?? (() => new Date()),
+      objectSha256: options.objectSha256 ?? sha256,
       root: resolve(options.root ?? ADJUSTMENT_EVIDENCE_DEFAULT_ROOT),
       statfs: options.statfs ?? ((path) => statfs(path, { bigint: true })),
       writeExclusive: options.writeExclusive ?? writeExclusive,
@@ -8618,6 +8647,38 @@ export class AdjustmentEvidenceStore {
 
   // derive immutable capture bytes before writing the response
   prepare(filteredBody, window) {
+    return this.#prepareCapture(() => createAdjustmentEvidenceCaptureFromForecast(
+      JSON.parse(Buffer.from(filteredBody).toString("utf8")),
+      window,
+      (canonicalObject) => this.#compressCanonicalObject(canonicalObject),
+    ));
+  }
+
+  // derive immutable capture bytes from one already parsed forecast
+  prepareForecast(forecast, window) {
+    return this.#prepareCapture(() => createAdjustmentEvidenceCaptureFromForecast(
+      forecast,
+      window,
+      (canonicalObject) => this.#compressCanonicalObject(canonicalObject),
+    ));
+  }
+
+  // derive one v2 capture with a trusted server-selected channel
+  prepareV2(filteredBody, window, channel) {
+    return this.#prepareCapture(() => this.#createV2Capture(
+      JSON.parse(Buffer.from(filteredBody).toString("utf8")),
+      window,
+      channel,
+    ));
+  }
+
+  // derive one v2 capture from one already parsed forecast
+  prepareForecastV2(forecast, window, channel) {
+    return this.#prepareCapture(() => this.#createV2Capture(forecast, window, channel));
+  }
+
+  // contain one synchronous capture refusal
+  #prepareCapture(createCapture) {
     // refuse capture while filesystem integrity is unknown
     if (!this.#initialized) {
       this.#status.asyncGaps += 1;
@@ -8625,7 +8686,7 @@ export class AdjustmentEvidenceStore {
     }
 
     try {
-      return createAdjustmentEvidenceCapture(filteredBody, window);
+      return createCapture();
     } catch (error) {
       // classify only bounded projection failures
       if (error?.code === "adjustment_evidence_object_too_large") {
@@ -8638,34 +8699,59 @@ export class AdjustmentEvidenceStore {
     }
   }
 
-  // derive one v2 capture with a trusted server-selected channel
-  prepareV2(filteredBody, window, channel) {
-    // refuse capture while filesystem integrity is unknown
-    if (!this.#initialized) {
-      this.#status.asyncGaps += 1;
-      return null;
+  // derive one channel-bound capture without reparsing its forecast
+  #createV2Capture(forecast, window, channel) {
+    requireIssuanceChannel(channel);
+    const capture = forecast?.data?.length === MAXIMUM_V2_ROWS
+      ? createAdjustmentEvidenceCaptureV2FromForecast(
+          forecast,
+          window,
+          (canonicalObject) => this.#compressCanonicalObject(canonicalObject),
+        )
+      : createAdjustmentEvidenceCaptureFromForecast(
+          forecast,
+          window,
+          (canonicalObject) => this.#compressCanonicalObject(canonicalObject),
+        );
+    return Object.freeze({
+      ...capture,
+      issuanceChannel: channel,
+    });
+  }
+
+  // reuse only identical canonical bytes under one object hash
+  #compressCanonicalObject(canonicalObject) {
+    const objectSha256 = this.#options.objectSha256(canonicalObject);
+    requireSha256(objectSha256, "adjustment evidence object");
+    const cached = this.#compressionCache.get(objectSha256);
+
+    // refuse one same-hash canonical-byte collision without promotion
+    if (cached !== undefined && !cached.canonicalObject.equals(canonicalObject)) {
+      throw new Error("adjustment evidence compression cache collision");
     }
 
-    try {
-      requireIssuanceChannel(channel);
-      const rowCount = JSON.parse(Buffer.from(filteredBody).toString("utf8"))?.data?.length;
-      const capture = rowCount === MAXIMUM_V2_ROWS
-        ? createAdjustmentEvidenceCaptureV2(filteredBody, window)
-        : createAdjustmentEvidenceCapture(filteredBody, window);
-      return Object.freeze({
-        ...capture,
-        issuanceChannel: channel,
-      });
-    } catch (error) {
-      // classify only bounded projection failures
-      if (error?.code === "adjustment_evidence_object_too_large") {
-        this.#status.objectTooLarge += 1;
-      } else {
-        this.#status.asyncErrors += 1;
-      }
-      this.#status.asyncGaps += 1;
-      return null;
+    // return one detached hit and promote its owned entry
+    if (cached !== undefined) {
+      this.#compressionCache.delete(objectSha256);
+      this.#compressionCache.set(objectSha256, cached);
+      return {
+        compressedObject: Buffer.from(cached.compressedObject),
+        objectSha256,
+      };
     }
+    const compressedObject = this.#options.compressObject(canonicalObject);
+    validateCompressedEvidenceObject(canonicalObject, compressedObject);
+    this.#compressionCache.set(objectSha256, {
+      canonicalObject: Buffer.from(canonicalObject),
+      compressedObject: Buffer.from(compressedObject),
+    });
+
+    // evict the deterministic least-recent entry
+    if (this.#compressionCache.size > COMPRESSION_CACHE_MAXIMUM_ENTRIES) {
+      const oldest = this.#compressionCache.keys().next().value;
+      this.#compressionCache.delete(oldest);
+    }
+    return { compressedObject: Buffer.from(compressedObject), objectSha256 };
   }
 
   // attach persistence only to Node's successful finish event
@@ -9055,7 +9141,11 @@ export class AdjustmentEvidenceStore {
 
   // refresh global immutable allocation after a cross-writer observation
   async #refreshAllocationFromDisk() {
-    const scan = await scanEvidenceDirectories(this.#options.root, false);
+    const scan = await scanEvidenceDirectories(
+      this.#options.root,
+      false,
+      CAPTURE_REFRESH_RETRY_COUNT,
+    );
     this.#allocatedBytes = scan.allocatedBytes;
     this.#objectCount = scan.objectCount;
     this.#receiptCount = scan.receiptCount;
@@ -11112,27 +11202,54 @@ export function normalizeAdjustmentEvidenceWindow(requestUrl) {
 
 // create one deterministic object and its stable identity
 export function createAdjustmentEvidenceCapture(filteredBody, window) {
-  return createAdjustmentEvidenceCaptureVersion(filteredBody, window, {
+  return createAdjustmentEvidenceCaptureFromForecast(
+    JSON.parse(Buffer.from(filteredBody).toString("utf8")),
+    window,
+  );
+}
+
+// create one deterministic object from an already parsed forecast
+export function createAdjustmentEvidenceCaptureFromForecast(
+  forecast,
+  window,
+  compressCanonicalObject = compressEvidenceObject,
+) {
+  return createAdjustmentEvidenceCaptureVersion(forecast, window, {
     contractVersion: ADJUSTMENT_EVIDENCE_OBJECT_CONTRACT_VERSION,
     maximumRows: MAXIMUM_ROWS,
-  });
+  }, compressCanonicalObject);
 }
 
 // create one v2 object that admits the fall-back DST row
 export function createAdjustmentEvidenceCaptureV2(filteredBody, window) {
-  return createAdjustmentEvidenceCaptureVersion(filteredBody, window, {
+  return createAdjustmentEvidenceCaptureV2FromForecast(
+    JSON.parse(Buffer.from(filteredBody).toString("utf8")),
+    window,
+  );
+}
+
+// create one v2 object from an already parsed forecast
+export function createAdjustmentEvidenceCaptureV2FromForecast(
+  forecast,
+  window,
+  compressCanonicalObject = compressEvidenceObject,
+) {
+  return createAdjustmentEvidenceCaptureVersion(forecast, window, {
     contractVersion: ADJUSTMENT_EVIDENCE_OBJECT_V2_CONTRACT_VERSION,
     maximumRows: MAXIMUM_V2_ROWS,
-  });
+  }, compressCanonicalObject);
 }
 
 // create one versioned deterministic object and stable receipt identity
-function createAdjustmentEvidenceCaptureVersion(filteredBody, window, version) {
+function createAdjustmentEvidenceCaptureVersion(
+  forecast,
+  window,
+  version,
+  compressCanonicalObject,
+) {
   if (!WINDOWS.includes(window)) {
     throw new TypeError("adjustment evidence window is invalid");
   }
-
-  const forecast = JSON.parse(Buffer.from(filteredBody).toString("utf8"));
 
   // require one successful filtered forecast envelope
   if (forecast === null || typeof forecast !== "object" || !Array.isArray(forecast.data) ||
@@ -11162,13 +11279,8 @@ function createAdjustmentEvidenceCaptureVersion(filteredBody, window, version) {
     throw objectTooLargeError();
   }
 
-  const compressedObject = gzipSync(canonicalObject, { level: 9, mtime: 0 });
-
-  // reject oversized or suspiciously compressed objects
-  if (compressedObject.byteLength > COMPRESSED_OBJECT_MAXIMUM_BYTES ||
-    canonicalObject.byteLength > compressedObject.byteLength * MAXIMUM_COMPRESSION_RATIO) {
-    throw objectTooLargeError();
-  }
+  const compressed = compressCanonicalObject(canonicalObject);
+  validateCompressedEvidenceObject(canonicalObject, compressed.compressedObject);
 
   const stableIdentity = {
     bundleIdentities,
@@ -11183,11 +11295,27 @@ function createAdjustmentEvidenceCaptureVersion(filteredBody, window, version) {
 
   return Object.freeze({
     availability,
-    compressedObject,
+    compressedObject: Buffer.from(compressed.compressedObject),
     edgeReceiptIdentitySha256: sha256(canonicalJson(stableIdentity)),
     object,
-    objectSha256: sha256(canonicalObject),
+    objectSha256: compressed.objectSha256,
   });
+}
+
+// compress one canonical object without retaining it
+function compressEvidenceObject(canonicalObject) {
+  const compressedObject = gzipSync(canonicalObject, { level: 9, mtime: 0 });
+  validateCompressedEvidenceObject(canonicalObject, compressedObject);
+  return { compressedObject, objectSha256: sha256(canonicalObject) };
+}
+
+// require one bounded deterministic compressed object
+function validateCompressedEvidenceObject(canonicalObject, compressedObject) {
+  if (!Buffer.isBuffer(compressedObject) ||
+    compressedObject.byteLength > COMPRESSED_OBJECT_MAXIMUM_BYTES ||
+    canonicalObject.byteLength > compressedObject.byteLength * MAXIMUM_COMPRESSION_RATIO) {
+    throw objectTooLargeError();
+  }
 }
 
 // freeze and validate every receipt selected at snapshot start
@@ -11486,21 +11614,34 @@ function projectMetricValues(value, keys, path, omitAbsent = false) {
 }
 
 // scan bounded immutable directories and allocation
-async function scanEvidenceDirectories(root, validatePairs) {
+async function scanEvidenceDirectories(root, validatePairs, temporaryRetries = 0) {
   await validateEvidenceDirectories(root);
   const objects = await readdir(join(root, "objects"));
   const receipts = await readdir(join(root, "receipts"));
   const channels = await readdir(join(root, "channels"));
   const channelBindings = await readdir(join(root, "channel-bindings"));
+  const unexpected = [
+    ...objects.filter((name) => !OBJECT_FILENAME_PATTERN.test(name)),
+    ...receipts.filter((name) => !RECEIPT_FILENAME_PATTERN.test(name)),
+    ...channels.filter((name) => !CHANNEL_FILENAME_PATTERN.test(name)),
+    ...channelBindings.filter((name) => !RECEIPT_FILENAME_PATTERN.test(name)),
+  ];
+
+  // retry only a concurrent writer's uniquely named atomic temporary
+  if (unexpected.length > 0 && temporaryRetries > 0 &&
+    unexpected.every((name) => CAPTURE_TEMPORARY_FILENAME_PATTERN.test(name))) {
+    await new Promise(
+      // allow the publishing writer to unlink its durable temporary
+      (resolveWait) => setTimeout(resolveWait, CAPTURE_REFRESH_RETRY_MILLISECONDS),
+    );
+    return await scanEvidenceDirectories(root, validatePairs, temporaryRetries - 1);
+  }
 
   // stop startup on unexpected or unbounded contents
   if (objects.length > MAXIMUM_IDENTITIES || receipts.length > MAXIMUM_IDENTITIES ||
-    objects.some((name) => !OBJECT_FILENAME_PATTERN.test(name)) ||
-    receipts.some((name) => !RECEIPT_FILENAME_PATTERN.test(name)) ||
     channels.length > MAXIMUM_CHANNEL_ASSERTIONS ||
     channelBindings.length > MAXIMUM_CHANNEL_ASSERTIONS ||
-    channels.some((name) => !CHANNEL_FILENAME_PATTERN.test(name)) ||
-    channelBindings.some((name) => !RECEIPT_FILENAME_PATTERN.test(name))) {
+    unexpected.length > 0) {
     throw new Error("adjustment evidence directory is invalid");
   }
 

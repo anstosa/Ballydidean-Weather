@@ -19,8 +19,8 @@ import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
-import { gunzipSync } from "node:zlib";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
   ADJUSTMENT_EVIDENCE_SCHEDULER_REQUIRED_FREE_BYTES,
@@ -41,6 +41,8 @@ import {
   buildAdjustmentRevisionColdGraphSegment,
   buildAdjustmentRevisionGapGraphSegment,
   createAdjustmentEvidenceCaptureV2,
+  createAdjustmentEvidenceCaptureFromForecast,
+  createAdjustmentEvidenceCaptureV2FromForecast,
   createAdjustmentRevisionArchiveHandler,
   currentAdjustmentEvidenceDue,
   evaluateAdjustmentEvidenceSchedulerAdmission,
@@ -2404,26 +2406,24 @@ test("revision cold transfer carries one terminal publication gap before the nex
   }
 });
 
-// create one exact future-only epoch and preserve its first database server clock
-test("revision capture epoch accepts disjoint full-0020 and full-0021 zero frontiers", async () => {
+// create one exact 0021 epoch and preserve its first database server clock
+test("revision capture epoch remains exact 0021 after the live 0022 advance", async () => {
   const root = await mkdtemp(join(tmpdir(), "weather-revision-epoch-"));
   const path = join(root, "adjustment-capture-epoch.json");
   try {
     const migrationRoot = join(repoRoot, "packages/database/migrations");
     const availableMigrationNames = (await readdir(migrationRoot))
       .filter((name) => name.endsWith(".sql")).sort();
-    const frontierMigrationIndex = availableMigrationNames.indexOf(
-      "0020_adjustment_revision_frontier.sql",
+    const rollingMigrationIndex = availableMigrationNames.indexOf(
+      "0021_adjustment_rolling_registration.sql",
     );
-    assert.notEqual(frontierMigrationIndex, -1);
-    const migrationNames = availableMigrationNames.slice(0, frontierMigrationIndex + 1);
+    assert.notEqual(rollingMigrationIndex, -1);
+    const migrationNames = availableMigrationNames.slice(0, rollingMigrationIndex + 1);
     const migrationChecksums = [];
     // hash the exact reviewed ledger in database order
     for (const name of migrationNames) {
-      // retain the deployed full-0020 ledger after the unapplied 0019 source advanced
-      migrationChecksums.push(name === "0019_adjustment_maintenance_recurring.sql"
-        ? "21a737e4efe8c42f76db186cb207a6b838435706e74c6c514f221ba83adb9513"
-        : createHash("sha256").update(await readFile(join(migrationRoot, name))).digest("hex"));
+      migrationChecksums.push(createHash("sha256")
+        .update(await readFile(join(migrationRoot, name))).digest("hex"));
     }
     const epochAt = "2026-10-08T02:00:00.000Z";
     const genesis = createHash("sha256")
@@ -2484,6 +2484,8 @@ test("revision capture epoch accepts disjoint full-0020 and full-0021 zero front
     assert.equal(witness.archiveCommitOrdinal, "0");
     assert.equal(witness.epochAt, epochAt);
     assert.equal(witness.catalogFrontierSha256, genesis);
+    assert.equal(witness.databaseMigrationHistorySha256,
+      "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424");
     const details = await lstat(path);
     assert.equal(details.mode & 0o777, 0o644);
     assert.equal(details.nlink, 1);
@@ -2509,32 +2511,26 @@ test("revision capture epoch accepts disjoint full-0020 and full-0021 zero front
       path,
     });
     assert.deepEqual(retry, witness);
-    const rollingMigrationName = "0021_adjustment_rolling_registration.sql";
-    const rollingMigrationNames = [...migrationNames, rollingMigrationName];
-    const rollingMigrationChecksums = [];
-    // hash the intended full-0021 source independently from the retained full-0020 ledger
-    for (const name of rollingMigrationNames) {
-      rollingMigrationChecksums.push(createHash("sha256")
-        .update(await readFile(join(migrationRoot, name))).digest("hex"));
-    }
-    const rollingManifest = {
+    const catalogMigrationName = "0022_forecast_product_catalog.sql";
+    const catalogMigrationNames = [...migrationNames, catalogMigrationName];
+    const catalogMigrationChecksums = [...migrationChecksums, createHash("sha256")
+      .update(await readFile(join(migrationRoot, catalogMigrationName))).digest("hex")];
+    const catalogManifest = {
       ...databaseManifest,
-      migration_checksums: rollingMigrationChecksums,
-      migration_history_sha256: createHash("sha256").update(rollingMigrationNames.map(
-        // serialize the exact additive full-0021 activation ledger
-        (name, index) => `${name}:${rollingMigrationChecksums[index]}`,
+      migration_checksums: catalogMigrationChecksums,
+      migration_history_sha256: createHash("sha256").update(catalogMigrationNames.map(
+        // serialize the exact additive live 0022 ledger
+        (name, index) => `${name}:${catalogMigrationChecksums[index]}`,
       ).join("\n")).digest("hex"),
-      migration_names: rollingMigrationNames,
+      migration_names: catalogMigrationNames,
     };
-    const rollingRoot = join(root, "rolling");
-    await mkdir(rollingRoot);
-    const rollingWitness = await writeAdjustmentRevisionCaptureEpochWitness({
-      databaseEnvelope: { ...envelope, databaseManifest: rollingManifest },
+    const catalogRoot = join(root, "catalog");
+    await mkdir(catalogRoot);
+    await assert.rejects(writeAdjustmentRevisionCaptureEpochWitness({
+      databaseEnvelope: { ...envelope, databaseManifest: catalogManifest },
       deployment,
-      path: join(rollingRoot, "adjustment-capture-epoch.json"),
-    });
-    assert.equal(rollingWitness.databaseMigrationHistorySha256,
-      "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424");
+      path: join(catalogRoot, "adjustment-capture-epoch.json"),
+    }), /database ledger differs/u);
     const advancedRoot = join(root, "advanced");
     await mkdir(advancedRoot);
     const advancedPath = join(advancedRoot, "adjustment-capture-epoch.json");
@@ -2553,6 +2549,179 @@ test("revision capture epoch accepts disjoint full-0020 and full-0021 zero front
   } finally {
     await rm(root, { force: true, recursive: true });
   }
+});
+
+// verify one exact direct index execution manifest
+async function verifyDirectCaptureEpochIdentity(indexChecksum, expectedHistory) {
+  const root = await mkdtemp(join(tmpdir(), "weather-revision-direct-epoch-"));
+  try {
+    const migrationRoot = join(repoRoot, "packages/database/migrations");
+    const migrationNames = (await readdir(migrationRoot))
+      .filter((name) => name.endsWith(".sql")).sort();
+    const canonicalMigrationChecksums = [];
+    // hash the exact canonical artifacts in database order
+    for (const name of migrationNames) {
+      canonicalMigrationChecksums.push(createHash("sha256")
+        .update(await readFile(join(migrationRoot, name))).digest("hex"));
+    }
+    const migrationChecksums = [...canonicalMigrationChecksums];
+    migrationChecksums[migrationNames.indexOf("0020_adjustment_revision_frontier.sql")] =
+      "58d50e88fa767212865e222ec02e55283ceac5b00538aa2898b5ebc2873b28f6";
+    migrationChecksums[migrationNames.indexOf("0023_forecast_product_read_index.sql")] =
+      indexChecksum;
+    const migrationHistorySha256 = createHash("sha256").update(migrationNames.map(
+      // serialize the database manifest without a trailing line feed
+      (name, index) => `${name}:${migrationChecksums[index]}`,
+    ).join("\n")).digest("hex");
+    assert.equal(migrationHistorySha256, expectedHistory);
+    const epochAt = "2026-11-03T08:00:00.000Z";
+    const genesis = createHash("sha256")
+      .update("adjustment-revision-frontier/v1\n0\n").digest("hex");
+    const snapshot = {
+      archiveCommitOrdinal: "0",
+      contractVersion: "adjustment-revision-serving-snapshot/v1",
+      cutoffAt: epochAt,
+      entries: [],
+      entryCount: 0,
+      frontierSha256: genesis,
+      snapshotSha256: "",
+    };
+    snapshot.snapshotSha256 = createHash("sha256").update([
+      snapshot.contractVersion, snapshot.cutoffAt, "0", genesis, "",
+    ].join("\n")).digest("hex");
+    const directManifest = {
+      contract_version: "adjustment-evaluation-export-manifest/v1",
+      migration_checksums: migrationChecksums,
+      migration_history_sha256: migrationHistorySha256,
+      migration_names: migrationNames,
+      query_contract_sha256: "1".repeat(64),
+      query_contract_version: "adjustment-evaluation-export-query/v1",
+      row_schema_sha256: "2".repeat(64),
+      schema_migration: "0017_adjustment_evaluation_export.sql",
+      site_key: "ballydidean",
+      site_timezone: "America/Los_Angeles",
+    };
+    const transaction = {
+      created_at_utc: epochAt,
+      idle_in_transaction_session_timeout: "30s",
+      isolation_level: "repeatable read",
+      lock_timeout: "5s",
+      read_only: "on",
+      statement_timeout: "5min",
+    };
+    const directEnvelope = {
+      databaseManifest: directManifest,
+      payload: snapshot,
+      transaction,
+    };
+    const directDeployment = {
+      controlPlaneSha256: "6ea5cf5b770904bdfa557b29af2dd8899701d8f1b4a15b632f55ab5121032cbb",
+      controlPlaneVersion: "17",
+      sourceCommit: "3".repeat(40),
+      sourceRelease: "2026.11.03-1",
+      sourceServerImageDigest: `sha256:${"4".repeat(64)}`,
+      sourceWebImageDigest: `sha256:${"5".repeat(64)}`,
+    };
+    const directRoot = join(root, "direct");
+    await mkdir(directRoot);
+    const directPath = join(directRoot, "adjustment-capture-epoch.json");
+    const witness = await writeAdjustmentRevisionCaptureEpochWitness({
+      databaseEnvelope: directEnvelope,
+      deployment: directDeployment,
+      path: directPath,
+    });
+    assert.equal(validateAdjustmentRevisionCaptureEpochWitness(witness), witness);
+    assert.equal(witness.controlPlaneVersion, "17");
+    assert.equal(witness.databaseMigrationHistorySha256, migrationHistorySha256);
+    assert.deepEqual(await readAdjustmentRevisionCaptureEpochWitness({
+      expectedGid: process.getegid(),
+      expectedUid: process.geteuid(),
+      path: directPath,
+    }), witness);
+    assert.equal((await readAdjustmentRevisionCaptureEpochSnapshot({
+      expectedGid: process.getegid(),
+      expectedUid: process.geteuid(),
+      path: join(directRoot, "adjustment-capture-epoch-snapshot.json"),
+    })).snapshotSha256, witness.servingSnapshotSha256);
+
+    const rollingMigrationCount = migrationNames.indexOf(
+      "0021_adjustment_rolling_registration.sql",
+    ) + 1;
+    const rollingMigrationNames = migrationNames.slice(0, rollingMigrationCount);
+    const rollingMigrationChecksums = canonicalMigrationChecksums.slice(
+      0,
+      rollingMigrationCount,
+    );
+    const rollingManifest = {
+      ...directManifest,
+      migration_checksums: rollingMigrationChecksums,
+      migration_history_sha256: createHash("sha256").update(rollingMigrationNames.map(
+        // serialize the legacy database manifest without a trailing line feed
+        (name, index) => `${name}:${rollingMigrationChecksums[index]}`,
+      ).join("\n")).digest("hex"),
+      migration_names: rollingMigrationNames,
+    };
+    const rejected = [
+      {
+        databaseEnvelope: directEnvelope,
+        deployment: { ...directDeployment, controlPlaneSha256: "6".repeat(64), controlPlaneVersion: "14" },
+        error: /witness is invalid/u,
+        name: "legacy-control-direct-ledger",
+      },
+      {
+        databaseEnvelope: { ...directEnvelope, databaseManifest: rollingManifest },
+        deployment: directDeployment,
+        error: /witness is invalid/u,
+        name: "direct-control-legacy-ledger",
+      },
+      {
+        databaseEnvelope: directEnvelope,
+        deployment: { ...directDeployment, controlPlaneSha256: "7".repeat(64) },
+        error: /deployment is invalid/u,
+        name: "wrong-direct-control",
+      },
+      {
+        databaseEnvelope: { ...directEnvelope, databaseManifest: {
+          ...directManifest,
+          migration_history_sha256: createHash("sha256").update(migrationNames.map(
+            // preserve the root-ledger trailing line feed as an invalid manifest
+            (name, index) => `${name}:${migrationChecksums[index]}\n`,
+          ).join("")).digest("hex"),
+        } },
+        deployment: directDeployment,
+        error: /database ledger differs/u,
+        name: "trailing-line-feed-ledger",
+      },
+    ];
+    // reject every independently plausible crossed identity
+    for (const candidate of rejected) {
+      const candidateRoot = join(root, candidate.name);
+      await mkdir(candidateRoot);
+      await assert.rejects(writeAdjustmentRevisionCaptureEpochWitness({
+        databaseEnvelope: candidate.databaseEnvelope,
+        deployment: candidate.deployment,
+        path: join(candidateRoot, "adjustment-capture-epoch.json"),
+      }), candidate.error);
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+}
+
+// retain the originally published direct execution identity
+test("revision capture epoch accepts the exact direct 0023 identity", async () => {
+  await verifyDirectCaptureEpochIdentity(
+    "e637542cb2e742fe8f22f60313a11f00adbc1d140a811ee718524849fcece12a",
+    "107ce430f1ac9478d54d94646da7fa4a54cbe7112db13efd7244d8894d0defdf",
+  );
+});
+
+// admit only the explicitly approved index build budget
+test("revision capture epoch accepts the exact direct index 600s identity", async () => {
+  await verifyDirectCaptureEpochIdentity(
+    "7e48acb14710a625cdcbb796bf1bf49ab4e00bf1aeb9bb763ac86410e08663e0",
+    "3aec6846d009a2bb2cee02279dceb9bd2d3572dc1b3a83eed2ce9a1724311345",
+  );
 });
 
 // archive permanent unqualified stages before releasing both bounded online slots
@@ -3350,6 +3519,248 @@ test("deterministic gzip accepts 240 forecast rows", () => {
   assert.ok(Buffer.byteLength(JSON.stringify(first.object)) <= 512 * 1_024);
   assert.ok(first.compressedObject.byteLength <= 16 * 1_024);
   assert.deepEqual(first.compressedObject, second.compressedObject);
+});
+
+// lock the parsed-object seam to the legacy buffer contract
+test("parsed forecast capture preserves every legacy evidence byte", () => {
+  for (const [days, rowCount] of [[1, 24], [5, 120], [10, 240]]) {
+    const rows = Array.from({ length: rowCount },
+      // build each supported public forecast window
+      (_value, index) => forecastRow(index));
+    const body = forecastBody(rows, { days });
+    const forecast = JSON.parse(body.toString("utf8"));
+    const window = `days=${String(days)}`;
+    const legacy = createAdjustmentEvidenceCapture(body, window);
+    const parsed = createAdjustmentEvidenceCaptureFromForecast(forecast, window);
+    assert.deepEqual(parsed, legacy);
+    assert.deepEqual(parsed.compressedObject, legacy.compressedObject);
+    assert.equal(parsed.objectSha256, legacy.objectSha256);
+    assert.equal(parsed.edgeReceiptIdentitySha256, legacy.edgeReceiptIdentitySha256);
+  }
+
+  const rows = Array.from({ length: 241 },
+    // retain the one fall-back row admitted only by v2
+    (_value, index) => forecastRow(index));
+  const body = forecastBody(rows, { days: 10 });
+  assert.deepEqual(
+    createAdjustmentEvidenceCaptureV2FromForecast(
+      JSON.parse(body.toString("utf8")),
+      "days=10",
+    ),
+    createAdjustmentEvidenceCaptureV2(body, "days=10"),
+  );
+
+  const changedForecasts = [
+    { adjustmentSettings: { rain: false, temperature: true, version: 1, wind: false } },
+    { adjustmentRuntime: {
+      activeBundle: "e".repeat(64),
+      authorizationSha256: "f".repeat(64),
+      candidateArtifactSha256: "0".repeat(64),
+    } },
+    { data: [forecastRow(0, { metrics: { ...forecastRow().metrics, windSpeedMps: 12 } })] },
+  ];
+  const baseline = createAdjustmentEvidenceCapture(forecastBody(), "days=1");
+
+  // retain parity across each request-varying projection class
+  for (const overrides of changedForecasts) {
+    const changedBody = forecastBody(undefined, overrides);
+    const legacy = createAdjustmentEvidenceCapture(changedBody, "days=1");
+    const parsed = createAdjustmentEvidenceCaptureFromForecast(
+      JSON.parse(changedBody.toString("utf8")),
+      "days=1",
+    );
+    assert.deepEqual(parsed, legacy);
+    assert.notEqual(parsed.objectSha256, baseline.objectSha256);
+  }
+
+  // refuse the same malformed parsed and serialized envelopes
+  for (const invalid of [null, {}, { data: [] }]) {
+    assert.throws(
+      () => createAdjustmentEvidenceCaptureFromForecast(invalid, "days=1"),
+      /forecast evidence body is invalid/u,
+    );
+    assert.throws(
+      () => createAdjustmentEvidenceCapture(Buffer.from(JSON.stringify(invalid)), "days=1"),
+      /forecast evidence body is invalid/u,
+    );
+  }
+});
+
+// retain only deterministic compressed bytes in the bounded store cache
+test("store compression cache isolates buffers refuses collisions and evicts least-recent", async () => {
+  const root = await mkdtemp(join(tmpdir(), "weather-adjustment-compression-cache-"));
+  let compressionCalls = 0;
+  const store = await new AdjustmentEvidenceStore({
+    compressObject: (bytes) => {
+      compressionCalls += 1;
+      return gzipSync(bytes, { level: 9, mtime: 0 });
+    },
+    root,
+    statfs: async () => healthyStatfs(),
+  }).initialize();
+  const forecast = JSON.parse(forecastBody().toString("utf8"));
+
+  try {
+    const first = store.prepareForecast(forecast, "days=1");
+    const expected = Buffer.from(first.compressedObject);
+    const second = store.prepareForecast(structuredClone(forecast), "days=1");
+    assert.equal(compressionCalls, 1);
+    assert.deepEqual(second, first);
+    first.compressedObject.fill(0);
+    assert.deepEqual(
+      store.prepareForecast(structuredClone(forecast), "days=1").compressedObject,
+      expected,
+    );
+    const availabilityForecast = structuredClone(forecast);
+    availabilityForecast.data[0].receivedAt = "2026-10-07T00:16:00.000Z";
+    const availabilityCapture = store.prepareForecast(availabilityForecast, "days=1");
+    assert.equal(compressionCalls, 1);
+    assert.equal(availabilityCapture.objectSha256, second.objectSha256);
+    assert.equal(availabilityCapture.edgeReceiptIdentitySha256,
+      second.edgeReceiptIdentitySha256);
+    assert.notDeepEqual(availabilityCapture.availability, second.availability);
+    const bufferChannel = store.prepareV2(forecastBody(), "days=1", "public_get");
+    const parsedChannel = store.prepareForecastV2(
+      structuredClone(forecast),
+      "days=1",
+      "public_get",
+    );
+    assert.deepEqual(parsedChannel, bufferChannel);
+    assert.equal(compressionCalls, 1);
+    assert.equal(store.prepareForecastV2(forecast, "days=1", "invalid"), null);
+    assert.equal(compressionCalls, 1);
+
+    // promote the first entry before filling and evicting the second
+    const variants = Array.from({ length: 9 }, (_value, index) => {
+      const value = structuredClone(forecast);
+      value.data[0].metrics.windSpeedMps = index + 20;
+      return value;
+    });
+    store.prepareForecast(variants[0], "days=1");
+    store.prepareForecast(structuredClone(forecast), "days=1");
+    for (const value of variants.slice(1, 7)) {
+      store.prepareForecast(value, "days=1");
+    }
+    store.prepareForecast(structuredClone(forecast), "days=1");
+    store.prepareForecast(variants[7], "days=1");
+    const beforeEviction = compressionCalls;
+    store.prepareForecast(variants[8], "days=1");
+    assert.equal(compressionCalls, beforeEviction + 1);
+    store.prepareForecast(variants[0], "days=1");
+    assert.equal(compressionCalls, beforeEviction + 2);
+    store.prepareForecast(structuredClone(forecast), "days=1");
+    assert.equal(compressionCalls, beforeEviction + 2);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+
+  const collisionRoot = await mkdtemp(join(tmpdir(), "weather-adjustment-compression-collision-"));
+  let collisionCompressionCalls = 0;
+  const collisionStore = await new AdjustmentEvidenceStore({
+    compressObject: (bytes) => {
+      collisionCompressionCalls += 1;
+      return gzipSync(bytes, { level: 9, mtime: 0 });
+    },
+    objectSha256: () => "a".repeat(64),
+    root: collisionRoot,
+    statfs: async () => healthyStatfs(),
+  }).initialize();
+  const changed = structuredClone(forecast);
+  changed.data[0].metrics.windSpeedMps = 99;
+
+  try {
+    assert.notEqual(collisionStore.prepareForecast(forecast, "days=1"), null);
+    assert.equal(collisionStore.prepareForecast(changed, "days=1"), null);
+    assert.notEqual(collisionStore.prepareForecast(forecast, "days=1"), null);
+    assert.equal(collisionCompressionCalls, 1);
+  } finally {
+    await rm(collisionRoot, { force: true, recursive: true });
+  }
+
+  const oversizeRoot = await mkdtemp(join(tmpdir(), "weather-adjustment-compression-oversize-"));
+  let oversizeCompressionCalls = 0;
+  let refuseOversize = false;
+  const oversizeStore = await new AdjustmentEvidenceStore({
+    compressObject: (bytes) => {
+      oversizeCompressionCalls += 1;
+
+      // inject one compressed-size refusal
+      if (refuseOversize) {
+        return Buffer.alloc(16 * 1_024 + 1);
+      }
+      return gzipSync(bytes, { level: 9, mtime: 0 });
+    },
+    root: oversizeRoot,
+    statfs: async () => healthyStatfs(),
+  }).initialize();
+  const oversizeVariants = Array.from({ length: 9 }, (_value, index) => {
+    const value = structuredClone(forecast);
+    value.data[0].metrics.windSpeedMps = index + 40;
+    return value;
+  });
+
+  try {
+    // fill the cache to its exact bound
+    for (const value of oversizeVariants.slice(0, 8)) {
+      assert.notEqual(oversizeStore.prepareForecast(value, "days=1"), null);
+    }
+    assert.equal(oversizeCompressionCalls, 8);
+    assert.notEqual(oversizeStore.prepareForecast(oversizeVariants[0], "days=1"), null);
+    refuseOversize = true;
+    assert.equal(oversizeStore.prepareForecast(oversizeVariants[8], "days=1"), null);
+    assert.equal(oversizeCompressionCalls, 9);
+    refuseOversize = false;
+    assert.notEqual(oversizeStore.prepareForecast(oversizeVariants[1], "days=1"), null);
+    assert.equal(oversizeCompressionCalls, 9);
+    assert.notEqual(oversizeStore.prepareForecast(oversizeVariants[8], "days=1"), null);
+    assert.equal(oversizeCompressionCalls, 10);
+    assert.notEqual(oversizeStore.prepareForecast(oversizeVariants[8], "days=1"), null);
+    assert.equal(oversizeCompressionCalls, 10);
+    assert.equal(oversizeStore.status().objectTooLarge, 1);
+  } finally {
+    await rm(oversizeRoot, { force: true, recursive: true });
+  }
+});
+
+// prove frozen v14 can read and duplicate current content-only cache output
+test("frozen v14 reader accepts current evidence and rollback duplicate", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "weather-adjustment-v14-cross-read-"));
+  const root = join(parent, "evidence");
+  const frozenPath = join(parent, "adjustment-evidence-store-v14.mjs");
+  const frozenSource = spawnSync("git", [
+    "show",
+    "2026.10.14-1:deploy/scripts/adjustment-evidence-store.mjs",
+  ], { cwd: repoRoot, encoding: "buffer" });
+  assert.equal(frozenSource.status, 0, frozenSource.stderr?.toString("utf8"));
+  await writeFile(frozenPath, frozenSource.stdout, { mode: 0o600 });
+  const frozen = await import(`${pathToFileURL(frozenPath).href}?test=${Date.now()}`);
+  const current = await new AdjustmentEvidenceStore({
+    root,
+    statfs: async () => healthyStatfs(),
+  }).initialize();
+  const body = forecastBody();
+  const forecast = JSON.parse(body.toString("utf8"));
+
+  try {
+    const prepared = current.prepareForecastV2(forecast, "days=1", "public_get");
+    assert.deepEqual(
+      await current.commit(prepared, "2026-10-08T00:40:00.000Z"),
+      { status: "created" },
+    );
+    assert.equal((await frozen.freezeAdjustmentEvidenceSnapshot({ root })).entries.length, 1);
+    const rolledBack = await new frozen.AdjustmentEvidenceStore({
+      root,
+      statfs: async () => healthyStatfs(),
+    }).initialize();
+    const oldPrepared = rolledBack.prepareV2(body, "days=1", "public_get");
+    assert.deepEqual(
+      await rolledBack.commit(oldPrepared, "2026-10-08T00:41:00.000Z"),
+      { status: "duplicate" },
+    );
+    assert.equal((await freezeAdjustmentEvidenceSnapshot({ root })).entries.length, 1);
+  } finally {
+    await rm(parent, { force: true, recursive: true });
+  }
 });
 
 // attach writes only to finish and count an aborted close

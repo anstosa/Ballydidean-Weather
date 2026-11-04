@@ -308,7 +308,7 @@ function futureOnlyEpochWitness() {
     controlPlaneSha256: HASH_A,
     controlPlaneVersion: "14",
     databaseMigrationHistorySha256:
-      "c683c4f937c7f02b00f6ab49f75268eead81d2a221a8a9a23e38f9e4802a11b0",
+      "6de5c8c7efaa448aeb12bf1a9debe6fe7d4d4d1003ee0e21ab619ffa624c3424",
     epochAt: "2026-10-10T08:00:00.000Z",
     servingSnapshotSha256: snapshot.snapshotSha256,
     sourceCommit: "1".repeat(40),

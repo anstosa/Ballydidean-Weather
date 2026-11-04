@@ -11,6 +11,10 @@ const MIGRATION_LOCK_KEY = 8_032_416_683_782_917;
 export interface MigrationResult {
   readonly applied: readonly string[];
   readonly current: readonly string[];
+  readonly executionVariant?: string;
+  readonly historySha256?: string;
+  readonly revised20Sha256?: string;
+  readonly revised23Sha256?: string;
   readonly serverVersionNum: number;
 }
 
@@ -47,13 +51,45 @@ const RELEASE_PATTERN = /^\d{4}\.\d{2}\.\d{2}-[1-9]\d?$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MAINTENANCE_V14_HISTORY_SHA256 =
   "adb2aade2b019eb0e7a4df5b5bda38017ecbe143613df79cd873f67659068c93";
+const NORMAL_FORECAST_HISTORY_SHA256 =
+  "1db25d8a515e85b4c71c3a3dbe4a1f61ebdfdf14e095a24b307daa039dfb5201";
+const DIRECT_18_TO_23_HISTORY_SHA256 =
+  "3fa9ed85218278aa3b20537d9fbe9b88ef1adee7d7b2f80fde832c45d9cb4554";
+const DIRECT_18_TO_23_EXECUTION_VARIANT =
+  "atomic-direct-18-to-23-revised-0020";
+const DIRECT_18_TO_23_INDEX_600_HISTORY_SHA256 =
+  "1cfd6251eeb66d443e36d661299c9e49e73465fab55e5dab2cfa4ee86dd36ad2";
+const DIRECT_18_TO_23_INDEX_600_EXECUTION_VARIANT =
+  "atomic-direct-18-to-23-revised-0020-index-600s";
+const REVISION_FRONTIER_MIGRATION_NAME =
+  "0020_adjustment_revision_frontier.sql";
+const ORIGINAL_REVISION_FRONTIER_SHA256 =
+  "56027b4f2cb2c3c83e746f14dac753b75d573753934898fa7a52f78faa56499c";
+const REVISED_REVISION_FRONTIER_SHA256 =
+  "58d50e88fa767212865e222ec02e55283ceac5b00538aa2898b5ebc2873b28f6";
+const REVISION_RECEIPT_CHECK =
+  "CHECK (weather_adjustment_revision_receipt_valid_v1(adjustment_revision_receipt));";
+const DEFERRED_REVISION_RECEIPT_CHECK =
+  "CHECK (weather_adjustment_revision_receipt_valid_v1(adjustment_revision_receipt)) NOT VALID;";
+const FORECAST_INDEX_MIGRATION_NAME =
+  "0023_forecast_product_read_index.sql";
+const ORIGINAL_FORECAST_INDEX_SHA256 =
+  "e637542cb2e742fe8f22f60313a11f00adbc1d140a811ee718524849fcece12a";
+const REVISED_FORECAST_INDEX_SHA256 =
+  "7e48acb14710a625cdcbb796bf1bf49ab4e00bf1aeb9bb763ac86410e08663e0";
+const FORECAST_INDEX_TIMEOUT = "SET LOCAL statement_timeout = '120s';";
+const EXTENDED_FORECAST_INDEX_TIMEOUT =
+  "SET LOCAL statement_timeout = '600s';";
 
 // apply checked migrations serially
 export async function runMigrations(
   pool: Pool,
   migrationDirectory: string,
   options: Readonly<{
+    atomicDirect18To23?: boolean;
+    atomicDirect18To23Index600s?: boolean;
     atomicMaintenanceV14?: boolean;
+    atomicNormal21To23?: boolean;
     lockTimeoutMs?: number;
     statementTimeoutMs?: number;
   }> = {},
@@ -72,11 +108,22 @@ export async function runMigrations(
     lockHeld = true;
     await bootstrapMigrationTable(client);
     const migrations = await loadMigrationFiles(migrationDirectory);
-    const appliedCount = (
-      await validateMigrationHistory(client, migrations)
-    ).length;
+    const appliedMigrations = await validateMigrationHistory(client, migrations);
+    const appliedCount = appliedMigrations.length;
     const applied: string[] = [];
     const current: string[] = [];
+
+    const atomicModeCount = [
+      options.atomicDirect18To23,
+      options.atomicDirect18To23Index600s,
+      options.atomicMaintenanceV14,
+      options.atomicNormal21To23,
+    ].filter((enabled) => enabled === true).length;
+
+    // keep every closed atomic lane mutually exclusive
+    if (atomicModeCount > 1) {
+      throw new Error("atomic migration modes are mutually exclusive");
+    }
 
     // close the inactive bridge to its exact reviewed source and target
     if (options.atomicMaintenanceV14 === true) {
@@ -100,6 +147,102 @@ export async function runMigrations(
           }
         });
       }
+    // close the normal forecast upgrade to its exact source and target
+    } else if (options.atomicNormal21To23 === true) {
+      // reject schema 22, partial tails and unreviewed migration bytes
+      if (
+        migrations.length !== 23 ||
+        (appliedCount !== 21 && appliedCount !== 23) ||
+        migrationHistorySha256(migrations) !== NORMAL_FORECAST_HISTORY_SHA256
+      ) {
+        throw new Error("atomic normal forecast upgrade requires the exact 21-to-23 migration bridge");
+      }
+
+      current.push(...migrations.slice(0, appliedCount).map((migration) => migration.name));
+      // retain schema 21 if either additive migration fails
+      if (appliedCount === 21) {
+        await withTransaction(client, async () => {
+          // apply the catalog and read index under one database transaction
+          for (const migration of migrations.slice(appliedCount)) {
+            await applyMigration(client, migration);
+            applied.push(migration.name);
+          }
+        });
+      }
+    // close the index-extended direct upgrade to its exact source and target
+    } else if (options.atomicDirect18To23Index600s === true) {
+      const revisedMigrations = buildDirect18To23Index600Migrations(migrations);
+      const exactSource = appliedCount === 18;
+      const exactTarget =
+        appliedCount === 23 &&
+        migrationHistorySha256(appliedMigrations) ===
+          DIRECT_18_TO_23_INDEX_600_HISTORY_SHA256;
+
+      // reject partial tails and any unreviewed migration bytes
+      if (
+        migrations.length !== 23 ||
+        migrationHistorySha256(migrations) !== NORMAL_FORECAST_HISTORY_SHA256 ||
+        migrationHistorySha256(revisedMigrations) !==
+          DIRECT_18_TO_23_INDEX_600_HISTORY_SHA256 ||
+        (!exactSource && !exactTarget)
+      ) {
+        throw new Error(
+          "atomic direct index-600 migration requires the exact 18-to-23 revised migration bridge",
+        );
+      }
+
+      current.push(
+        ...revisedMigrations
+          .slice(0, appliedCount)
+          .map((migration) => migration.name),
+      );
+      // retain schema 18 if any migration in the repaired tail fails
+      if (exactSource) {
+        await withTransaction(client, async () => {
+          // apply all five files under one database transaction
+          for (const migration of revisedMigrations.slice(appliedCount)) {
+            await applyMigration(client, migration);
+            applied.push(migration.name);
+          }
+        });
+      }
+    // close the repaired direct upgrade to its exact source and target
+    } else if (options.atomicDirect18To23 === true) {
+      const revisedMigrations = buildDirect18To23Migrations(migrations);
+      const exactSource = appliedCount === 18;
+      const exactTarget =
+        appliedCount === 23 &&
+        migrationHistorySha256(appliedMigrations) ===
+          DIRECT_18_TO_23_HISTORY_SHA256;
+
+      // reject partial tails and any unreviewed migration bytes
+      if (
+        migrations.length !== 23 ||
+        migrationHistorySha256(migrations) !== NORMAL_FORECAST_HISTORY_SHA256 ||
+        migrationHistorySha256(revisedMigrations) !==
+          DIRECT_18_TO_23_HISTORY_SHA256 ||
+        (!exactSource && !exactTarget)
+      ) {
+        throw new Error(
+          "atomic direct migration requires the exact 18-to-23 revised migration bridge",
+        );
+      }
+
+      current.push(
+        ...revisedMigrations
+          .slice(0, appliedCount)
+          .map((migration) => migration.name),
+      );
+      // retain schema 18 if any migration in the repaired tail fails
+      if (exactSource) {
+        await withTransaction(client, async () => {
+          // apply all five files under one database transaction
+          for (const migration of revisedMigrations.slice(appliedCount)) {
+            await applyMigration(client, migration);
+            applied.push(migration.name);
+          }
+        });
+      }
     } else {
       // preserve the ordinary per-file migration transaction contract
       for (const [index, migration] of migrations.entries()) {
@@ -114,6 +257,31 @@ export async function runMigrations(
         });
         applied.push(migration.name);
       }
+    }
+
+    // expose the exact index-extended alternate ledger
+    if (options.atomicDirect18To23Index600s === true) {
+      return {
+        applied,
+        current,
+        executionVariant: DIRECT_18_TO_23_INDEX_600_EXECUTION_VARIANT,
+        historySha256: DIRECT_18_TO_23_INDEX_600_HISTORY_SHA256,
+        revised20Sha256: REVISED_REVISION_FRONTIER_SHA256,
+        revised23Sha256: REVISED_FORECAST_INDEX_SHA256,
+        serverVersionNum,
+      };
+    }
+
+    // expose the exact alternate ledger only for the direct lane
+    if (options.atomicDirect18To23 === true) {
+      return {
+        applied,
+        current,
+        executionVariant: DIRECT_18_TO_23_EXECUTION_VARIANT,
+        historySha256: DIRECT_18_TO_23_HISTORY_SHA256,
+        revised20Sha256: REVISED_REVISION_FRONTIER_SHA256,
+        serverVersionNum,
+      };
     }
 
     return { applied, current, serverVersionNum };
@@ -132,6 +300,13 @@ export async function runMigrations(
 // record exact file bytes within the caller's transaction
 async function applyMigration(client: PoolClient, migration: MigrationFile): Promise<void> {
   await client.query(migration.sql);
+  // restore the reviewed transaction timeout after the extended index build
+  if (
+    migration.name === FORECAST_INDEX_MIGRATION_NAME &&
+    migration.checksum === REVISED_FORECAST_INDEX_SHA256
+  ) {
+    await client.query(FORECAST_INDEX_TIMEOUT);
+  }
   await client.query(
     "INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)",
     [migration.name, migration.checksum],
@@ -177,6 +352,26 @@ export async function verifyMigrationReadiness(
   // require every shipped artifact
   if (appliedCount !== migrations.length) {
     throw new Error("database has pending migration artifacts");
+  }
+
+  const appliedHistorySha256 = migrationHistorySha256(applied);
+  const hasRevised20 = applied.some((migration) =>
+    migration.name === REVISION_FRONTIER_MIGRATION_NAME &&
+    migration.checksum === REVISED_REVISION_FRONTIER_SHA256);
+  const hasRevised23 = applied.some((migration) =>
+    migration.name === FORECAST_INDEX_MIGRATION_NAME &&
+    migration.checksum === REVISED_FORECAST_INDEX_SHA256);
+
+  // bind alternate checksums to one complete reviewed ledger
+  if (
+    applied.length === migrations.length &&
+    ((hasRevised23 &&
+      appliedHistorySha256 !== DIRECT_18_TO_23_INDEX_600_HISTORY_SHA256) ||
+      (hasRevised20 &&
+        !hasRevised23 &&
+        appliedHistorySha256 !== DIRECT_18_TO_23_HISTORY_SHA256))
+  ) {
+    throw new Error("migration alternate history is not an exact reviewed ledger");
   }
 
   const version = migrations.at(-1)?.name;
@@ -293,6 +488,120 @@ async function loadMigrationFiles(
   return migrations;
 }
 
+// derive the exact reviewed alternate migration bytes
+function buildDirect18To23Migrations(
+  migrations: readonly MigrationFile[],
+): readonly MigrationFile[] {
+  const revisionMigration = migrations.find(
+    (migration) => migration.name === REVISION_FRONTIER_MIGRATION_NAME,
+  );
+
+  // require the unchanged canonical artifact
+  if (
+    revisionMigration === undefined ||
+    revisionMigration.checksum !== ORIGINAL_REVISION_FRONTIER_SHA256
+  ) {
+    throw new Error(
+      "atomic direct migration requires the exact 18-to-23 revised migration bridge",
+    );
+  }
+
+  const checkCount = revisionMigration.sql.split(REVISION_RECEIPT_CHECK).length - 1;
+
+  // replace only the four reviewed historical scans
+  if (checkCount !== 4) {
+    throw new Error(
+      "atomic direct migration requires four exact revision receipt checks",
+    );
+  }
+
+  const revisedSql = revisionMigration.sql.replaceAll(
+    REVISION_RECEIPT_CHECK,
+    DEFERRED_REVISION_RECEIPT_CHECK,
+  );
+  const revisedChecksum = createHash("sha256").update(revisedSql).digest("hex");
+
+  // bind the transformation to its reviewed bytes
+  if (revisedChecksum !== REVISED_REVISION_FRONTIER_SHA256) {
+    throw new Error("atomic direct revised migration checksum mismatch");
+  }
+
+  // preserve every other canonical migration byte
+  return migrations.map((migration) =>
+    migration.name === REVISION_FRONTIER_MIGRATION_NAME
+      ? { checksum: revisedChecksum, name: migration.name, sql: revisedSql }
+      : migration,
+  );
+}
+
+// derive the exact reviewed index-timeout migration bytes
+function buildDirect18To23Index600Migrations(
+  migrations: readonly MigrationFile[],
+): readonly MigrationFile[] {
+  const revisedMigrations = buildDirect18To23Migrations(migrations);
+  const forecastIndexMigration = revisedMigrations.find(
+    (migration) => migration.name === FORECAST_INDEX_MIGRATION_NAME,
+  );
+
+  // require the unchanged canonical index artifact
+  if (
+    forecastIndexMigration === undefined ||
+    forecastIndexMigration.checksum !== ORIGINAL_FORECAST_INDEX_SHA256
+  ) {
+    throw new Error(
+      "atomic direct index-600 migration requires the exact forecast index artifact",
+    );
+  }
+
+  const timeoutCount =
+    forecastIndexMigration.sql.split(FORECAST_INDEX_TIMEOUT).length - 1;
+
+  // replace only the reviewed index statement timeout
+  if (timeoutCount !== 1) {
+    throw new Error(
+      "atomic direct index-600 migration requires one exact index timeout",
+    );
+  }
+
+  const revisedSql = forecastIndexMigration.sql.replace(
+    FORECAST_INDEX_TIMEOUT,
+    EXTENDED_FORECAST_INDEX_TIMEOUT,
+  );
+  const revisedChecksum = createHash("sha256").update(revisedSql).digest("hex");
+
+  // bind the transformation to its reviewed bytes
+  if (revisedChecksum !== REVISED_FORECAST_INDEX_SHA256) {
+    throw new Error("atomic direct revised forecast index checksum mismatch");
+  }
+
+  // preserve every other revised migration byte
+  return revisedMigrations.map((migration) =>
+    migration.name === FORECAST_INDEX_MIGRATION_NAME
+      ? { checksum: revisedChecksum, name: migration.name, sql: revisedSql }
+      : migration,
+  );
+}
+
+// recognize only the reviewed artifact-to-ledger checksum pair
+function isRevisedRevisionFrontierPair(
+  artifact: MigrationFile,
+  applied: AppliedMigration,
+): boolean {
+  return artifact.name === REVISION_FRONTIER_MIGRATION_NAME &&
+    artifact.checksum === ORIGINAL_REVISION_FRONTIER_SHA256 &&
+    applied.checksum === REVISED_REVISION_FRONTIER_SHA256;
+}
+
+// recognize only the reviewed index artifact-to-ledger checksum pair
+function isRevisedForecastIndexPair(
+  artifact: MigrationFile,
+  applied: AppliedMigration,
+): boolean {
+  return artifact.name === FORECAST_INDEX_MIGRATION_NAME &&
+    artifact.checksum === ORIGINAL_FORECAST_INDEX_SHA256 &&
+    applied.checksum === REVISED_FORECAST_INDEX_SHA256;
+}
+
 // validate the complete applied prefix
 async function validateMigrationHistory(
   client: Pick<Pool | PoolClient, "query">,
@@ -317,8 +626,12 @@ async function validateMigrationHistory(
       throw new Error("migration history diverges from ordered artifacts");
     }
 
-    // fail closed on changed history
-    if (applied.checksum !== artifact.checksum) {
+    // admit only the exact reviewed alternate checksum
+    if (
+      applied.checksum !== artifact.checksum &&
+      !isRevisedRevisionFrontierPair(artifact, applied) &&
+      !isRevisedForecastIndexPair(artifact, applied)
+    ) {
       throw new Error(`migration checksum mismatch: ${artifact.name}`);
     }
   }

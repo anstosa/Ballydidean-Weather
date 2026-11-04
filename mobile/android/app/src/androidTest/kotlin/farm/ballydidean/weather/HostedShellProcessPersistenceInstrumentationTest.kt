@@ -58,10 +58,10 @@ class HostedShellProcessPersistenceInstrumentationTest {
             awaitHeading(webView, "Fixture sign in")
             setLabeledValue(webView, "Fixture username", requiredArgument("fixtureUsername"))
             setLabeledValue(webView, "Fixture password", requiredArgument("fixturePassword"))
-            click(webView, "Sign in to fixture")
+            clickForNavigation(webView, "Sign in to fixture")
             awaitHeading(webView, "Fixture administration")
             selectLabeledOption(webView, "Fixture server unit", "Celsius")
-            click(webView, "Save fixture settings")
+            clickForNavigation(webView, "Save fixture settings")
             awaitBodyMarker(webView, "Server unit: Celsius")
             CookieManager.getInstance().flush()
             assertFalse(CookieManager.getInstance().getCookie(origin).isNullOrBlank())
@@ -83,7 +83,7 @@ class HostedShellProcessPersistenceInstrumentationTest {
             awaitBodyMarker(webView, "Authenticated fixture session")
             awaitBodyMarker(webView, "Server unit: Celsius")
             assertFalse(CookieManager.getInstance().getCookie(origin).isNullOrBlank())
-            click(webView, "Sign out of fixture")
+            clickForNavigation(webView, "Sign out of fixture")
             awaitBodyMarker(webView, "Fixture session signed out")
             CookieManager.getInstance().flush()
             assertTrue(CookieManager.getInstance().getCookie(origin).isNullOrBlank())
@@ -172,6 +172,25 @@ class HostedShellProcessPersistenceInstrumentationTest {
         assertEquals("clicked", result)
     }
 
+    // dispatch one navigation click without awaiting its javascript result
+    private fun clickForNavigation(webView: WebView, label: String) {
+        val quoted = JSONObject.quote(label)
+        await("fixture control $label") {
+            evaluate(
+                webView,
+                "[...document.querySelectorAll('a, button')].some((node) => node.textContent.trim() === $quoted)",
+            ) == true
+        }
+        val script = """
+            (() => {
+              const target = [...document.querySelectorAll('a, button')]
+                .find((node) => node.textContent.trim() === $quoted);
+              target?.click();
+            })()
+        """.trimIndent()
+        instrumentation.runOnMainSync { webView.evaluateJavascript(script, null) }
+    }
+
     // fill one frozen labeled input
     private fun setLabeledValue(webView: WebView, label: String, value: String) {
         val result = evaluate(
@@ -236,7 +255,7 @@ class HostedShellProcessPersistenceInstrumentationTest {
                 latch.countDown()
             }
         }
-        // retry across navigation callback cancellation
+        // let polling callers retry when no callback arrives within this bound
         if (!latch.await(500, TimeUnit.MILLISECONDS)) {
             return null
         }

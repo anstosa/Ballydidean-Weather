@@ -20,6 +20,7 @@ import {
   WIDGET_FORECAST_V3_SCHEMA_VERSION,
 } from "../../apps/web/dist/widget-forecast-v3.js";
 import { createForecastFixture } from "../../scripts/widget-fixtures.mjs";
+import { freezeAdjustmentEvidenceSnapshot } from "../scripts/adjustment-evidence-store.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const widgetPath = "/api/v1/sites/ballydidean/widget-forecast";
@@ -148,6 +149,7 @@ test("widget forecast edge preserves filtering and rejects untrusted inputs", {
   const stateRoot = join(fixtureRoot, "state");
   const settingsPath = join(stateRoot, "forecast-adjustment-settings.json");
   const markerPath = `${settingsPath}.initialized`;
+  const evidenceRoot = join(fixtureRoot, "adjustment-evidence");
   const layoutPath = join(stateRoot, "property-sensor-layout.json");
   const apiPort = await reservePort();
   const edgePort = await reservePort();
@@ -247,6 +249,7 @@ test("widget forecast edge preserves filtering and rejects untrusted inputs", {
       PORT: String(edgePort),
       WEATHER_ADMIN_AUTH_PATH: join(stateRoot, "admin-auth.json"),
       WEATHER_ADMIN_BOOTSTRAP_TOKEN_PATH: join(stateRoot, "admin-bootstrap-token"),
+      WEATHER_ADJUSTMENT_EVIDENCE_ROOT: evidenceRoot,
       WEATHER_API_ORIGIN: `http://127.0.0.1:${apiPort}`,
       WEATHER_PROPERTY_SENSOR_LAYOUT_PATH: layoutPath,
       WEATHER_RELEASE: "2026.09.20-1",
@@ -305,6 +308,26 @@ test("widget forecast edge preserves filtering and rejects untrusted inputs", {
       );
       assert.equal(widget.hours[0].rainMmPerHour.mode, settings.rain ? "adjusted" : "raw");
     }
+
+    const forecastGetResponse = await fetch(`${edgeOrigin}${forecastPath}`);
+    const forecastGetBody = Buffer.from(await forecastGetResponse.arrayBuffer());
+    const forecastHeadResponse = await fetch(`${edgeOrigin}${forecastPath}`, {
+      method: "HEAD",
+    });
+    const forecastHeadBody = Buffer.from(await forecastHeadResponse.arrayBuffer());
+    assert.equal(forecastGetResponse.status, 200);
+    assert.equal(forecastHeadResponse.status, 200);
+    assert.equal(forecastGetBody.at(-1), 10);
+    assert.equal(
+      forecastHeadResponse.headers.get("content-length"),
+      forecastGetResponse.headers.get("content-length"),
+    );
+    assert.equal(forecastHeadBody.byteLength, 0);
+    await new Promise(
+      // allow the response-finish evidence queue to settle
+      (resolveWait) => setTimeout(resolveWait, 100),
+    );
+    assert.equal((await freezeAdjustmentEvidenceSnapshot({ root: evidenceRoot })).entries.length, 8);
 
     await writeSettings(enabledSettings);
     const requestStart = requests.length;

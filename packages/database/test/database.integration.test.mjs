@@ -26,6 +26,7 @@ import {
   getWeatherForecast,
   hasSuccessfulBackfillChunk,
   listActiveSites,
+  listForecastObservationInputs,
   loadEcowittConfiguration,
   loadSiteConfiguration,
   loadTempestConfiguration,
@@ -72,7 +73,7 @@ test(
     let successfulBackfillIdentity;
 
     try {
-      // verify the complete 0021 migration and checksum ledger
+      // verify the complete 0023 migration and checksum ledger
       await context.test("I-DB-01 empty database migrates with checksums", async () => {
         const result = await runMigrations(pool, migrationDirectory);
         const ledger = await pool.query(
@@ -101,13 +102,35 @@ test(
           "0019_adjustment_maintenance_recurring.sql",
           "0020_adjustment_revision_frontier.sql",
           "0021_adjustment_rolling_registration.sql",
+          "0022_forecast_product_catalog.sql",
+          "0023_forecast_product_read_index.sql",
         ]);
         assert.equal(result.serverVersionNum >= 150_000, true);
-        assert.equal(ledger.rowCount, 21);
+        assert.equal(ledger.rowCount, 23);
         // require every migration checksum
         for (const row of ledger.rows) {
           assert.match(row.checksum, /^[a-f0-9]{64}$/u);
         }
+        // bind the product-first index definition and owner
+        const forecastIndex = await pool.query(`
+          SELECT
+            pg_get_indexdef(relation.oid) AS definition,
+            pg_get_userbyid(relation.relowner) AS owner,
+            metadata.indisready AS ready,
+            metadata.indisvalid AS valid
+          FROM pg_class relation
+          JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+          JOIN pg_index metadata ON metadata.indexrelid = relation.oid
+          WHERE namespace.nspname = 'public'
+            AND relation.relname = 'weather_records_forecast_product_valid_idx'
+        `);
+
+        assert.deepEqual(forecastIndex.rows, [{
+          definition: "CREATE INDEX weather_records_forecast_product_valid_idx ON public.weather_records USING btree (source_id, product_run_at DESC, valid_at, id) WHERE ((source_kind)::text = 'forecast'::text)",
+          owner: "weather_owner",
+          ready: true,
+          valid: true,
+        }]);
       });
 
       // verify rerun and changed-checksum failure
@@ -146,6 +169,8 @@ test(
             "0019_adjustment_maintenance_recurring.sql",
             "0020_adjustment_revision_frontier.sql",
             "0021_adjustment_rolling_registration.sql",
+            "0022_forecast_product_catalog.sql",
+            "0023_forecast_product_read_index.sql",
           ]);
           await assert.rejects(
             () => runMigrations(pool, directory),
@@ -165,7 +190,7 @@ test(
         }
       });
 
-      // verify concurrent serialization through migration 0021
+      // verify concurrent serialization through migration 0023
       await context.test("I-DB-03 concurrent migrators serialize", async () => {
         const database = `weather_concurrent_${process.pid}`;
         await adminPool.query(`CREATE DATABASE ${database} OWNER weather_owner`);
@@ -177,8 +202,8 @@ test(
             runMigrations(left, migrationDirectory),
             runMigrations(right, migrationDirectory),
           ]);
-          assert.equal(first.applied.length + second.applied.length, 21);
-          assert.equal(first.current.length + second.current.length, 21);
+          assert.equal(first.applied.length + second.applied.length, 23);
+          assert.equal(first.current.length + second.current.length, 23);
         } finally {
           await Promise.all([left.end(), right.end()]);
           await adminPool.query(`DROP DATABASE ${database}`);
@@ -411,7 +436,7 @@ test(
           );
           assert.deepEqual(
             await verifyMigrationReadiness(ingestPool, migrationDirectory),
-            { version: "0021_adjustment_rolling_registration.sql" },
+            { version: "0023_forecast_product_read_index.sql" },
           );
           try {
             // reject unproven candidate history
@@ -442,7 +467,7 @@ test(
                 },
                 release: "2026.08.22-1",
               }),
-              { version: "0021_adjustment_rolling_registration.sql" },
+              { version: "0023_forecast_product_read_index.sql" },
             );
             await pool.query(
               "UPDATE schema_migrations SET checksum = $1 WHERE name = '0001_initial_weather.sql'",
@@ -698,6 +723,20 @@ test(
         } finally {
           await Promise.all([currentSession.release(), reanalysisSession.release()]);
         }
+      });
+
+      await context.test("compact forecast observation input retains one fixed snapshot", async () => {
+        const input = await listForecastObservationInputs(
+          pool,
+          "2026-08-20T01:00:00.000Z",
+        );
+        assert.notEqual(input, null);
+        assert.equal(input.siteSlug, "ballydidean");
+        assert.equal(input.timezone, "America/Los_Angeles");
+        assert.equal(input.records.length, 1);
+        assert.equal(input.records[0].sourceKind, "model_current");
+        assert.equal(input.records[0].sourceId, currentSource.id);
+        assert.equal(input.records[0].validAt.toISOString(), "2026-08-20T00:00:00.000Z");
       });
 
       // verify run fingerprint composite FK
