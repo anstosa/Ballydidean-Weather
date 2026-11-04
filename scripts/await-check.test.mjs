@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { queryCheckState, selectLatestPushCheck, waitForSuccessfulCheck } from "./await-check.mjs";
+import {
+  queryCheckState,
+  selectLatestPushCheck,
+  selectLatestPushCheckEvidence,
+  waitForSuccessfulCheck,
+} from "./await-check.mjs";
 
 const sha = "a".repeat(40);
 const repo = { id: 42, full_name: "owner/weather" };
@@ -45,6 +50,17 @@ test("latest rerun or attempt overrides an earlier success", () => {
   assert.equal(selectLatestPushCheck([earlier, run({ id: 13, conclusion: "failure", created_at: "2026-09-14T00:05:00Z" })], { sha, repository: repo }), "failure");
   assert.equal(selectLatestPushCheck([run({ conclusion: "skipped" })], { sha, repository: repo }), "failure");
   assert.equal(selectLatestPushCheck([run({ run_attempt: 2, conclusion: "failure" })], { sha, repository: repo }), "failure");
+});
+
+// choose the larger run id when creation timestamps tie
+test("latest successful Check selection is deterministic", () => {
+  const document = {
+    total_count: 2,
+    workflow_runs: [run({ id: 12 }), run({ id: 13 })],
+  };
+  const evidence = selectLatestPushCheckEvidence(document, { sha, repository: repo });
+  assert.equal(evidence.state, "success");
+  assert.equal(evidence.run.id, 13);
 });
 
 // reject unavailable and malformed API evidence

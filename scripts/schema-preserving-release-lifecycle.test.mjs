@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -41,6 +42,49 @@ function runBash(context, body, args = []) {
     env: process.env,
   });
 }
+
+// reject altered sourced code before any of its top-level actions run
+test("runtime authenticates the entire control bundle before sourcing common", async () => {
+  const context = await fixture();
+  const deploy = join(context.root, "deploy");
+  const scripts = join(deploy, "scripts");
+  const sentinel = join(context.root, "sourced-sentinel");
+  // hash the same closed fixture bytes as the installed control algorithm
+  const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  try {
+    await mkdir(scripts, { recursive: true });
+    // keep every control root present without involving production paths
+    for (const directory of ["postgres", "systemd", "sudoers"]) {
+      await mkdir(join(deploy, directory));
+    }
+    const updater = 'source "$(dirname "${BASH_SOURCE[0]}")/common.sh"\n';
+    const common = `printf verified >"${sentinel}"\nreturn 7\n`;
+    const compose = "fixture compose\n";
+    await writeFile(join(scripts, "update.sh"), updater, { mode: 0o755 });
+    await writeFile(join(scripts, "common.sh"), common);
+    await writeFile(join(deploy, "compose.yaml"), compose);
+    const digest = hash(`deploy/scripts/common.sh\0${hash(common)}\ndeploy/scripts/update.sh\0${hash(updater)}\ndeploy/compose.yaml\0${hash(compose)}\n`);
+    const source = (await readFile(context.operator, "utf8"))
+      // adapt only the fixture's identity and file pins, not the integrity-check ordering
+      .replace('"$EUID" == 0', '"$EUID" == "$(id -u)"')
+      .replace(/readonly sp_update_sha=[a-f0-9]+/u, `readonly sp_update_sha=${hash(updater)}`)
+      .replace(/readonly sp_control_sha=[a-f0-9]+/u, `readonly sp_control_sha=${digest}`);
+    await writeFile(context.operator, source, { mode: 0o755 });
+    const body = 'stat() { printf "0:0:755:1\\n"; }; sp_load';
+    const verified = runBash(context, body);
+    assert.equal(verified.status, 7, verified.stderr);
+    assert.equal(await readFile(sentinel, "utf8"), "verified");
+    await rm(sentinel);
+    await writeFile(join(scripts, "common.sh"), `printf tampered >"${sentinel}"\nreturn 7\n`);
+    const tampered = runBash(context, body);
+    assert.notEqual(tampered.status, 0);
+    await assert.rejects(readFile(sentinel));
+    assert.deepEqual(await readdir(context.state), []);
+    assert.deepEqual(await readdir(context.releases), []);
+  } finally {
+    await rm(context.root, { force: true, recursive: true });
+  }
+});
 
 // provide safe boundaries and fatal sentinels for every mutation class
 const guards = String.raw`
@@ -236,6 +280,8 @@ test("stage validation rejects malformed target and ready receipts before side e
   const cases = [
     { name: "target-contract", action: "activate", receipt: stageReceipt({ contractVersion: "wrong" }) },
     { name: "ready-target", action: "source", receipt: stageReceipt({ targetRelease: "2026.11.05-1" }) },
+    { name: "target-extra", action: "target-substitution", receipt: stageReceipt({ targetEnvironmentSha256: "1".repeat(64), publicationSha256: "1".repeat(64), protectedSha256: "1".repeat(64), extra: true }) },
+    { name: "ready-extra", action: "source-substitution", receipt: stageReceipt({ targetEnvironmentSha256: "1".repeat(64), extra: true }) },
   ];
   // exercise both staged activation and committed ancestry validation
   for (const scenario of cases) {
@@ -244,24 +290,31 @@ test("stage validation rejects malformed target and ready receipts before side e
     const directory = join(context.spRoot, "2026.11.04-1");
     const environment = join(context.releases, "2026.11.04-1.env");
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    await writeFile(join(directory, scenario.action === "activate" ? "stage.json" : "ready.json"), `${JSON.stringify(scenario.receipt)}\n`, { mode: 0o600 });
+    await writeFile(join(directory, scenario.action.startsWith("source") ? "ready.json" : "stage.json"), `${JSON.stringify(scenario.receipt)}\n`, { mode: 0o600 });
     await writeFile(join(directory, "publication.json"), "{}\n", { mode: 0o600 });
     await writeFile(environment, "target\n", { mode: 0o600 });
     await symlink(environment, join(context.state, "active.env"));
     const body = `${guards}\n${String.raw`
 action=$4
+sp_sha() { printf '%s\n' '1111111111111111111111111111111111111111111111111111111111111111'; }
 sp_environment() { printf 'environment:%s\n' "$1" >>"$log"; release_env "$1"; }
 sp_image() { printf 'UNSAFE-IMAGE\n' >>"$log"; }
 sp_transaction() { printf 'UNSAFE-TRANSACTION\n' >>"$log"; }
 read_release_state() { [[ "$1" == *schema-release ]] && printf '2026.11.03-3\n' || printf '2026.11.04-1\n'; }
-if [[ "$action" == activate ]]; then sp_source() { release_env 2026.11.03-3; }; sp_activate 2026.11.04-1; else sp_source; fi
+# preserve rejection inside the command substitutions used by actual callers
+case "$action" in
+  activate) sp_source() { release_env 2026.11.03-3; }; sp_activate 2026.11.04-1 ;;
+  target-substitution) target_environment=$(sp_target 2026.11.04-1) ;;
+  source-substitution) source_environment=$(sp_source) ;;
+  source) sp_source ;;
+esac
 `}`;
     try {
       const result = runBash(context, body, [log, context.root, scenario.action]);
       assert.notEqual(result.status, 0, `${scenario.name} receipt unexpectedly accepted`);
       const output = await transcript(log);
       assert.doesNotMatch(output, /UNSAFE-IMAGE|UNSAFE-TRANSACTION/u);
-      assert.equal((output.match(/environment:/gu) ?? []).length, scenario.action === "source" ? 1 : 0);
+      assert.equal((output.match(/environment:/gu) ?? []).length, scenario.action.startsWith("source") ? 1 : 0);
     } finally {
       await rm(context.root, { force: true, recursive: true });
     }

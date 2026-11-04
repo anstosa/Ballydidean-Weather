@@ -21,6 +21,7 @@ const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 const HASH_C = "c".repeat(64);
 const HASH_D = "d".repeat(64);
+const REPOSITORY = { id: 42, full_name: "anstosa/Ballydidean-Weather" };
 const TREE_PATHS = [
   "Dockerfile",
   "deploy/scripts/common.sh",
@@ -49,14 +50,20 @@ function fixture(options = {}) {
   const temporaryRoots = [];
   const check = {
     conclusion: options.checkConclusion ?? "success",
-    databaseId: 101,
+    created_at: "2026-11-03T00:00:00Z",
     event: "push",
-    headBranch: "main",
-    headSha: TARGET_COMMIT,
+    head_branch: "main",
+    head_repository: REPOSITORY,
+    head_sha: TARGET_COMMIT,
+    html_url: "https://github.com/anstosa/Ballydidean-Weather/actions/runs/101",
+    id: 101,
     name: "Check",
+    path: ".github/workflows/check.yml@refs/heads/main",
+    repository: REPOSITORY,
+    run_attempt: 1,
     status: "completed",
-    url: "https://github.com/anstosa/Ballydidean-Weather/actions/runs/101",
   };
+  const checkEvidence = { total_count: 1, workflow_runs: [check] };
   const publish = {
     conclusion: "success",
     databaseId: 102,
@@ -98,8 +105,17 @@ function fixture(options = {}) {
     }
     // resolve github api evidence
     if (command === "gh" && args[0] === "api") {
+      const endpoint = args[3];
+      // return authenticated repository identity
+      if (endpoint === `repos/${REPOSITORY.full_name}`) {
+        return bytes(REPOSITORY);
+      }
+      // return complete exact-sha Check evidence
+      if (endpoint.includes("/actions/workflows/check.yml/runs")) {
+        return bytes(checkEvidence);
+      }
       // return the bounded artifact catalog
-      if (args.at(-1).includes("/actions/runs/")) {
+      if (endpoint.includes("/actions/runs/")) {
         return bytes({
           artifacts: [
             {
@@ -122,7 +138,7 @@ function fixture(options = {}) {
     // list workflow evidence
     if (command === "gh" && args[0] === "run" && args[1] === "list") {
       const workflow = args[args.indexOf("--workflow") + 1];
-      return bytes([workflow === "Check" ? check : publish]);
+      return bytes(workflow === "publish-images.yml" ? [publish] : []);
     }
     // inspect the boundary step
     if (command === "gh" && args[0] === "run" && args[1] === "view") {
@@ -161,6 +177,7 @@ function fixture(options = {}) {
   }
 
   return {
+    checkEvidence,
     commands,
     output: join(root, "publication.json"),
     root,
@@ -231,6 +248,98 @@ test("rejects failed Check and image-boundary workflow evidence", () => {
     }),
     /image boundary was not proven/u,
   );
+});
+
+// select the latest successful exact-sha branch Check
+test("selects the latest of multiple successful Check runs", () => {
+  const setup = fixture();
+  const earlier = setup.checkEvidence.workflow_runs[0];
+  setup.checkEvidence.workflow_runs.push({
+    ...earlier,
+    created_at: "2026-11-03T00:05:00Z",
+    head_branch: "release/prepare-publication",
+    html_url: "https://github.com/anstosa/Ballydidean-Weather/actions/runs/103",
+    id: 103,
+    path: ".github/workflows/check.yml@refs/heads/release/prepare-publication",
+  });
+  setup.checkEvidence.total_count = 2;
+  const publication = preparePublication(RELEASE, setup.output, {
+    cwd: setup.root,
+    run: setup.run,
+  });
+  assert.equal(publication.check.databaseId, 103);
+});
+
+// reject stale success behind a newer failed or pending Check
+test("rejects an older Check success when the latest run is not successful", () => {
+  const failed = fixture();
+  const failedEarlier = failed.checkEvidence.workflow_runs[0];
+  failed.checkEvidence.workflow_runs.push({
+    ...failedEarlier,
+    conclusion: "failure",
+    created_at: "2026-11-03T00:05:00Z",
+    id: 103,
+  });
+  failed.checkEvidence.total_count = 2;
+  assert.throws(
+    () => preparePublication(RELEASE, failed.output, { cwd: failed.root, run: failed.run }),
+    /Check evidence is missing/u,
+  );
+
+  const pending = fixture();
+  const pendingEarlier = pending.checkEvidence.workflow_runs[0];
+  pending.checkEvidence.workflow_runs.push({
+    ...pendingEarlier,
+    conclusion: null,
+    created_at: "2026-11-03T00:05:00Z",
+    id: 103,
+    status: "in_progress",
+  });
+  pending.checkEvidence.total_count = 2;
+  assert.throws(
+    () => preparePublication(RELEASE, pending.output, { cwd: pending.root, run: pending.run }),
+    /Check evidence is missing/u,
+  );
+});
+
+// fail closed for malformed candidates and truncated catalogs
+test("rejects malformed or incomplete Check evidence", () => {
+  const malformed = fixture();
+  malformed.checkEvidence.workflow_runs[0].path = ".github/workflows/other.yml@refs/heads/main";
+  assert.throws(
+    () => preparePublication(RELEASE, malformed.output, {
+      cwd: malformed.root,
+      run: malformed.run,
+    }),
+    /Check evidence is missing/u,
+  );
+
+  const truncated = fixture();
+  truncated.checkEvidence.total_count = 2;
+  assert.throws(
+    () => preparePublication(RELEASE, truncated.output, {
+      cwd: truncated.root,
+      run: truncated.run,
+    }),
+    /incomplete evidence/u,
+  );
+});
+
+// break creation-time ties by the larger workflow run id
+test("selects Check runs deterministically when timestamps tie", () => {
+  const setup = fixture();
+  const earlier = setup.checkEvidence.workflow_runs[0];
+  setup.checkEvidence.workflow_runs.push({
+    ...earlier,
+    html_url: "https://github.com/anstosa/Ballydidean-Weather/actions/runs/103",
+    id: 103,
+  });
+  setup.checkEvidence.total_count = 2;
+  const publication = preparePublication(RELEASE, setup.output, {
+    cwd: setup.root,
+    run: setup.run,
+  });
+  assert.equal(publication.check.databaseId, 103);
 });
 
 // reject protected source drift and local bundle drift

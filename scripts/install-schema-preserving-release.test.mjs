@@ -111,7 +111,7 @@ ExecStop=/old/compose stop
 }
 
 // invoke one sourced installation with fake systemd and Docker commands
-function runInstaller(fixture, fault = "") {
+function runInstaller(fixture, fault = "", upgrade = false) {
   const command = `source "$1"
 spi_expected_update_sha=$7
 FAULT=$8
@@ -122,16 +122,29 @@ FIXTURE_DEPLOY=$2
 FIXTURE_OPERATORS=$4
 FIXTURE_UNITS=$5
 FIXTURE_SHA=$6
+UPGRADE=\${11}
+PREVIOUS_SHA=\${12}
 spi_control_digest() { printf '${controlSha}\\n'; }
+# isolate external runtime reads while exercising the actual handoff filesystem operations
+spi_runtime_check() {
+  printf 'runtime-verified:%s\\n' "$4" >>"$FIXTURE_DEPLOY/runtime.log"
+  # fail only the post-switch protected-state comparison
+  if [[ "$FAULT" == infrastructure && "$4" == unchanged && ! -e "$FAULT_MARKER" ]]; then : >"$FAULT_MARKER"; return 1; fi
+  # create only the inert fixture snapshot
+  if [[ "$4" == snapshot ]]; then printf protected >"$3"; fi
+}
 docker() { printf 'true|healthy\\n'; }
 systemctl() {
   if [[ "$1" == daemon-reload ]]; then
     if [[ "$FAULT" == reload && ! -e "$FAULT_MARKER" ]]; then : >"$FAULT_MARKER"; return 1; fi
+    # model completing a switch that was persisted before systemd reloaded
+    if [[ "$FAULT" == pending ]]; then : >"$FAULT_MARKER"; fi
     printf 'reload\\n' >>"$FIXTURE_DEPLOY/reloads.log"
     return
   fi
   local property="\${3#--property=}" path argv dropin="$FIXTURE_UNITS/weather-compose.service.d/10-schema-preserving-release.conf"
-  if [[ "$FAULT" == show && -e "$dropin" && ! -e "$FAULT_MARKER" ]]; then : >"$FAULT_MARKER"; return 1; fi
+  # fail vector inspection only after the new bundle is exposed
+  if [[ "$FAULT" == show && -e "$dropin" && ! -e "$FAULT_MARKER" ]] && grep -Fq "$FIXTURE_SHA" "$dropin"; then : >"$FAULT_MARKER"; return 1; fi
   # model systemd's normalized duration property
   if [[ "$property" == TimeoutStartUSec ]]; then
     if [[ -e "$dropin" ]]; then value=10min; else value=5min; fi
@@ -141,7 +154,9 @@ systemctl() {
   case "$property" in
     ExecStart|ExecReload)
       if [[ -e "$dropin" ]]; then
-        path="$FIXTURE_OPERATORS/$FIXTURE_SHA/schema-preserving-release.sh"; argv="$path system-recover"
+        path=$(awk '/^ExecStart=.+ system-recover$/ {sub(/^ExecStart=/, ""); sub(/ system-recover$/, ""); print}' "$dropin"); argv="$path system-recover"
+        # expose the predecessor cache until the pending reload completes
+        if [[ "$FAULT" == pending && ! -e "$FAULT_MARKER" ]]; then path="$FIXTURE_OPERATORS/$PREVIOUS_SHA/schema-preserving-release.sh"; argv="$path system-recover"; fi
       else path=/old/update.sh; argv='/old/update.sh recover'; fi ;;
     ExecStop) path=/old/compose; argv='/old/compose stop' ;;
   esac
@@ -154,11 +169,26 @@ systemd-analyze() {
 eval "$(declare -f spi_publish_dropin | sed '1s/spi_publish_dropin/spi_publish_dropin_real/')"
 spi_publish_dropin() {
   # prove recovery authority exists before systemd publication begins
-  [[ -f "$FIXTURE_DEPLOY/state/schema-preserving-release-v1/installation.json" ]] || return 91
+  if [[ "$UPGRADE" == true ]]; then
+    [[ -f "$FIXTURE_DEPLOY/state/schema-preserving-release-v1/installations/$FIXTURE_SHA.json" ]] || return 91
+  else
+    [[ -f "$FIXTURE_DEPLOY/state/schema-preserving-release-v1/installation.json" ]] || return 91
+  fi
   spi_publish_dropin_real "$@" || return 1
   [[ "$FAULT" != publish ]]
 }
-spi_install "$3" "$6" "$2" "$4" "$5"`;
+eval "$(declare -f spi_publish_bundle | sed '1s/spi_publish_bundle/spi_publish_bundle_real/')"
+# inject an inert bundle publication failure
+spi_publish_bundle() { spi_publish_bundle_real "$@" || return 1; [[ "$FAULT" != bundle ]]; }
+eval "$(declare -f spi_publish_receipt | sed '1s/spi_publish_receipt/spi_publish_receipt_real/')"
+# inject a receipt publication failure before authority changes
+spi_publish_receipt() { spi_publish_receipt_real "$@" || return 1; [[ "$FAULT" != receipt ]]; }
+# choose the explicitly requested lifecycle path
+if [[ "$UPGRADE" == true ]]; then
+  spi_upgrade "$3" "$6" "\${12}" "$2" "$4" "$5"
+else
+  spi_install "$3" "$6" "$2" "$4" "$5"
+fi`;
   return spawnSync("bash", [
     "-c",
     command,
@@ -173,7 +203,146 @@ spi_install "$3" "$6" "$2" "$4" "$5"`;
     fault,
     fixture.environmentSha,
     fixture.baseUnitSha,
+    String(upgrade),
+    fixture.previousSha ?? "",
   ], { encoding: "utf8" });
+}
+
+// retain an installed predecessor while preparing a different immutable bundle
+async function createUpgradeFixture() {
+  const fixture = await createFixture();
+  const bootstrap = runInstaller(fixture);
+  assert.equal(bootstrap.status, 0, bootstrap.stderr);
+  fixture.previousSha = fixture.bundleSha;
+  fixture.oldDropin = await readFile(join(fixture.units, "weather-compose.service.d/10-schema-preserving-release.conf"), "utf8");
+  fixture.oldReceipt = await readFile(join(fixture.deploy, "state/schema-preserving-release-v1/installation.json"), "utf8");
+  fixture.bundle = join(fixture.root, "repaired-bundle");
+  await mkdir(fixture.bundle, { mode: 0o700 });
+  const operator = "#!/usr/bin/env bash\n# repaired fixture helper\n";
+  const validator = "export const helper = true;\n";
+  await writeFile(join(fixture.bundle, "schema-preserving-release.sh"), operator, { mode: 0o755 });
+  await writeFile(join(fixture.bundle, "schema-preserving-release.mjs"), validator, { mode: 0o644 });
+  await chmod(join(fixture.bundle, "schema-preserving-release.sh"), 0o755);
+  await chmod(join(fixture.bundle, "schema-preserving-release.mjs"), 0o644);
+  fixture.bundleSha = hash(`${hash(validator)}  schema-preserving-release.mjs\n${hash(operator)}  schema-preserving-release.sh\n`);
+  const current = "2026.11.04-3";
+  await writeFile(join(fixture.deploy, "state/current-release"), `${current}\n`, { mode: 0o600 });
+  await writeFile(join(fixture.deploy, `releases/${current}.env`), `WEATHER_RELEASE=${current}\n`, { mode: 0o600 });
+  await rm(join(fixture.deploy, "state/active.env"));
+  await symlink(`../releases/${current}.env`, join(fixture.deploy, "state/active.env"));
+  return fixture;
+}
+
+// keep both boot authorities valid on their respective sides of the atomic switch
+test("bundle upgrade retains the legacy receipt and publishes new authority before switching", async () => {
+  const fixture = await createUpgradeFixture();
+  try {
+    const result = runInstaller(fixture, "", true);
+    assert.equal(result.status, 0, result.stderr);
+    const root = join(fixture.deploy, "state/schema-preserving-release-v1");
+    assert.equal(await readFile(join(root, "installation.json"), "utf8"), fixture.oldReceipt);
+    const receipt = JSON.parse(await readFile(join(root, `installations/${fixture.bundleSha}.json`), "utf8"));
+    assert.equal(receipt.bundleSha256, fixture.bundleSha);
+    assert.match(await readFile(join(fixture.units, "weather-compose.service.d/10-schema-preserving-release.conf"), "utf8"), new RegExp(fixture.bundleSha, "u"));
+    await assert.doesNotReject(stat(join(fixture.operators, fixture.previousSha)));
+    assert.equal(await readFile(join(fixture.deploy, "state/current-release"), "utf8"), "2026.11.04-3\n");
+    assert.equal(await readFile(join(fixture.deploy, "state/schema-release"), "utf8"), `${release}\n`);
+    const retry = runInstaller(fixture, "", true);
+    assert.equal(retry.status, 0, retry.stderr);
+    const pending = runInstaller(fixture, "pending", true);
+    assert.equal(pending.status, 0, pending.stderr);
+  } finally {
+    await cleanup(fixture);
+  }
+});
+
+// fail closed before switching an unexpected predecessor or unfinished release
+test("bundle upgrade rejects altered predecessor, receipt, markers, schema owner, and active journal", async () => {
+  // isolate each independent authority failure
+  for (const failure of ["bundle", "receipt", "marker", "schema", "journal"]) {
+    const fixture = await createUpgradeFixture();
+    try {
+      // reject an unexpected predecessor identity
+      if (failure === "bundle") fixture.previousSha = "0".repeat(64);
+      // reject unrelated receipt bytes
+      if (failure === "receipt") await writeFile(join(fixture.deploy, "state/schema-preserving-release-v1/installation.json"), "{}\n");
+      // reject changed marker ownership policy
+      if (failure === "marker") await chmod(join(fixture.deploy, "state/current-release"), 0o644);
+      // retain the immutable schema owner
+      if (failure === "schema") await writeFile(join(fixture.deploy, "state/schema-release"), "2026.10.09-2\n");
+      // never interrupt an application release transaction
+      if (failure === "journal") await writeFile(join(fixture.deploy, "state/schema-preserving-release-v1/journal.json"), "{}\n");
+      const result = runInstaller(fixture, "", true);
+      assert.notEqual(result.status, 0, failure);
+      assert.equal(await readFile(join(fixture.units, "weather-compose.service.d/10-schema-preserving-release.conf"), "utf8"), fixture.oldDropin);
+    } finally {
+      await cleanup(fixture);
+    }
+  }
+});
+
+// run the real subprocess bridge with an inherited kernel lock and controlled runtime boundaries
+test("upgrade runtime checks retain the actual lock and stop after a failed prerequisite", async () => {
+  // isolate lock, health and database failure cases without production paths
+  for (const failure of ["", "lock", "health", "database", "source-before", "source-after"]) {
+    const root = await mkdtemp(join(tmpdir(), "weather-upgrade-runtime-"));
+    const state = join(root, "state");
+    const other = join(root, "other");
+    const snapshot = join(root, "snapshot.json");
+    const environment = join(root, "current.env");
+    try {
+      await mkdir(state);
+      await mkdir(other);
+      const updater = join(root, "update.sh");
+      await writeFile(updater, `state_dir='${state}'\nrequire_no_dashboard_override() { :; }\n`);
+      const helper = `sp_update='${updater}'
+sp_control_sha=fixture
+sp_journal='${state}/journal.json'
+sp_control_digest() { printf fixture; }
+# expose both source validation failure shapes without changing its expected text
+sp_source() { [[ '${failure}' != source-before ]]; printf '%s\\n' '${environment}'; [[ '${failure}' != source-after ]]; }
+sp_health() { [[ '${failure}' != health ]]; }
+sp_database() { [[ '${failure}' != database ]]; }
+sp_snapshot() { printf protected >"$2"; }
+sp_unchanged() { [[ "$(cat "$2")" == protected ]]; }
+`;
+      await writeFile(join(root, "schema-preserving-release.sh"), helper);
+      const result = spawnSync("bash", ["-c", `source "$1"
+exec {release_transaction_lock_fd}<"$6"
+flock --exclusive --nonblock "$release_transaction_lock_fd"
+spi_runtime_check "$2" "$3" "$4" snapshot
+`, "runtime-lock-test", installer, root, environment, snapshot, failure, failure === "lock" ? other : state], { encoding: "utf8" });
+      // only a valid held lock and successful read-only checks may create the snapshot
+      if (failure === "") {
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(await readFile(snapshot, "utf8"), "protected");
+      } else {
+        assert.notEqual(result.status, 0, failure);
+        await assert.rejects(readFile(snapshot));
+      }
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  }
+});
+
+// retain old recovery authority after every failed handoff boundary
+for (const fault of ["bundle", "receipt", "publish", "reload", "verify", "show", "infrastructure"]) {
+  // inject one bounded failure without touching application state
+  test(`bundle upgrade restores the exact predecessor after ${fault} failure`, async () => {
+    const fixture = await createUpgradeFixture();
+    try {
+      const result = runInstaller(fixture, fault, true);
+      assert.notEqual(result.status, 0, fault);
+      assert.equal(await readFile(join(fixture.units, "weather-compose.service.d/10-schema-preserving-release.conf"), "utf8"), fixture.oldDropin);
+      assert.equal(await readFile(join(fixture.deploy, "state/schema-preserving-release-v1/installation.json"), "utf8"), fixture.oldReceipt);
+      await assert.doesNotReject(stat(join(fixture.operators, fixture.previousSha)));
+      const retry = runInstaller(fixture, "", true);
+      assert.equal(retry.status, 0, retry.stderr);
+    } finally {
+      await cleanup(fixture);
+    }
+  });
 }
 
 // remove one disposable fixture

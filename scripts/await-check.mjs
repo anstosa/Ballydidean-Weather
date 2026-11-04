@@ -6,18 +6,22 @@ const shaPattern = /^[a-f0-9]{40}$/u;
 const pollIntervalMs = 15_000;
 const deadlineMs = 30 * 60_000;
 
-// trust only the latest same-repository branch-push run for the exact commit
-export function selectLatestPushCheck(runs, { sha, repository }) {
+// retain the latest trusted run and its conservative state
+function latestPushCheckEvidence(runs, { sha, repository }) {
+  // non-array evidence cannot certify a Check
+  if (!Array.isArray(runs)) {
+    return { run: null, state: "failure" };
+  }
   // scope to the exact same-repository push commit
   const candidates = runs.filter((run) =>
-    run.event === "push" &&
-    run.head_sha === sha &&
-    run.head_repository?.id === repository.id &&
-    run.head_repository?.full_name === repository.full_name);
+    run?.event === "push" &&
+    run?.head_sha === sha &&
+    run?.head_repository?.id === repository.id &&
+    run?.head_repository?.full_name === repository.full_name);
 
   // no branch push is not validation evidence
   if (candidates.length === 0) {
-    return "missing";
+    return { run: null, state: "missing" };
   }
 
   // malformed same-repository evidence must not expose an older success
@@ -31,7 +35,7 @@ export function selectLatestPushCheck(runs, { sha, repository }) {
     !Number.isSafeInteger(run.id) || run.id <= 0 ||
     !Number.isSafeInteger(run.run_attempt) || run.run_attempt <= 0 ||
     !Number.isFinite(Date.parse(run.created_at ?? "")))) {
-    return "failure";
+    return { run: null, state: "failure" };
   }
 
   // order by run creation, not late completion of an older run
@@ -42,14 +46,36 @@ export function selectLatestPushCheck(runs, { sha, repository }) {
 
   // only completed success is sufficient for publication
   if (latest.status === "completed") {
-    return latest.conclusion === "success" ? "success" : "failure";
+    return {
+      run: latest,
+      state: latest.conclusion === "success" ? "success" : "failure",
+    };
   }
 
   // wait for the latest attempt; unknown states fail closed
   if (["queued", "in_progress", "requested", "waiting", "pending"].includes(latest.status)) {
-    return "pending";
+    return { run: latest, state: "pending" };
   }
-  return "failure";
+  return { run: latest, state: "failure" };
+}
+
+// trust only the latest same-repository branch-push run for the exact commit
+export function selectLatestPushCheck(runs, context) {
+  return latestPushCheckEvidence(runs, context).state;
+}
+
+// require a complete workflow-run catalog before exposing selected evidence
+export function selectLatestPushCheckEvidence(document, context) {
+  // truncated result sets could conceal a later rerun
+  if (
+    !Number.isInteger(document?.total_count) ||
+    document.total_count > 100 ||
+    !Array.isArray(document.workflow_runs) ||
+    document.workflow_runs.length !== document.total_count
+  ) {
+    throw new Error("Check lookup returned incomplete evidence");
+  }
+  return latestPushCheckEvidence(document.workflow_runs, context);
 }
 
 // fetch scoped workflow runs with Actions read permission
@@ -76,16 +102,7 @@ export async function queryCheckState({ sha, repository, token, apiUrl }) {
   }
   const document = await response.json();
 
-  // truncated result sets could conceal a later rerun
-  if (
-    !Number.isInteger(document.total_count) ||
-    document.total_count > 100 ||
-    !Array.isArray(document.workflow_runs) ||
-    document.workflow_runs.length !== document.total_count
-  ) {
-    throw new Error("Check lookup returned incomplete evidence");
-  }
-  return selectLatestPushCheck(document.workflow_runs, { sha, repository });
+  return selectLatestPushCheckEvidence(document, { sha, repository }).state;
 }
 
 // refuse to infer identity from a tag, PR or caller-provided branch label

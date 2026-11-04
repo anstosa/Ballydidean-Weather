@@ -33,11 +33,29 @@ sp_private() {
     "$(stat -c '%s' -- "$1")" -le 1048576 ]] || die "unsafe schema-preserving input: $1"
 }
 
+# calculate the complete pinned control identity without executing any of it
+sp_control_digest() {
+  local deploy=$1 root file
+  local -a files
+  root=$(dirname "$deploy")
+  mapfile -d '' -t files < <(
+    find "$deploy/scripts" "$deploy/postgres" "$deploy/systemd" "$deploy/sudoers" \
+      -type f -print0 | LC_ALL=C sort -z
+  )
+  files+=("$deploy/compose.yaml")
+  # preserve the installed relative-path digest algorithm
+  for file in "${files[@]}"; do
+    printf '%s\0' "${file#"$root/"}"
+    sp_sha "$file"
+  done | sha256sum | awk '{print $1}'
+}
+
 # load only the exact installed updater and its stable primitives
 sp_load() {
   [[ "$EUID" == 0 && -f "$sp_update" && ! -L "$sp_update" &&
     "$(stat -c '%u:%g:%a:%h' "$sp_update")" == 0:0:755:1 &&
-    "$(sp_sha "$sp_update")" == "$sp_update_sha" ]] || {
+    "$(sp_sha "$sp_update")" == "$sp_update_sha" &&
+    "$(sp_control_digest "${sp_update%/scripts/update.sh}")" == "$sp_control_sha" ]] || {
     printf 'error: schema-preserving release requires the exact root-owned v17 updater\n' >&2
     return 1
   }
@@ -73,15 +91,20 @@ sp_load() {
   require_no_dashboard_override
   [[ -d "$sp_root" && ! -L "$sp_root" && "$(stat -c '%u:%g:%a' "$sp_root")" == 0:0:700 ]] ||
     die "auxiliary release state root differs"
-  sp_private "$sp_root/installation.json"
-  [[ "$(sp_field "$sp_root/installation.json" bundleSha256)" == "$expected" ]] ||
+  local receipt="$sp_root/installations/$expected.json"
+  # retain the immutable bootstrap receipt for the original installed bundle
+  if [[ ! -e "$receipt" && ! -L "$receipt" ]]; then
+    receipt="$sp_root/installation.json"
+  fi
+  sp_private "$receipt"
+  [[ "$(sp_field "$receipt" bundleSha256)" == "$expected" ]] ||
     die "installed auxiliary bundle differs"
-  sp_installation
+  sp_installation "$receipt"
 }
 
 # bind the effective boot recovery path to the installed auxiliary receipt
 sp_installation() {
-  local receipt="$sp_root/installation.json" dropin base property vector
+  local receipt=${1:-"$sp_root/installation.json"} dropin base property vector
   dropin=/etc/systemd/system/weather-compose.service.d/10-schema-preserving-release.conf
   base=/etc/systemd/system/weather-compose.service
   [[ -f "$dropin" && ! -L "$dropin" && "$(stat -c '%u:%g:%a:%h' "$dropin")" == 0:0:644:1 &&
@@ -138,7 +161,8 @@ sp_source() {
     ((depth < 64)) || die "application release ancestry is cyclic or too deep"
     receipt="$sp_root/$cursor/ready.json"
     sp_private "$receipt"
-    node "$sp_module" validate-stage "$receipt" "$cursor" >/dev/null
+    # preserve schema rejection even inside a caller's command substitution
+    node "$sp_module" validate-stage "$receipt" "$cursor" >/dev/null || die "application release receipt is invalid"
     [[ "$(sp_field "$receipt" targetRelease)" == "$cursor" &&
       "$(sp_field "$receipt" targetEnvironmentSha256)" == "$(sp_sha "$(release_env "$cursor")")" ]] ||
       die "application release receipt differs"
@@ -288,7 +312,8 @@ sp_stage() {
   validate_release "$release"
   sp_private "$publication"
   [[ "$(sp_sha "$publication")" == "$expected_sha" ]] || die "publication receipt checksum differs"
-  node "$sp_module" validate-publication "$publication" "$release" >/dev/null
+  # reject invalid publication before any staging side effect
+  node "$sp_module" validate-publication "$publication" "$release" >/dev/null || die "publication receipt is invalid"
   [[ "$(sp_field "$publication" operatorSha256)" == "$(sp_sha "$sp_bundle/schema-preserving-release.sh")" &&
     "$(sp_field "$publication" validatorSha256)" == "$(sp_sha "$sp_module")" ]] || die "publication operator identity differs"
   [[ ! -e "$sp_journal" && ! -L "$sp_journal" ]] || die "recover the unfinished application transaction first"
@@ -345,8 +370,10 @@ sp_target() {
   receipt="$directory/stage.json"
   sp_private "$publication"
   sp_private "$receipt"
-  node "$sp_module" validate-stage "$receipt" "$release" >/dev/null
-  node "$sp_module" validate-publication "$publication" "$release" >/dev/null
+  # fail closed independently of the caller's errexit context
+  node "$sp_module" validate-stage "$receipt" "$release" >/dev/null || die "staged application receipt is invalid"
+  # retain the same boundary for the published image proof
+  node "$sp_module" validate-publication "$publication" "$release" >/dev/null || die "publication receipt is invalid"
   source=$(sp_environment "$(sp_field "$receipt" sourceRelease)")
   target=$(sp_environment "$release")
   [[ "$(sp_sha "$source")" == "$(sp_field "$receipt" sourceEnvironmentSha256)" &&

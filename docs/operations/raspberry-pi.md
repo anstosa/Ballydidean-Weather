@@ -221,6 +221,31 @@ retained. Its ten-minute start allowance covers retained infrastructure and
 application health windows, including a slow cold boot. Installed deployment
 files and their version-17 digest are unchanged.
 
+Replacing an installed auxiliary bundle is a separate guarded operation:
+
+```bash
+sudo scripts/install-schema-preserving-release.sh --upgrade \
+  /absolute/root/private/bundle NEW_BUNDLE_SHA256 EXPECTED_OLD_BUNDLE_SHA256
+```
+
+Use the installer and bundle from the same validated checkout. The handoff accepts
+only the explicitly named predecessor, its exact private receipt, unchanged base
+unit and effective recovery commands, the retained schema owner, and a healthy
+committed application descendant with no unfinished release journal. It verifies
+the complete installed control digest before sourcing any control code.
+
+The new bundle and immutable private receipt under
+`deploy/state/schema-preserving-release-v1/installations/NEW_BUNDLE_SHA256.json`
+are durable before the drop-in is atomically replaced. The new helper reads its
+own receipt; the original `installation.json` remains untouched for the old
+helper. Thus either side of an interrupted switch retains valid boot authority.
+An exact retry can finish a pending switch or verify an already completed one.
+Failures restore the exact predecessor drop-in and effective commands. Retain
+both bundles, both receipts, and the private handoff metadata snapshots. The
+handoff does not recreate containers, pull images, or change database, model,
+capture-epoch, or backup data. Afterward, exercise the new helper's
+`system-recover` and verify retained container identities and service health.
+
 Use the installed, content-addressed helper for the entire lifecycle:
 
 ```bash

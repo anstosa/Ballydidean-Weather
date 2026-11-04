@@ -6,6 +6,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { selectLatestPushCheckEvidence } from "./await-check.mjs";
 import {
   CONTRACT_VERSION,
   SOURCE_COMMIT,
@@ -94,7 +95,42 @@ function protectedTree(commit, run, cwd) {
   }));
 }
 
-// select one exact workflow run
+// resolve authenticated repository identity for workflow evidence
+function repositoryIdentity(run, cwd) {
+  const document = commandJson(run("gh", [
+    "api", "--method", "GET", `repos/${REPOSITORY}`,
+  ], { cwd }), "repository");
+  // require the configured repository and a stable numeric id
+  if (!Number.isSafeInteger(document?.id) || document.id <= 0 || document.full_name !== REPOSITORY) {
+    throw new Error("repository identity is invalid");
+  }
+  return { id: document.id, full_name: document.full_name };
+}
+
+// select the latest exact-sha Check from complete API evidence
+function checkWorkflowRun(headSha, run, cwd) {
+  const repository = repositoryIdentity(run, cwd);
+  const document = commandJson(run("gh", [
+    "api", "--method", "GET",
+    `repos/${REPOSITORY}/actions/workflows/check.yml/runs?head_sha=${headSha}&event=push&per_page=100`,
+  ], { cwd }), "Check runs");
+  const evidence = selectLatestPushCheckEvidence(document, { sha: headSha, repository });
+  // only the selected completed success can certify publication
+  if (evidence.state !== "success" || evidence.run?.name !== "Check") {
+    throw new Error("Check evidence is missing or not a completed success");
+  }
+  return {
+    conclusion: evidence.run.conclusion,
+    databaseId: evidence.run.id,
+    event: evidence.run.event,
+    headSha: evidence.run.head_sha,
+    name: evidence.run.name,
+    status: evidence.run.status,
+    url: evidence.run.html_url,
+  };
+}
+
+// select one exact tag-publish workflow run
 function workflowRun(workflow, expected, run, cwd) {
   const document = commandJson(run("gh", [
     "run", "list", "--repo", REPOSITORY, "--commit", expected.headSha, "--event", "push",
@@ -215,7 +251,7 @@ export function preparePublication(release, output, options = {}) {
   if (!/^[a-f0-9]{40}$/u.test(localTag) || localTag !== head || remoteTag !== localTag) {
     throw new Error("local tag, remote tag and HEAD do not identify one commit");
   }
-  const check = workflowRun("Check", { headSha: head, name: "Check" }, run, cwd);
+  const check = checkWorkflowRun(head, run, cwd);
   const publish = workflowRun("publish-images.yml", {
     headBranch: release, headSha: head, name: "Publish production images",
   }, run, cwd);
