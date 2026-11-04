@@ -8302,22 +8302,32 @@ test("forecast charts share one touch-controlled crosshair", { timeout: 60_000 }
       await page.locator(".forecast-x-axis time").allTextContents(),
       ["12 AM", "6 AM", "12 PM", "6 PM", "11 PM"],
     );
-    assert.deepEqual(
-      await page.locator(".forecast-chart-shell").evaluate(
-        // share one visible daylight scale across charts and axis
-        (shell) => {
+    const daylightStyleSnapshot = await page.waitForFunction(
+        // read one connected final chart atomically across root replacements
+        () => {
+          const shell = document.querySelector('.weather-content[aria-busy="false"] .forecast-chart-shell');
+          // wait for the currently attached forecast rather than a detached skeleton
+          if (!(shell instanceof HTMLElement) || !shell.isConnected) {
+            return false;
+          }
           const dayTick = shell.querySelector('[data-forecast-light="day"]');
           const nightTick = shell.querySelector('[data-forecast-light="night"]');
           const plotDay = shell.querySelector('.forecast-chart-daylight [data-forecast-light="day"]');
           const plotNight = shell.querySelector('.forecast-chart-daylight [data-forecast-light="night"]');
+          // require actual plot bands before sampling the unchanged color contract
+          if (dayTick === null || nightTick === null || plotDay === null || plotNight === null) {
+            return false;
+          }
           return {
-            dayBackground: dayTick === null ? "none" : getComputedStyle(dayTick).backgroundColor,
-            nightBackground: nightTick === null ? "none" : getComputedStyle(nightTick).backgroundColor,
-            plotDayBackground: plotDay === null ? "none" : getComputedStyle(plotDay).backgroundColor,
-            plotNightBackground: plotNight === null ? "none" : getComputedStyle(plotNight).backgroundColor,
+            dayBackground: getComputedStyle(dayTick).backgroundColor,
+            nightBackground: getComputedStyle(nightTick).backgroundColor,
+            plotDayBackground: getComputedStyle(plotDay).backgroundColor,
+            plotNightBackground: getComputedStyle(plotNight).backgroundColor,
           };
         },
-      ),
+    );
+    assert.deepEqual(
+      await daylightStyleSnapshot.jsonValue(),
       {
         dayBackground: "rgba(240, 218, 89, 0.2)",
         nightBackground: "rgba(84, 68, 96, 0.14)",
@@ -8325,6 +8335,7 @@ test("forecast charts share one touch-controlled crosshair", { timeout: 60_000 }
         plotNightBackground: "rgba(84, 68, 96, 0.14)",
       },
     );
+    await daylightStyleSnapshot.dispose();
     assert.deepEqual(
       await page.locator(".forecast-chart").evaluateAll(
         // preserve one chart per current-condition stat

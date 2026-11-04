@@ -262,8 +262,12 @@ sp_image() {
 
 # run the candidate's readiness checker through an explicitly read-only API transaction
 sp_readiness() {
-  local environment=$1
-  WEATHER_ENV_FILE=$environment compose run --rm -T --no-deps --pull never --entrypoint node api \
+  local environment=$1 image
+  image=$(env_value "$environment" WEATHER_SERVER_IMAGE)
+  # compose 2.26 run lacks --pull; require its immutable image already cached
+  [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" == linux/arm64 ]] ||
+    die "readiness image is not cached for ARM64"
+  WEATHER_ENV_FILE=$environment compose run --rm -T --no-deps --entrypoint node api \
     --input-type=module - <<'JS'
 import {createDatabasePool,loadDatabaseConfiguration,verifyMigrationReadiness} from '@weather/database';
 const pool=createDatabasePool(await loadDatabaseConfiguration());

@@ -170,6 +170,43 @@ stat -c 'stage-mode:%a' "$sp_root/2026.11.04-1" >>"$log"
   }
 });
 
+test("readiness requires a cached ARM64 image before Compose run without pull", async () => {
+  // cover the compatible cache plus both absent and wrong-architecture failures
+  for (const scenario of ["cached", "missing", "wrong-arch"]) {
+    const context = await fixture();
+    const log = join(context.root, `readiness-${scenario}.log`);
+    const program = join(context.root, `readiness-${scenario}.mjs`);
+    const body = `${guards}\n${String.raw`
+scenario=$4; program=$5
+docker() {
+  printf 'docker:%s\n' "$*" >>"$log"
+  [[ "$scenario" != missing ]] || return 1
+  [[ "$scenario" != wrong-arch ]] && printf 'linux/arm64\n' || printf 'linux/amd64\n'
+}
+compose() { printf 'compose:%s\n' "$*" >>"$log"; cat >"$program"; }
+sp_readiness /fixture.env
+`}`;
+    try {
+      const result = runBash(context, body, [log, context.root, scenario, program]);
+      const output = await transcript(log);
+      // only the valid cached image may reach the one-off container
+      if (scenario !== "cached") {
+        assert.notEqual(result.status, 0);
+        assert.doesNotMatch(output, /compose:/u);
+        continue;
+      }
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(output, /docker:image inspect[\s\S]*compose:run --rm -T --no-deps --entrypoint node api/u);
+      assert.doesNotMatch(output, /compose:run[^\n]*--pull/u);
+      const readinessProgram = await readFile(program, "utf8");
+      assert.match(readinessProgram, /BEGIN READ ONLY/u);
+      assert.match(readinessProgram, /ROLLBACK/u);
+    } finally {
+      await rm(context.root, { force: true, recursive: true });
+    }
+  }
+});
+
 // create the files used by forward and reverse transaction tests
 async function transactionFiles(context) {
   const directory = join(context.spRoot, "2026.11.04-1");
