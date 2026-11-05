@@ -851,13 +851,13 @@ async function launchBrowser() {
   });
 }
 
-const MAP_TILE_PATTERN = /^https:\/\/(?:tile\.openstreetmap\.org|basemap\.nationalmap\.gov)\//u;
+const MAP_IMAGE_PATTERN = /^https:\/\/(?:tile\.openstreetmap\.org|(?:basemap|imagery)\.nationalmap\.gov)\//u;
 
-// create one browser page with deterministic map tiles
+// create one browser page with deterministic map imagery
 async function createFixturePage(browser, options) {
   const page = await browser.newPage(options);
-  // replace external tiles with deterministic images
-  await page.route(MAP_TILE_PATTERN, async (route) => {
+  // replace external tiles and aerial imagery with deterministic images
+  await page.route(MAP_IMAGE_PATTERN, async (route) => {
     await route.fulfill({
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#d9d8d1"/></svg>',
       contentType: "image/svg+xml",
@@ -1716,6 +1716,36 @@ test("sensor battery indicators preserve readings and selection across viewports
     await browser?.close();
     // close only this test's fixture listener
     await new Promise((resolve) => fixture.server.close(resolve));
+  }
+});
+
+// keep the home soil map independent of live imagery services
+test("home soil imagery loads without external network access", { timeout: 30_000 }, async () => {
+  const fixture = await startFixtureServer();
+  let browser;
+
+  try {
+    browser = await launchBrowser();
+    fixture.state.viewerContext = { data: { homeNetwork: true } };
+    const page = await createFixturePage(browser, { timezoneId: site.timezone });
+    const externalRequests = [];
+    // reject remote requests missed by the page fixtures
+    await page.context().route(/^https:\/\//u, async (route) => {
+      externalRequests.push(route.request().url());
+      await route.abort();
+    });
+    const imageryRequest = page.waitForRequest("https://imagery.nationalmap.gov/**");
+    await page.goto(fixture.origin, { waitUntil: "networkidle" });
+    await page.locator("[data-admin-soil-map]").waitFor();
+    assert.deepEqual(externalRequests, []);
+    const response = await (await imageryRequest).response();
+    assert.equal(response?.status(), 200);
+    assert.equal(response?.headers()["content-type"], "image/svg+xml");
+  } finally {
+    // close disposable fixture resources
+    await browser?.close();
+    fixture.server.close();
+    await once(fixture.server, "close");
   }
 });
 
