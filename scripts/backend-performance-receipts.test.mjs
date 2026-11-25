@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, renameSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { chmod, chown, link, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
@@ -74,8 +74,8 @@ const MEASUREMENT_SOURCE_PATHS = [
 ].sort();
 const REPOSITORY_ROOT = new URL("..", import.meta.url);
 const RECEIPT_MODULE_PATH = new URL("./backend-performance-receipts.mjs", import.meta.url);
-// regenerate from the host-test prefix ending immediately before its first test declaration
-// use head with that boundary, append the versioned JSON writer for both fixture functions, then run the temporary module
+// preserve the original retained-v1 generator commit rather than regrading historical evidence
+const RETAINED_HOST_GENERATOR_COMMIT = "145dfcfb8f250d8d6651d0d0a55d2634813a59d6";
 const RETAINED_HOST_FIXTURES = JSON.parse(
   await readFile(new URL("./test-fixtures/backend-host-retained-v1.json", import.meta.url), "utf8"),
 );
@@ -1754,9 +1754,13 @@ test("receipt module deletes unpublished v1 baseline and target surfaces", () =>
   assert.equal(typeof receipts.validateSyntheticProductionCustodyIdentity, "function");
 });
 
-// bind the generated full raw fixture to its reproducible host-test prefix
-test("retained-v1 raw fixture records its generator source identity", async () => {
-  const source = await readFile(new URL("./backend-host-observation.test.mjs", import.meta.url), "utf8");
+// bind the generated full raw fixture to its immutable historical generator
+test("retained-v1 raw fixture records its generator source identity", () => {
+  // read the exact committed source without executing the historical test module
+  const source = execFileSync("git", [
+    "show",
+    `${RETAINED_HOST_GENERATOR_COMMIT}:scripts/backend-host-observation.test.mjs`,
+  ], { cwd: REPOSITORY_ROOT, encoding: "utf8" });
   const firstTest = source.search(/^test\(/mu);
   assert.ok(firstTest > 0);
   assert.deepEqual(RETAINED_HOST_FIXTURES.generatedFrom, {
