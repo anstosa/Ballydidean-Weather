@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::{BufReader, Cursor};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,9 +29,13 @@ fn native_evaluation_export_archive_matches_predecessor() {
     let fixture = predecessor_fixture();
     let root = fixture_root();
     let edge_root = root.join("evidence");
+    // create the private catalog independently of the caller's umask
+    let mut directories = fs::DirBuilder::new();
+    directories.mode(0o700).create(&root).unwrap();
+    directories.create(&edge_root).unwrap();
     // reproduce the complete four-directory evidence catalog admitted by both producers
     for directory in ["objects", "receipts", "channels", "channel-bindings"] {
-        fs::create_dir_all(edge_root.join(directory)).unwrap();
+        directories.create(edge_root.join(directory)).unwrap();
     }
 
     let snapshot = freeze_native_evaluation_edge_snapshot(&edge_root, &mut FixtureClock).unwrap();

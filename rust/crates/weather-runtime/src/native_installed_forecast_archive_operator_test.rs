@@ -2,6 +2,7 @@
 
 use std::{
     fs,
+    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
@@ -29,8 +30,18 @@ impl FixtureRoot {
             "weather-native-forecast-archive-operator-{}-{id}",
             std::process::id()
         ));
-        fs::create_dir_all(root.join("node")).expect("create Node archive root");
-        fs::create_dir_all(root.join("native")).expect("create native archive root");
+        // create owner-private roots under the ordinary CI umask
+        let mut directories = fs::DirBuilder::new();
+        directories
+            .mode(0o700)
+            .create(&root)
+            .expect("create fixture root");
+        directories
+            .create(root.join("node"))
+            .expect("create Node archive root");
+        directories
+            .create(root.join("native"))
+            .expect("create native archive root");
         Self(root)
     }
 
