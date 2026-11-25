@@ -2,6 +2,96 @@
   "artifacts": [
     {
       "authority": {
+        "kind": "repository-source",
+        "sourcePath": "deploy/compose.local.yaml"
+      },
+      "id": "artifact:compose-declaration:compose-command:deploy/compose.local.yaml#cloudflared#0",
+      "kind": "compose-declaration",
+      "sourceDigest": "ba801599ac1ad5daa27ea4973bb1f3f472f20d28c72230d4cdb618b71aab013b",
+      "sourceEntryId": "compose-command:deploy/compose.local.yaml#cloudflared"
+    },
+    {
+      "authority": {
+        "kind": "repository-source",
+        "sourcePath": "deploy/compose.native-candidate.yaml"
+      },
+      "id": "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#api#0",
+      "kind": "compose-declaration",
+      "sourceDigest": "57098cbc366ca0ae26b3011b2ad01872ea3cffeafbc576027c31341e668ed9a7",
+      "sourceEntryId": "compose-command:deploy/compose.native-candidate.yaml#api"
+    },
+    {
+      "authority": {
+        "kind": "repository-source",
+        "sourcePath": "deploy/compose.native-candidate.yaml"
+      },
+      "id": "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#migration#0",
+      "kind": "compose-declaration",
+      "sourceDigest": "57098cbc366ca0ae26b3011b2ad01872ea3cffeafbc576027c31341e668ed9a7",
+      "sourceEntryId": "compose-command:deploy/compose.native-candidate.yaml#migration"
+    },
+    {
+      "authority": {
+        "kind": "repository-source",
+        "sourcePath": "deploy/compose.native-candidate.yaml"
+      },
+      "id": "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#web#0",
+      "kind": "compose-declaration",
+      "sourceDigest": "57098cbc366ca0ae26b3011b2ad01872ea3cffeafbc576027c31341e668ed9a7",
+      "sourceEntryId": "compose-command:deploy/compose.native-candidate.yaml#web"
+    },
+    {
+      "authority": {
+        "kind": "repository-source",
+        "sourcePath": "deploy/compose.native-candidate.yaml"
+      },
+      "id": "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#worker#0",
+      "kind": "compose-declaration",
+      "sourceDigest": "57098cbc366ca0ae26b3011b2ad01872ea3cffeafbc576027c31341e668ed9a7",
+      "sourceEntryId": "compose-command:deploy/compose.native-candidate.yaml#worker"
+    },
+    {
+      "authority": {
+        "kind": "repository-source",
+        "sourcePath": "deploy/compose.local.yaml"
+      },
+      "id": "artifact:compose-declaration:compose-probe:deploy/compose.local.yaml#cloudflared#0",
+      "kind": "compose-declaration",
+      "sourceDigest": "ba801599ac1ad5daa27ea4973bb1f3f472f20d28c72230d4cdb618b71aab013b",
+      "sourceEntryId": "compose-probe:deploy/compose.local.yaml#cloudflared"
+    },
+    {
+      "authority": {
+        "kind": "repository-source",
+        "sourcePath": "deploy/compose.native-candidate.yaml"
+      },
+      "id": "artifact:compose-declaration:compose-probe:deploy/compose.native-candidate.yaml#api#0",
+      "kind": "compose-declaration",
+      "sourceDigest": "57098cbc366ca0ae26b3011b2ad01872ea3cffeafbc576027c31341e668ed9a7",
+      "sourceEntryId": "compose-probe:deploy/compose.native-candidate.yaml#api"
+    },
+    {
+      "authority": {
+        "kind": "repository-source",
+        "sourcePath": "deploy/compose.native-candidate.yaml"
+      },
+      "id": "artifact:compose-declaration:compose-probe:deploy/compose.native-candidate.yaml#web#0",
+      "kind": "compose-declaration",
+      "sourceDigest": "57098cbc366ca0ae26b3011b2ad01872ea3cffeafbc576027c31341e668ed9a7",
+      "sourceEntryId": "compose-probe:deploy/compose.native-candidate.yaml#web"
+    },
+    {
+      "authority": {
+        "kind": "repository-source",
+        "sourcePath": "deploy/compose.native-candidate.yaml"
+      },
+      "id": "artifact:compose-declaration:compose-probe:deploy/compose.native-candidate.yaml#worker#0",
+      "kind": "compose-declaration",
+      "sourceDigest": "57098cbc366ca0ae26b3011b2ad01872ea3cffeafbc576027c31341e668ed9a7",
+      "sourceEntryId": "compose-probe:deploy/compose.native-candidate.yaml#worker"
+    },
+    {
+      "authority": {
         "kind": "dockerfile-copy",
         "sourcePath": "Dockerfile"
       },
@@ -1788,76 +1878,6 @@
     {
       "authority": {
         "kind": "inventory-installed-path",
-        "sourcePath": "deploy/compose.local.yaml"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0644",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:compose-command:deploy/compose.local.yaml#cloudflared#0",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/compose.local.yaml",
-      "sourceEntryId": "compose-command:deploy/compose.local.yaml#cloudflared"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
-        "sourcePath": "deploy/compose.native-candidate.yaml"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0644",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#api#0",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/compose.native-candidate.yaml",
-      "sourceEntryId": "compose-command:deploy/compose.native-candidate.yaml#api"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
-        "sourcePath": "deploy/compose.native-candidate.yaml"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0644",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#migration#0",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/compose.native-candidate.yaml",
-      "sourceEntryId": "compose-command:deploy/compose.native-candidate.yaml#migration"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
-        "sourcePath": "deploy/compose.native-candidate.yaml"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0644",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#web#0",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/compose.native-candidate.yaml",
-      "sourceEntryId": "compose-command:deploy/compose.native-candidate.yaml#web"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
-        "sourcePath": "deploy/compose.native-candidate.yaml"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0644",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#worker#0",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/compose.native-candidate.yaml",
-      "sourceEntryId": "compose-command:deploy/compose.native-candidate.yaml#worker"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
         "sourcePath": "deploy/compose.yaml"
       },
       "contentRole": "operator-control",
@@ -1938,62 +1958,6 @@
       "ownerPolicy": "root",
       "path": "/opt/weather/current/deploy/compose.yaml",
       "sourceEntryId": "compose-command:deploy/compose.yaml#worker"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
-        "sourcePath": "deploy/compose.local.yaml"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0644",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:compose-probe:deploy/compose.local.yaml#cloudflared#0",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/compose.local.yaml",
-      "sourceEntryId": "compose-probe:deploy/compose.local.yaml#cloudflared"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
-        "sourcePath": "deploy/compose.native-candidate.yaml"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0644",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:compose-probe:deploy/compose.native-candidate.yaml#api#0",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/compose.native-candidate.yaml",
-      "sourceEntryId": "compose-probe:deploy/compose.native-candidate.yaml#api"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
-        "sourcePath": "deploy/compose.native-candidate.yaml"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0644",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:compose-probe:deploy/compose.native-candidate.yaml#web#0",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/compose.native-candidate.yaml",
-      "sourceEntryId": "compose-probe:deploy/compose.native-candidate.yaml#web"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
-        "sourcePath": "deploy/compose.native-candidate.yaml"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0644",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:compose-probe:deploy/compose.native-candidate.yaml#worker#0",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/compose.native-candidate.yaml",
-      "sourceEntryId": "compose-probe:deploy/compose.native-candidate.yaml#worker"
     },
     {
       "authority": {
@@ -2162,20 +2126,6 @@
       "ownerPolicy": "root",
       "path": "/opt/weather/current/deploy/scripts/ssh-dispatch.sh",
       "sourceEntryId": "forced-remote:deploy/scripts/ssh-dispatch.sh"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
-        "sourcePath": "deploy/scripts/ssh-run.sh"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0755",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:forced-remote:deploy/scripts/ssh-run.sh#0",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/scripts/ssh-run.sh",
-      "sourceEntryId": "forced-remote:deploy/scripts/ssh-run.sh"
     },
     {
       "authority": {
@@ -2372,20 +2322,6 @@
       "ownerPolicy": "root",
       "path": "/opt/weather/current/deploy/scripts/compatibility-provider.mjs",
       "sourceEntryId": "import:deploy/scripts/compatibility-provider.mjs"
-    },
-    {
-      "authority": {
-        "kind": "inventory-installed-path",
-        "sourcePath": "deploy/scripts/forecast-adjustment-scorecard-contract.mjs"
-      },
-      "contentRole": "operator-control",
-      "expectedMode": "0644",
-      "expectedType": "regular-file",
-      "id": "artifact:host-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#2",
-      "kind": "host-file",
-      "ownerPolicy": "root",
-      "path": "/opt/weather/current/deploy/scripts/forecast-adjustment-scorecard-contract.mjs",
-      "sourceEntryId": "import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs"
     },
     {
       "authority": {
@@ -23592,7 +23528,7 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:compose-command:deploy/compose.local.yaml#cloudflared#0"
+        "artifact:compose-declaration:compose-command:deploy/compose.local.yaml#cloudflared#0"
       ],
       "contextId": "runtime-context:workstation-runner:compose-command:deploy/compose.local.yaml#cloudflared#service=cloudflared",
       "entryId": "compose-command:deploy/compose.local.yaml#cloudflared",
@@ -23601,7 +23537,7 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:compose-probe:deploy/compose.local.yaml#cloudflared#0"
+        "artifact:compose-declaration:compose-probe:deploy/compose.local.yaml#cloudflared#0"
       ],
       "contextId": "runtime-context:workstation-runner:compose-command:deploy/compose.local.yaml#cloudflared#service=cloudflared",
       "entryId": "compose-probe:deploy/compose.local.yaml#cloudflared",
@@ -23610,7 +23546,7 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#api#0"
+        "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#api#0"
       ],
       "contextId": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#api#service=api",
       "entryId": "compose-command:deploy/compose.native-candidate.yaml#api",
@@ -23619,7 +23555,7 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:compose-probe:deploy/compose.native-candidate.yaml#api#0"
+        "artifact:compose-declaration:compose-probe:deploy/compose.native-candidate.yaml#api#0"
       ],
       "contextId": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#api#service=api",
       "entryId": "compose-probe:deploy/compose.native-candidate.yaml#api",
@@ -23628,7 +23564,7 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#migration#0"
+        "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#migration#0"
       ],
       "contextId": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#migration#service=migration",
       "entryId": "compose-command:deploy/compose.native-candidate.yaml#migration",
@@ -23637,7 +23573,7 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#web#0"
+        "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#web#0"
       ],
       "contextId": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#web#service=web",
       "entryId": "compose-command:deploy/compose.native-candidate.yaml#web",
@@ -23646,7 +23582,7 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:compose-probe:deploy/compose.native-candidate.yaml#web#0"
+        "artifact:compose-declaration:compose-probe:deploy/compose.native-candidate.yaml#web#0"
       ],
       "contextId": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#web#service=web",
       "entryId": "compose-probe:deploy/compose.native-candidate.yaml#web",
@@ -23655,7 +23591,7 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#worker#0"
+        "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#worker#0"
       ],
       "contextId": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#worker#service=worker",
       "entryId": "compose-command:deploy/compose.native-candidate.yaml#worker",
@@ -23664,7 +23600,7 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:compose-probe:deploy/compose.native-candidate.yaml#worker#0"
+        "artifact:compose-declaration:compose-probe:deploy/compose.native-candidate.yaml#worker#0"
       ],
       "contextId": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#worker#service=worker",
       "entryId": "compose-probe:deploy/compose.native-candidate.yaml#worker",
@@ -23672,9 +23608,7 @@
       "rootEntryId": "compose-command:deploy/compose.native-candidate.yaml#worker"
     },
     {
-      "artifactIds": [
-        "artifact:host-file:forced-remote:deploy/scripts/ssh-run.sh#0"
-      ],
+      "artifactIds": [],
       "contextId": "runtime-context:workstation-runner:forced-remote:deploy/scripts/ssh-run.sh#host=workstation",
       "entryId": "forced-remote:deploy/scripts/ssh-run.sh",
       "id": "runtime-binding:runtime-context:workstation-runner:forced-remote:deploy/scripts/ssh-run.sh#host=workstation:forced-remote:deploy/scripts/ssh-run.sh",
@@ -23682,7 +23616,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evaluation-package.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evaluation-package.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:private-command:scripts/install-adjustment-maintenance-runner.sh#account=ubuntu",
@@ -23692,7 +23625,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evidence-store.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evidence-store.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:private-command:scripts/install-adjustment-maintenance-runner.sh#account=ubuntu",
@@ -23702,7 +23634,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#2",
         "artifact:runner-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:private-command:scripts/install-adjustment-maintenance-runner.sh#account=ubuntu",
@@ -26030,7 +25961,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evaluation-package.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evaluation-package.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:systemd-service:scripts/systemd/system/weather-adjustment-archive.service#account=ubuntu",
@@ -26040,7 +25970,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evidence-store.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evidence-store.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:systemd-service:scripts/systemd/system/weather-adjustment-archive.service#account=ubuntu",
@@ -26050,7 +25979,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#2",
         "artifact:runner-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:systemd-service:scripts/systemd/system/weather-adjustment-archive.service#account=ubuntu",
@@ -26631,7 +26559,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evaluation-package.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evaluation-package.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:systemd-service:scripts/systemd/system/weather-adjustment-daily.service#account=ubuntu",
@@ -26641,7 +26568,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evidence-store.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evidence-store.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:systemd-service:scripts/systemd/system/weather-adjustment-daily.service#account=ubuntu",
@@ -26651,7 +26577,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#2",
         "artifact:runner-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:systemd-service:scripts/systemd/system/weather-adjustment-daily.service#account=ubuntu",
@@ -27214,7 +27139,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evaluation-package.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evaluation-package.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:systemd-service:scripts/systemd/system/weather-adjustment-monthly.service#account=ubuntu",
@@ -27224,7 +27148,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evidence-store.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evidence-store.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:systemd-service:scripts/systemd/system/weather-adjustment-monthly.service#account=ubuntu",
@@ -27234,7 +27157,6 @@
     },
     {
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#2",
         "artifact:runner-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#0"
       ],
       "contextId": "runtime-context:workstation-runner:systemd-service:scripts/systemd/system/weather-adjustment-monthly.service#account=ubuntu",
@@ -28279,7 +28201,7 @@
       "accountingScopes": [
         "release-control:static-source"
       ],
-      "activationSource": "process-identity",
+      "activationSource": "never-active-alternative",
       "artifactIds": [
         "artifact:host-file:forced-remote:deploy/scripts/native-dashboard-release-control.sh#0"
       ],
@@ -28290,14 +28212,20 @@
       "rootEntryId": "forced-remote:deploy/scripts/native-dashboard-release-control.sh",
       "rootKind": "host-file",
       "service": null,
-      "unit": null
+      "unit": null,
+      "activationSourceByGeneration": {
+        "node-v1": "never-active-alternative",
+        "node-v1-rollback": "never-active-alternative",
+        "rust-v1": "process-identity",
+        "mixed": "never-active-alternative"
+      }
     },
     {
       "accountPolicy": null,
       "accountingScopes": [
         "release-control:static-source"
       ],
-      "activationSource": "process-identity",
+      "activationSource": "never-active-alternative",
       "artifactIds": [
         "artifact:host-file:forced-remote:deploy/scripts/native-evidence-remote-dispatch.sh#0",
         "artifact:host-file:native-binary:host-evidence#0"
@@ -28309,14 +28237,20 @@
       "rootEntryId": "forced-remote:deploy/scripts/native-evidence-remote-dispatch.sh",
       "rootKind": "host-file",
       "service": null,
-      "unit": null
+      "unit": null,
+      "activationSourceByGeneration": {
+        "node-v1": "never-active-alternative",
+        "node-v1-rollback": "never-active-alternative",
+        "rust-v1": "process-identity",
+        "mixed": "never-active-alternative"
+      }
     },
     {
       "accountPolicy": null,
       "accountingScopes": [
         "release-control:static-source"
       ],
-      "activationSource": "process-identity",
+      "activationSource": "never-active-alternative",
       "artifactIds": [
         "artifact:host-file:forced-remote:deploy/scripts/native-generation-remote-ops.sh#0",
         "artifact:host-file:forced-remote:deploy/scripts/native-generation-remote-ops.sh#1",
@@ -28329,14 +28263,20 @@
       "rootEntryId": "forced-remote:deploy/scripts/native-generation-remote-ops.sh",
       "rootKind": "host-file",
       "service": null,
-      "unit": null
+      "unit": null,
+      "activationSourceByGeneration": {
+        "node-v1": "never-active-alternative",
+        "node-v1-rollback": "never-active-alternative",
+        "rust-v1": "process-identity",
+        "mixed": "never-active-alternative"
+      }
     },
     {
       "accountPolicy": null,
       "accountingScopes": [
         "release-control:static-source"
       ],
-      "activationSource": "process-identity",
+      "activationSource": "never-active-alternative",
       "artifactIds": [
         "artifact:host-file:forced-remote:deploy/scripts/native-release-control-remote-dispatch.sh#0"
       ],
@@ -28347,7 +28287,13 @@
       "rootEntryId": "forced-remote:deploy/scripts/native-release-control-remote-dispatch.sh",
       "rootKind": "host-file",
       "service": null,
-      "unit": null
+      "unit": null,
+      "activationSourceByGeneration": {
+        "node-v1": "never-active-alternative",
+        "node-v1-rollback": "never-active-alternative",
+        "rust-v1": "process-identity",
+        "mixed": "never-active-alternative"
+      }
     },
     {
       "accountPolicy": null,
@@ -32201,8 +32147,8 @@
       ],
       "activationSource": "never-active-alternative",
       "artifactIds": [
-        "artifact:host-file:compose-command:deploy/compose.local.yaml#cloudflared#0",
-        "artifact:host-file:compose-probe:deploy/compose.local.yaml#cloudflared#0"
+        "artifact:compose-declaration:compose-command:deploy/compose.local.yaml#cloudflared#0",
+        "artifact:compose-declaration:compose-probe:deploy/compose.local.yaml#cloudflared#0"
       ],
       "hostRole": "workstation",
       "id": "runtime-context:workstation-runner:compose-command:deploy/compose.local.yaml#cloudflared#service=cloudflared",
@@ -32220,8 +32166,8 @@
       ],
       "activationSource": "never-active-alternative",
       "artifactIds": [
-        "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#api#0",
-        "artifact:host-file:compose-probe:deploy/compose.native-candidate.yaml#api#0"
+        "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#api#0",
+        "artifact:compose-declaration:compose-probe:deploy/compose.native-candidate.yaml#api#0"
       ],
       "hostRole": "workstation",
       "id": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#api#service=api",
@@ -32239,7 +32185,7 @@
       ],
       "activationSource": "never-active-alternative",
       "artifactIds": [
-        "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#migration#0"
+        "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#migration#0"
       ],
       "hostRole": "workstation",
       "id": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#migration#service=migration",
@@ -32257,8 +32203,8 @@
       ],
       "activationSource": "never-active-alternative",
       "artifactIds": [
-        "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#web#0",
-        "artifact:host-file:compose-probe:deploy/compose.native-candidate.yaml#web#0"
+        "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#web#0",
+        "artifact:compose-declaration:compose-probe:deploy/compose.native-candidate.yaml#web#0"
       ],
       "hostRole": "workstation",
       "id": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#web#service=web",
@@ -32276,8 +32222,8 @@
       ],
       "activationSource": "never-active-alternative",
       "artifactIds": [
-        "artifact:host-file:compose-command:deploy/compose.native-candidate.yaml#worker#0",
-        "artifact:host-file:compose-probe:deploy/compose.native-candidate.yaml#worker#0"
+        "artifact:compose-declaration:compose-command:deploy/compose.native-candidate.yaml#worker#0",
+        "artifact:compose-declaration:compose-probe:deploy/compose.native-candidate.yaml#worker#0"
       ],
       "hostRole": "workstation",
       "id": "runtime-context:workstation-runner:compose-command:deploy/compose.native-candidate.yaml#worker#service=worker",
@@ -32294,9 +32240,7 @@
         "release-control:static-source"
       ],
       "activationSource": "process-identity",
-      "artifactIds": [
-        "artifact:host-file:forced-remote:deploy/scripts/ssh-run.sh#0"
-      ],
+      "artifactIds": [],
       "hostRole": "workstation",
       "id": "runtime-context:workstation-runner:forced-remote:deploy/scripts/ssh-run.sh#host=workstation",
       "imageTarget": null,
@@ -32317,9 +32261,6 @@
       ],
       "activationSource": "systemd-show",
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evaluation-package.mjs#2",
-        "artifact:host-file:import:deploy/scripts/adjustment-evidence-store.mjs#2",
-        "artifact:host-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evaluation-package.mjs#0",
         "artifact:runner-file:import:deploy/scripts/adjustment-evidence-store.mjs#0",
         "artifact:runner-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#0",
@@ -32670,9 +32611,6 @@
       ],
       "activationSource": "systemd-show",
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evaluation-package.mjs#2",
-        "artifact:host-file:import:deploy/scripts/adjustment-evidence-store.mjs#2",
-        "artifact:host-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evaluation-package.mjs#0",
         "artifact:runner-file:import:deploy/scripts/adjustment-evidence-store.mjs#0",
         "artifact:runner-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#0",
@@ -32755,9 +32693,6 @@
       ],
       "activationSource": "systemd-show",
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evaluation-package.mjs#2",
-        "artifact:host-file:import:deploy/scripts/adjustment-evidence-store.mjs#2",
-        "artifact:host-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evaluation-package.mjs#0",
         "artifact:runner-file:import:deploy/scripts/adjustment-evidence-store.mjs#0",
         "artifact:runner-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#0",
@@ -32838,9 +32773,6 @@
       ],
       "activationSource": "systemd-show",
       "artifactIds": [
-        "artifact:host-file:import:deploy/scripts/adjustment-evaluation-package.mjs#2",
-        "artifact:host-file:import:deploy/scripts/adjustment-evidence-store.mjs#2",
-        "artifact:host-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#2",
         "artifact:runner-file:import:deploy/scripts/adjustment-evaluation-package.mjs#0",
         "artifact:runner-file:import:deploy/scripts/adjustment-evidence-store.mjs#0",
         "artifact:runner-file:import:deploy/scripts/forecast-adjustment-scorecard-contract.mjs#0",

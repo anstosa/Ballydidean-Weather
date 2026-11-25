@@ -35,6 +35,16 @@ export const fastExcludedFiles = Object.freeze([
   "scripts/research/build_humidity_dataset.test.mjs",
 ]);
 
+// preserve the approved retired r2 source-proof suites for standalone historical use
+export const retiredR2TestFiles = Object.freeze([
+  "scripts/backend-clock-catalog-report.test.mjs",
+  "scripts/backend-clock-occurrences.test.mjs",
+  "scripts/backend-nonmodule-source-analysis.test.mjs",
+  "scripts/backend-operation-source-graph.test.mjs",
+  "scripts/backend-reference-time-source-proof.test.mjs",
+  "scripts/check-backend-reference-time-source.test.mjs",
+]);
+
 export const smokeNames = Object.freeze([
   "public navigation updates the URL and restores routed content from history",
   "anonymous home-network viewers see indoor and soil panels only while allowed",
@@ -64,6 +74,48 @@ export async function collectTestPlan(root, groups = unitGroups) {
   }
 
   return plan;
+}
+
+// apply the approved retirement without hiding any unnamed suite
+export function partitionRetiredR2Tests(plan) {
+  const retiredNames = new Set(retiredR2TestFiles);
+  const found = new Set();
+  const active = [];
+  const retired = [];
+
+  // partition every discovered path without wildcard exclusions
+  for (const group of plan) {
+    const activeFiles = [];
+    const retiredFiles = [];
+
+    // retain each retired suite in an explicit historical plan
+    for (const file of group.files) {
+      if (retiredNames.has(file)) {
+        found.add(file);
+        retiredFiles.push(file);
+      } else {
+        activeFiles.push(file);
+      }
+    }
+
+    // preserve nonempty active workspace groups
+    if (activeFiles.length > 0) {
+      active.push({ ...group, files: activeFiles });
+    }
+    // preserve nonempty retired groups for standalone selection
+    if (retiredFiles.length > 0) {
+      retired.push({ ...group, files: retiredFiles });
+    }
+  }
+
+  // reject stale names instead of silently changing the retired boundary
+  for (const file of retiredR2TestFiles) {
+    if (!found.has(file)) {
+      throw new Error(`retired R2 test missing from discovered plan: ${file}`);
+    }
+  }
+
+  return { active, retired };
 }
 
 // omit only offline research and retained replay work from routine commits
@@ -223,7 +275,10 @@ async function main(profile) {
 
   const groups = profile === "integration" ? integrationGroups : unitGroups;
   const fullPlan = await collectTestPlan(repositoryRoot, groups);
-  const plan = profile === "fast" ? filterFastTests(fullPlan) : fullPlan;
+  const { active } = profile === "integration"
+    ? { active: fullPlan }
+    : partitionRetiredR2Tests(fullPlan);
+  const plan = profile === "fast" ? filterFastTests(active) : active;
 
   // retain the previous sequential group execution order
   for (const group of plan) {

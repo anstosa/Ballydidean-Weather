@@ -288,6 +288,7 @@ test("Check gates compilation on the current runtime inventory", async () => {
     "          npm run runtime-inventory:check -- --generation node-v1 --phase baseline",
     "          npm run runtime-inventory:check -- --generation node-v1 --phase rollback-drill",
     "          npm run runtime-inventory:check -- --generation mixed --phase pre-cutover",
+    "          npm run runtime-inventory:check -- --generation rust-v1 --phase pre-cutover",
   ]);
 });
 

@@ -100,6 +100,7 @@ const LIVE_MAP_ACTIVATION_SOURCES = new Set([
   "never-active-alternative",
 ]);
 const LIVE_MAP_ARTIFACT_KINDS = new Set([
+  "compose-declaration",
   "host-file",
   "container-file",
   "package-metadata",
@@ -2982,6 +2983,21 @@ function sourceArtifactsForEntry(entry, entries) {
   const artifacts = [];
   let index = 0;
 
+  // preserve nonproduction Compose declarations without inventing a host installation
+  if (
+    (entry.kind === "compose-command" || entry.kind === "compose-probe") &&
+    entry.sourcePath !== "deploy/compose.yaml"
+  ) {
+    artifacts.push({
+      authority: { kind: "repository-source", sourcePath: entry.sourcePath },
+      id: runtimeArtifactId("compose-declaration", entry.id, index),
+      kind: "compose-declaration",
+      sourceDigest: entry.sourceDigest,
+      sourceEntryId: entry.id,
+    });
+    index += 1;
+  }
+
   // preserve copied package.json definitions without executable promotion
   if (entry.kind === "package-script" && entry.parents.length === 0) {
     for (const imageTarget of packageImageTargets(entry.sourcePath, entries)) {
@@ -3155,6 +3171,12 @@ function runtimeClosureEntries(entries, rootEntryId) {
 
 // decide whether one artifact belongs to one context instance
 function artifactMatchesContext(artifact, context, entry, rootEntryId) {
+  // bind source-only Compose declarations to their exact inactive local service
+  if (artifact.kind === "compose-declaration") {
+    return context.rootKind === "compose-service" &&
+      context.activationSource === "never-active-alternative" &&
+      (entry.id === rootEntryId || entry.kind === "compose-probe");
+  }
   // bind package definitions only to their exact package root image
   if (artifact.kind === "package-metadata") {
     return entry.id === rootEntryId && context.rootKind === "package-script" &&
@@ -3179,6 +3201,10 @@ function artifactMatchesContext(artifact, context, entry, rootEntryId) {
   }
   // bind host control files to host contexts and exact Compose declarations
   if (artifact.kind === "host-file") {
+    // keep Blueberry-owned paths out of workstation runner observations
+    if (context.hostRole !== "blueberry") {
+      return false;
+    }
     return context.imageTarget === null || (
       context.rootKind === "compose-service" &&
       (entry.id === rootEntryId || entry.kind === "compose-probe")
@@ -3219,6 +3245,7 @@ function isGenerationSelectedAlternative(entry) {
   return entry.kind === "runtime-generation-command" ||
     entry.kind === "runtime-generation-probe" ||
     entry.kind === "native-binary" ||
+    (entry.kind === "forced-remote" && NATIVE_EVIDENCE_REMOTE_PATHS.has(entry.sourcePath)) ||
     entry.sourcePath.startsWith("scripts/systemd/native/") ||
     entry.id.includes("#ADJUSTMENT_RUNNER_NATIVE_") ||
     ["native-server", "native-web"].includes(entry.id.split("#").at(-1));
@@ -3345,6 +3372,7 @@ function artifactSemanticIdentity(artifact) {
 function validateRuntimeMapArtifactShape(artifact, path, diagnostics) {
   const common = new Set(["authority", "id", "kind", "sourceEntryId"]);
   const variants = {
+    "compose-declaration": ["sourceDigest"],
     "container-file": ["contentRole", "expectedMode", "expectedType", "imageTarget", "ownerPolicy", "path"],
     "host-file": ["contentRole", "expectedMode", "expectedType", "ownerPolicy", "path"],
     "image-config": ["declaredCmd", "declaredEntrypoint", "imageTarget"],

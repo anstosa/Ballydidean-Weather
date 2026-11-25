@@ -10971,7 +10971,7 @@
       "installedPaths": [
         "/opt/weather/current/scripts/backend-host-observation.mjs"
       ],
-      "sourceDigest": "b8c52184622a109a8478eb7991aa8afd4e59647fc9b3b947dd855feb300e72d9",
+      "sourceDigest": "68897bf860c623e8ce65853e7de67eed22c044aacee40c45fb978a63c2bc1ac7",
       "parents": [
         {
           "type": "import",
@@ -10986,7 +10986,7 @@
       ],
       "command": null,
       "probe": null,
-      "entryDigest": "cede17425b92ebf5a977b0ae96bcb449d7236691a29a6ad20e77723fb51e9f1b",
+      "entryDigest": "df8fa41f349fc928aa7622ab436a1a83d5f7a8bcf3dd3e00ecc4a0d783f2d6d2",
       "owner": "performance-evidence",
       "parityTest": "node --test scripts/backend-performance-receipts.test.mjs scripts/database-page-performance.test.mjs",
       "accountingScope": "release-control:performance-evidence",

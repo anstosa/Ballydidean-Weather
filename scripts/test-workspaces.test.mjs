@@ -6,6 +6,8 @@ import {
   collectTestPlan,
   fastExcludedFiles,
   filterFastTests,
+  partitionRetiredR2Tests,
+  retiredR2TestFiles,
   assertSmokePassCount,
   smokeNames,
   validateSmokeNames,
@@ -41,10 +43,33 @@ test("compiled full tests include every unit suite and research script", async (
   ]);
 });
 
+// keep the approved retired source-proof boundary exact and reviewable
+test("compiled execution separates only the exact retired R2 source-proof family", async () => {
+  const discovered = await collectTestPlan(root);
+  const { active, retired } = partitionRetiredR2Tests(discovered);
+  const discoveredPaths = paths(discovered);
+  const activePaths = paths(active);
+  const retiredPaths = paths(retired);
+
+  assert.deepEqual(retiredPaths, retiredR2TestFiles);
+  assert.deepEqual(
+    discoveredPaths.filter((file) => !activePaths.includes(file)),
+    retiredR2TestFiles,
+  );
+  assert.equal(activePaths.length + retiredPaths.length, discoveredPaths.length);
+  assert.equal(new Set([...activePaths, ...retiredPaths]).size, discoveredPaths.length);
+  assert.ok(activePaths.includes("scripts/backend-performance-direct-evaluator.test.mjs"));
+  assert.ok(activePaths.includes("scripts/backend-host-observation.test.mjs"));
+  assert.ok(activePaths.includes("scripts/check-backend-runtime-inventory.test.mjs"));
+  assert.ok(activePaths.includes("scripts/check-rust-source-quality.test.mjs"));
+  assert.ok(activePaths.includes("scripts/generate-rust-contracts.test.mjs"));
+});
+
 // make the fast exclusions explicit and prove no other suite disappears
 test("fast tests omit only named offline research and retained replay suites", async () => {
-  const full = paths(await collectTestPlan(root));
-  const fast = paths(filterFastTests(await collectTestPlan(root)));
+  const { active } = partitionRetiredR2Tests(await collectTestPlan(root));
+  const full = paths(active);
+  const fast = paths(filterFastTests(active));
   const removed = full.filter((file) => !fast.includes(file));
 
   assert.deepEqual(new Set(removed), new Set(fastExcludedFiles));

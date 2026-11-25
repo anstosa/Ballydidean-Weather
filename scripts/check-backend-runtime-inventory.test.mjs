@@ -1230,6 +1230,119 @@ test("checked runtime map deduplicates literal runner homes outside Blueberry", 
   }
 });
 
+// keep host-owned release files on Blueberry and runner snapshots on the workstation
+test("derived runtime map separates Blueberry host files from runner contexts", async () => {
+  const { deriveRuntimeLiveMap } = await runtimeLiveMapApi();
+  const inventory = await readRepositoryJson(MANIFEST_PATH);
+  const runtimeMap = deriveRuntimeLiveMap({ entries: inventory.entries });
+  const artifactsById = new Map(runtimeMap.artifacts.map(
+    // index every derived artifact by its checked identity
+    (artifact) => [artifact.id, artifact],
+  ));
+  const workstationContexts = runtimeMap.contexts.filter(
+    // select every workstation runtime instance
+    (context) => context.profile === "workstation-runner",
+  );
+  assert.ok(workstationContexts.length > 0);
+
+  // reject every host-file binding from workstation instances
+  for (const context of workstationContexts) {
+    const artifacts = context.artifactIds.map(
+      // resolve the context's exact artifact set
+      (artifactId) => artifactsById.get(artifactId),
+    );
+    assert.equal(
+      artifacts.some(
+        // reject Blueberry host ownership in the runner profile
+        (artifact) => artifact?.kind === "host-file",
+      ),
+      false,
+      context.id,
+    );
+  }
+  const runnerContexts = workstationContexts.filter(
+    // select account-resolved runner installations
+    (context) => context.accountPolicy !== null,
+  );
+  assert.ok(runnerContexts.some(
+    // retain the runner-owned artifact domain after filtering host files
+    (context) => context.artifactIds.some(
+      // require at least one installed runner snapshot
+      (artifactId) => artifactsById.get(artifactId)?.kind === "runner-file",
+    ),
+  ));
+  const localCloudflared = requireMapContext(
+    runtimeMap,
+    "compose-command:deploy/compose.local.yaml#cloudflared",
+  );
+  const localDeclarations = localCloudflared.artifactIds.map(
+    // resolve the local declarative-only artifact set
+    (artifactId) => artifactsById.get(artifactId),
+  );
+  assert.equal(localDeclarations.length, 2);
+  assert.ok(localDeclarations.every(
+    // keep source evidence outside every installed-file domain
+    (artifact) => artifact?.kind === "compose-declaration" &&
+      artifact.authority.kind === "repository-source" &&
+      artifact.sourceDigest !== undefined &&
+      artifact.path === undefined,
+  ));
+  const blueberryHostArtifacts = runtimeMap.artifacts.filter(
+    // retain exact host files in the Blueberry domain
+    (artifact) => artifact.kind === "host-file",
+  );
+  assert.ok(blueberryHostArtifacts.some(
+    // preserve the production Compose release path
+    (artifact) => artifact.path === "/opt/weather/current/deploy/compose.yaml",
+  ));
+  assert.ok(blueberryHostArtifacts.some(
+    // preserve one shared release module on Blueberry
+    (artifact) => artifact.path ===
+      "/opt/weather/current/deploy/scripts/adjustment-evidence-store.mjs",
+  ));
+
+  // require every retained host file to bind only to Blueberry contexts
+  for (const artifact of blueberryHostArtifacts) {
+    const owners = runtimeMap.contexts.filter(
+      // resolve every context that observes this host file
+      (context) => context.artifactIds.includes(artifact.id),
+    );
+    assert.ok(owners.length > 0, artifact.id);
+    assert.ok(owners.every(
+      // enforce the host role at the binding boundary
+      (context) => context.profile === "blueberry-compose" &&
+        context.hostRole === "blueberry",
+    ), artifact.id);
+  }
+});
+
+// gate native remote controls on the selected Rust generation
+test("derived runtime map generation-gates native remote controls", async () => {
+  const { deriveRuntimeLiveMap } = await runtimeLiveMapApi();
+  const inventory = await readRepositoryJson(MANIFEST_PATH);
+  const runtimeMap = deriveRuntimeLiveMap({ entries: inventory.entries });
+  const sourcePaths = [
+    "deploy/scripts/native-dashboard-release-control.sh",
+    "deploy/scripts/native-evidence-remote-dispatch.sh",
+    "deploy/scripts/native-generation-remote-ops.sh",
+    "deploy/scripts/native-release-control-remote-dispatch.sh",
+  ];
+
+  // require every native-only control to remain inactive before Rust selection
+  for (const sourcePath of sourcePaths) {
+    const context = requireMapContext(runtimeMap, `forced-remote:${sourcePath}`);
+    assert.equal(context.profile, "blueberry-compose");
+    assert.equal(context.activationSource, "never-active-alternative");
+    assert.deepEqual(context.activationSourceByGeneration, {
+      mixed: "never-active-alternative",
+      "node-v1": "never-active-alternative",
+      "node-v1-rollback": "never-active-alternative",
+      "rust-v1": "process-identity",
+    });
+    assert.ok(context.artifactIds.length > 0, context.id);
+  }
+});
+
 // require the checked map to match its exact source-owned artifact set
 test("checked runtime map rejects missing duplicate and semantically changed artifacts", async (testContext) => {
   const { validateRuntimeLiveMap } = await runtimeLiveMapApi();
@@ -1440,7 +1553,7 @@ test("runtime map covers Compose probes and worker performance executables", asy
     // select every declared Compose probe
     (entry) => entry.kind === "compose-probe",
   );
-  assert.equal(probeEntries.length, 6);
+  assert.equal(probeEntries.length, 9);
 
   // require each probe in its exact source root and runtime instance
   for (const probe of probeEntries) {
@@ -2259,6 +2372,23 @@ readonly -a ADJUSTMENT_RUNNER_FILES=(
       null,
     );
     nativeArchive.generations["rust-v1"] = generationDeclaration(true, nativeArchive, null);
+
+    // model the native-only host controls selected by the Rust generation
+    for (const sourcePath of [
+      "deploy/scripts/native-dashboard-release-control.sh",
+      "deploy/scripts/native-evidence-remote-dispatch.sh",
+      "deploy/scripts/native-generation-remote-ops.sh",
+      "deploy/scripts/native-release-control-remote-dispatch.sh",
+    ]) {
+      const nativeControl = requireEntryId(manifest.entries, `forced-remote:${sourcePath}`);
+      nativeControl.generations["node-v1"] = generationDeclaration(false, nativeControl, null);
+      nativeControl.generations["node-v1-rollback"] = generationDeclaration(
+        false,
+        nativeControl,
+        null,
+      );
+      nativeControl.generations["rust-v1"] = generationDeclaration(true, nativeControl, null);
+    }
     rebuildGenerationPolicies(manifest);
     assert.equal(nativeArchive.generations["rust-v1"].reachable, true);
     await writeJson(rootDir, MANIFEST_PATH, manifest);
@@ -2286,7 +2416,13 @@ readonly -a ADJUSTMENT_RUNNER_FILES=(
       (context) => context.rootEntryId === releaseControl.id,
     );
     assert.equal(releaseControlContext?.profile, "blueberry-compose");
-    assert.equal(releaseControlContext?.activationSource, "process-identity");
+    assert.equal(releaseControlContext?.activationSource, "never-active-alternative");
+    assert.deepEqual(releaseControlContext?.activationSourceByGeneration, {
+      mixed: "never-active-alternative",
+      "node-v1": "never-active-alternative",
+      "node-v1-rollback": "never-active-alternative",
+      "rust-v1": "process-identity",
+    });
     const nativeApiContext = runtimeMap.contexts.find(
       // select the exact generation-switched production API context
       (context) => context.rootEntryId ===

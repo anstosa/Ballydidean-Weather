@@ -2545,8 +2545,9 @@ test("collector emits the complete profile-specific probe catalog", async (testC
         }
       }
       const contexts = runtimeMap.contexts.filter(
-        // select the exact profile runtime instances
-        (context) => context.profile === fixtureCase.profile,
+        // select physical runtime instances for this profile
+        (context) => context.profile === fixtureCase.profile &&
+          context.activationSource !== "never-active-alternative",
       );
 
       // retain every exact context and artifact probe identity
@@ -2669,7 +2670,7 @@ test("collector executes dependent profile probes after valid prerequisites", as
         const controlPlane = JSON.parse(
           Buffer.from(controlProbe.raw.stdout.dataBase64, "base64").toString("utf8"),
         );
-        assert.equal(controlPlane.files.length, 43);
+        assert.equal(controlPlane.files.length, 57);
         assert.equal(
           controlPlane.controlPlaneSha256,
           OPERATOR_FIXTURE.receipt.controlPlaneSha256,
@@ -2686,8 +2687,9 @@ test("collector executes dependent profile probes after valid prerequisites", as
         (call) => call.program === "/usr/bin/systemctl" && call.args[0] === "cat",
       ), false);
       const profileContexts = runtimeMap.contexts.filter(
-        // select exact runtime instances for this profile
-        (context) => context.profile === profile,
+        // select physical runtime instances for this profile
+        (context) => context.profile === profile &&
+          context.activationSource !== "never-active-alternative",
       );
       const expectedArtifactProbe = profileContexts.flatMap(
         // retain every context-specific artifact identity
@@ -2711,6 +2713,22 @@ test("collector executes dependent profile probes after valid prerequisites", as
         runtimeMap,
       });
       assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+
+      // keep phase-selected native alternatives outside legacy proof authority
+      if (profile === "blueberry-compose") {
+        const selectedNative = buildBackendHostObservation({
+          evidence,
+          inventory: JSON.parse(request.inventory.json),
+          phase: "post-cutover",
+          runtimeMap,
+        });
+        assert.equal(selectedNative.ok, false);
+        assert.ok(selectedNative.diagnostics.some(
+          // require the explicit native receipt boundary
+          (diagnostic) => diagnostic.code === "host.binding" &&
+            diagnostic.path === "$.phase",
+        ));
+      }
       assert.equal(evidence.authority.liveEligible, false);
     });
   }
@@ -4133,10 +4151,10 @@ test("Blueberry observation rejects substituted operator receipt and unit facts"
 
 // bind the current-v1 receipt to the complete installed control-plane tree
 test("Blueberry observation rejects incomplete or drifted v17 control-plane trees", () => {
-  assert.equal(CONTROL_PLANE_TREE_FIXTURE.files.length, 43);
+  assert.equal(CONTROL_PLANE_TREE_FIXTURE.files.length, 57);
   assert.equal(
     CONTROL_PLANE_TREE_FIXTURE.controlPlaneSha256,
-    "7077e4ec4cc757b5b31cf76c771a98e693346a65f19e96999f748e9b7e67cf67",
+    "b2a211e5936fe0063f552a5e0d9ccf9a89b61a308ab9accf58e95fa54325822d",
   );
   assert.equal(CONTROL_PLANE_TREE_FIXTURE.files.at(-1).path, "deploy/compose.yaml");
   assert.deepEqual(

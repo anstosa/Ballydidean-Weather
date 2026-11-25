@@ -725,6 +725,12 @@ export const HOST_SECURE_READER_SHA256 = createHash("sha256")
 const INVENTORY_SCHEMA_VERSION = "backend-runtime-inventory/v1";
 const RUNTIME_MAP_SCHEMA_VERSION = "weather-backend-runtime-live-map/v1";
 const PHASES = new Set(["baseline", "pre-cutover", "post-cutover", "rollback-drill"]);
+const GENERATION_BY_PHASE = Object.freeze({
+  baseline: "node-v1",
+  "post-cutover": "rust-v1",
+  "pre-cutover": "mixed",
+  "rollback-drill": "node-v1-rollback",
+});
 const SERVICES = Object.freeze(["api", "cloudflared", "migration", "postgres", "web", "worker"]);
 const IMAGE_ROLES = Object.freeze(["cloudflared", "postgres", "server", "web"]);
 const IMAGE_ROLE_BY_SERVICE = Object.freeze({
@@ -891,6 +897,19 @@ const ACTIVE_HOST_SEMANTIC_CONTEXT = Object.freeze({
   services: SERVICES,
 });
 
+// keep declarative alternatives outside physical host evidence
+function contextRequiresPhysicalEvidence(context) {
+  return context.activationSource !== "never-active-alternative";
+}
+
+// detect a phase that selects evidence outside the legacy observer
+function phaseSelectsDeclarativeContext(context, phase) {
+  const generation = GENERATION_BY_PHASE[phase];
+  const selected = context.activationSourceByGeneration?.[generation];
+  return !contextRequiresPhysicalEvidence(context) && selected !== undefined &&
+    selected !== "never-active-alternative";
+}
+
 // build the finite planned fact catalog from the reviewed source map
 function plannedProbeCatalog(source, profile, includeOperator = false, context = ACTIVE_HOST_SEMANTIC_CONTEXT) {
   const catalog = new Map();
@@ -964,8 +983,8 @@ function plannedProbeCatalog(source, profile, includeOperator = false, context =
 
   // retain every exact per-context artifact installation
   for (const context of source.runtimeMap.contexts) {
-    // skip contexts owned by the other fixed profile
-    if (context.profile !== profile) {
+    // skip other hosts and declarative-only alternatives
+    if (context.profile !== profile || !contextRequiresPhysicalEvidence(context)) {
       continue;
     }
 
@@ -2212,6 +2231,7 @@ function validateArtifactPathDomain(artifact) {
   const allowed = value.startsWith("/opt/weather/") ||
     value.startsWith("/etc/systemd/system/") ||
     value.startsWith("/usr/local/bin/") ||
+    value === "/usr/local/sbin/weather-remote-ops" ||
     value.startsWith("/home/ubuntu/.weather/adjustment-maintenance/runner/current/") ||
     value.startsWith("${HOME}/");
 
@@ -4060,8 +4080,8 @@ async function collectArtifactProbes(state, profile) {
 
   // traverse only exact contexts owned by this fixed profile
   contexts: for (const context of state.source.runtimeMap.contexts) {
-    // skip contexts on the other fixed host
-    if (context.profile !== profile) {
+    // skip other hosts and declarative-only alternatives
+    if (context.profile !== profile || !contextRequiresPhysicalEvidence(context)) {
       continue;
     }
 
@@ -4710,8 +4730,8 @@ function expectedProbeIdentity(source, profile, id, probes, context = ACTIVE_HOS
   // bind each artifact to its exact source-owned context and activation prerequisite
   if (id.startsWith("artifact.")) {
     for (const context of source.runtimeMap.contexts) {
-      // inspect only contexts on this fixed profile
-      if (context.profile !== profile) {
+      // inspect only physical contexts on this fixed profile
+      if (context.profile !== profile || !contextRequiresPhysicalEvidence(context)) {
         continue;
       }
       for (const artifactId of context.artifactIds) {
@@ -5996,8 +6016,8 @@ function buildArtifacts(
 
   // derive one observation per exact runtime context artifact
   for (const context of runtimeMap.contexts.filter(
-    // retain only this host profile
-    (candidate) => candidate.profile === profile,
+    // retain only physical contexts on this host profile
+    (candidate) => candidate.profile === profile && contextRequiresPhysicalEvidence(candidate),
   )) {
     for (const artifactId of context.artifactIds) {
       const artifact = artifactsById.get(artifactId);
@@ -6623,6 +6643,19 @@ function buildBackendHostObservationCore(
       observation: null,
       ok: false,
     };
+  }
+
+  // fail closed when this legacy observer cannot prove a selected native context
+  if (runtimeMap.contexts.some(
+    // detect one phase-selected declarative context
+    (candidate) => phaseSelectsDeclarativeContext(candidate, phase),
+  )) {
+    addDiagnostic(
+      diagnostics,
+      "host.binding",
+      "$.phase",
+      "selected native contexts require a native physical receipt",
+    );
   }
 
   // diagnose hidden evidence assertions without masking authority spoofing
