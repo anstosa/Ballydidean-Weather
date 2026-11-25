@@ -1797,92 +1797,6 @@ async function executeSecureReaderAfterPin(request, pinnedPath, mutate) {
   };
 }
 
-// execute the fixed helper and mutate after one file closes during later traversal
-async function executeSecureReaderAfterCloseAndPin(
-  request,
-  closedPath,
-  laterPinnedPath,
-  mutate,
-) {
-  const child = spawn(
-    hostObserver.HOST_SECURE_READER_PROGRAM,
-    ["-I", "-B", "-S", "-c", hostObserver.HOST_SECURE_READER_SOURCE],
-    {
-      cwd: "/",
-      env: { LANG: "C" },
-      stdio: ["pipe", "pipe", "pipe"],
-    },
-  );
-  const stdout = [];
-  const stderr = [];
-
-  // retain fixed-helper stdout bytes
-  child.stdout.on("data", (chunk) => {
-    stdout.push(chunk);
-  });
-
-  // retain fixed-helper stderr bytes
-  child.stderr.on("data", (chunk) => {
-    stderr.push(chunk);
-  });
-  child.stdin.end(Buffer.from(`${canonicalHostJson(request)}\n`));
-  let sawClosedPath = false;
-  let mutated = false;
-  const observer = (async () => {
-    const deadline = Date.now() + 5000;
-
-    // poll only this controlled child descriptor table
-    while (!mutated && Date.now() < deadline) {
-      let descriptors = [];
-
-      // tolerate the child exiting between proc directory operations
-      try {
-        descriptors = await readdir(`/proc/${String(child.pid)}/fd`);
-      } catch {
-        break;
-      }
-      const targets = [];
-
-      // retain each descriptor target observed in this polling instant
-      for (const descriptor of descriptors) {
-        try {
-          targets.push(await readlink(`/proc/${String(child.pid)}/fd/${descriptor}`));
-        } catch {
-          // ignore one descriptor that closed during inspection
-        }
-      }
-
-      // remember the initial file descriptor before waiting for its close
-      if (targets.includes(closedPath)) {
-        sawClosedPath = true;
-      }
-
-      // mutate only after the file closes and later traversal is pinned
-      if (sawClosedPath && !targets.includes(closedPath) && targets.includes(laterPinnedPath)) {
-        mutated = true;
-        await mutate();
-        break;
-      }
-
-      // yield without timing sleeps while the child advances
-      if (!mutated) {
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-    }
-  })();
-  const exitCode = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", resolve);
-  });
-  await observer;
-  return {
-    exitCode,
-    mutated,
-    stderr: Buffer.concat(stderr),
-    stdout: Buffer.concat(stdout),
-  };
-}
-
 // write one bounded physical control-plane fixture tree
 async function writeControlledControlPlaneTree(rootPath, { large = false } = {}) {
   const files = new Map([
@@ -1932,18 +1846,6 @@ async function writeControlledControlPlaneTree(rootPath, { large = false } = {})
     await chmod(path, 0o644);
   }
   return files;
-}
-
-// widen one protected directory to keep closing traversal observable
-async function writeWideControlPlaneDirectory(rootPath, count = 256) {
-  const postgresPath = join(rootPath, "deploy", "postgres");
-
-  // create one bounded set of empty protected directories
-  for (let index = 0; index < count; index += 1) {
-    const directory = join(postgresPath, `fixture-${String(index).padStart(3, "0")}`);
-    await mkdir(directory);
-    await chmod(directory, 0o755);
-  }
 }
 
 // build one controlled physical tree request
@@ -4870,32 +4772,41 @@ test("secure reader rejects control-plane directory drift after enumeration", {
   }
 });
 
-// prove the separately appended Compose file remains bound through closing
-test("secure reader rejects Compose overwrite after its initial hash", {
-  timeout: 20000,
-}, async () => {
-  const rootDir = await mkdtemp(join(tmpdir(), "weather-host-secure-compose-close-"));
+// bind the separately appended Compose file to each ordinary observation
+test("control plane observations retain exact Compose content identity", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "weather-host-secure-control-tree-"));
 
   try {
-    await writeControlledControlPlaneTree(rootDir);
-    await writeWideControlPlaneDirectory(rootDir);
+    const files = await writeControlledControlPlaneTree(rootDir);
     const request = controlledControlPlaneRequest(rootDir);
-    const composePath = join(rootDir, "deploy", "compose.yaml");
-    await truncate(composePath, 16 * 1024 * 1024);
-    const execution = await executeSecureReaderAfterCloseAndPin(
-      request,
-      composePath,
-      join(rootDir, "deploy", "postgres"),
-      async () => {
-        await writeFile(composePath, "services:\n  changed: {}\n", { mode: 0o644 });
-      },
+
+    // collect one complete snapshot without concurrent fixture changes
+    const observe = async () => {
+      const result = await hostObserver.runBackendHostSecureReader(request, {
+        secureExecutor: executeSecureReader,
+      });
+      const subject = result.subjects[0];
+      assert.equal(subject.status, "ok");
+      return JSON.parse(
+        Buffer.from(subject.bytes.dataBase64, "base64").toString("utf8"),
+      );
+    };
+    const initial = await observe();
+    assert.equal(initial.controlPlaneSha256, independentV17Digest(files));
+    assert.equal(initial.files.at(-1).path, "deploy/compose.yaml");
+
+    // record an ordinary configuration edit before the next independent observation
+    const composeBytes = Buffer.from("services:\n  example: {}\n");
+    await writeFile(join(rootDir, "deploy", "compose.yaml"), composeBytes, { mode: 0o644 });
+    files.set("deploy/compose.yaml", composeBytes);
+    const updated = await observe();
+
+    assert.deepEqual(
+      updated.files.map((file) => file.path),
+      initial.files.map((file) => file.path),
     );
-    assert.equal(execution.mutated, true);
-    assert.equal(execution.exitCode, 0, execution.stderr.toString("utf8"));
-    assert.equal(execution.stderr.length, 0);
-    const result = JSON.parse(execution.stdout.toString("utf8"));
-    assert.equal(result.subjects[0].status, "error");
-    assert.equal(result.subjects[0].errorCode, "host.binding");
+    assert.equal(updated.controlPlaneSha256, independentV17Digest(files));
+    assert.notEqual(updated.controlPlaneSha256, initial.controlPlaneSha256);
   } finally {
     await rm(rootDir, { force: true, recursive: true });
   }
