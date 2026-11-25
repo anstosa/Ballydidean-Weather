@@ -674,3 +674,8 @@ fn string(value: &str) -> JsonValue {
 fn string_field(name: &str, value: &str) -> (Vec<u16>, JsonValue) {
     (name.encode_utf16().collect(), string(value))
 }
+
+// compile the retained predecessor projection fixture with the native owner
+#[cfg(test)]
+#[path = "native_maintenance_historical_fit_test.rs"]
+mod tests;

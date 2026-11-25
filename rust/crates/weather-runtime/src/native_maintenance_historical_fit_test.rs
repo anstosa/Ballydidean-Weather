@@ -8,7 +8,7 @@ use weather_contracts::{
     AdjustmentRevisionCommitReceiptProjectionKindEnum,
 };
 
-use super::native_maintenance_historical_fit::{
+use super::{
     NativeMaintenanceHistoricalFitError, build_native_adjustment_historical_fit_projection,
 };
 use crate::{

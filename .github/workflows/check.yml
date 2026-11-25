@@ -294,7 +294,7 @@ jobs:
           # exclude only the opt-in PostgreSQL 16 fixture from the standalone unit suite
           run_native_lib_suite weather-runtime native_postgres -- --skip native_postgres_real_roundtrip_test::native_pool_roundtrips_typed_values_against_postgres_16
           run_native_lib_suite weather-runtime native_outbound_http_test
-          run_native_lib_suite weather-runtime native_open_meteo_transport_test
+          run_native_lib_suite weather-runtime native_open_meteo_transport::tests
           run_native_lib_suite weather-runtime native_open_meteo_scheduled_transport
           run_native_lib_suite weather-runtime native_tempest_tide_transport
           run_native_lib_suite weather-runtime native_ambient_transport
