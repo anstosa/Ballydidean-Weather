@@ -1,0 +1,4552 @@
+{
+  "schemaVersion": "weather-rust-contracts-manifest/v1",
+  "generator": {
+    "typescriptVersion": "6.0.3",
+    "subsetVersion": "weather-ts-rust-contract-subset/v55",
+    "pgRowMarkerInputSha256": {
+      "pg/package.json": "e42dd36cba6e9dd8dbb6f773a2f7be8a8c3c273e18b155e42e75961a4cb8bc28",
+      "@types/pg/package.json": "1137081ebb228493e9c81dd699d0d79b7ba0019be75a10272b05399de8cb49e6",
+      "@types/pg/index.d.mts": "5aea76ab98173f2c230b1f78dc010da403da622c105c468ace9fe24e3b77883c",
+      "@types/pg/index.d.ts": "1f7da5b623c2b1fc4f6fbb56a19df7f6fe2f3e3e7e8b526ec6892062f0f1f82e"
+    },
+    "utilityDeclarationsSha256": "bcd24271a113971ba9eb71ff8cb01bc6b0f872a85c23fdbe5d93065b375933cd"
+  },
+  "config": {
+    "sha256": "7bcc5172f0ce99e8c7115469f53cce2d4dd226556305959991b838659a52195f"
+  },
+  "sources": [
+    {
+      "path": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "sha256": "4e51864499032c553b59af7549ec4f077c218c300714bedb69ff67ea1c062fee"
+    },
+    {
+      "path": "apps/api/src/index.ts",
+      "sha256": "7ff64a3bbacee635cd3ff21d0d4f23b6395946cdb3eab0f3f099b0ccfc26f776"
+    },
+    {
+      "path": "apps/api/src/main.ts",
+      "sha256": "0e06a6ca18882e7c881213765caf10e5a8efede22aebaa43c51de680e9bcb10b"
+    },
+    {
+      "path": "apps/api/src/rain-adjustment.ts",
+      "sha256": "2b4befb2814a48ddabb2055b8f42236942388b513227c243f2bd9bd3d9d5f1a7"
+    },
+    {
+      "path": "apps/web/src/widget-forecast-v2.ts",
+      "sha256": "0c553c461fec1db7dec7863bff34b6f7dcd3944f3a6e7df357647df1fb1df97d"
+    },
+    {
+      "path": "apps/web/src/widget-forecast-v3.ts",
+      "sha256": "3bbdace2444e5c429649506ca8f0a9b1b2433b5b17adca86eddeef0c17d07d04"
+    },
+    {
+      "path": "apps/web/src/widget-forecast.ts",
+      "sha256": "0de12df145913717c2878132731c3358113175f9dcf1cc86e16e977f26a2fedb"
+    },
+    {
+      "path": "apps/worker/src/backfill-cli.ts",
+      "sha256": "628faadbbc13d1bdf6ebd354ae1f3bdd6899213c2f2142e5c4c43deda4adb307"
+    },
+    {
+      "path": "apps/worker/src/errors.ts",
+      "sha256": "3f0a3d4b909885b719752edcb8e6def1007152009822453990dc53f1859ff126"
+    },
+    {
+      "path": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "sha256": "313b9f29f4fa5effc7d1c6eaf93fd8dbd29f08775d495f2cfbd65f7fbcadb7bc"
+    },
+    {
+      "path": "apps/worker/src/health.ts",
+      "sha256": "c541692dd9822afc527d09ccb063eadabb1cadec3aeda8bd0daee4cd53f8fd6f"
+    },
+    {
+      "path": "apps/worker/src/public-stations-backfill-cli.ts",
+      "sha256": "e2e99dfb9587132a786a4b0f6c1cdf1d32b0b42ebe96cc87f2f1ab3a8409609a"
+    },
+    {
+      "path": "apps/worker/src/rain-collection.ts",
+      "sha256": "606cf14c68d9ad4579207ea59d01b30c0b175a3827abbf1f0e7bb7dc02450920"
+    },
+    {
+      "path": "apps/worker/src/run-deadline.ts",
+      "sha256": "da3e343c252ec9fd3790714d652176112c7ab5ee5bf5fe20e3ac9fe0d78b1b22"
+    },
+    {
+      "path": "apps/worker/src/source-identity.ts",
+      "sha256": "2befa08c1ef025bcff9dcbf18b0b1a1d06b48475708b1f22c3d5983936139c25"
+    },
+    {
+      "path": "apps/worker/src/tempest-backfill-cli.ts",
+      "sha256": "acaf1aba9cee8cdad55c8219fdf2cdb7fdcd09fa0b4193b0af2da183fce9e093"
+    },
+    {
+      "path": "apps/worker/src/tide-backfill-cli.ts",
+      "sha256": "874791c8208a33f69d4ebec215104ef6b7b442f0b6beb64bca13eb18f44e151a"
+    },
+    {
+      "path": "apps/worker/src/worker.ts",
+      "sha256": "a65f70aab0cd13189ceed0f98d75d59727427322865a854b39ad17ae8c48e821"
+    },
+    {
+      "path": "packages/contracts/package.json",
+      "sha256": "f9aef215c21e179c7879c40a4fae4459ad5c2afbb81091db710834c153aae255"
+    },
+    {
+      "path": "packages/contracts/src/forecast-archive.ts",
+      "sha256": "32463927f7c073a956c5eb49cb323693820e1eb6fdfcf49895292df2fbd0d676"
+    },
+    {
+      "path": "packages/contracts/src/forecast.ts",
+      "sha256": "c1ac87a41898246ecc8224d111440c93d94844d0e2625ba3a3a30ca97b4c3fb2"
+    },
+    {
+      "path": "packages/contracts/src/index.ts",
+      "sha256": "191c71fb63206d8612419940e8ab4649f17abcba609f815be61d0c5d5e142cfb"
+    },
+    {
+      "path": "packages/contracts/src/precipitation-and-tides.ts",
+      "sha256": "d681a73cec6377f7b270aa494dd2899920fd61d0f9e92c59ef4ca8efdbafe456"
+    },
+    {
+      "path": "packages/contracts/src/sites.ts",
+      "sha256": "4bc2904034e1ccc015bea688dee39079ff55e35ba796b1780b5bedbc6b9d3e6e"
+    },
+    {
+      "path": "packages/contracts/src/weather-records.ts",
+      "sha256": "f1873b1ce71e1657b85077b633e8c1e97d68789f995ab7ed28e0a549e7f31528"
+    },
+    {
+      "path": "packages/database/package.json",
+      "sha256": "52084ff48ade8c84907affecc238d8a6a9c58e4dd66c180539b1b5f9812a0107"
+    },
+    {
+      "path": "packages/database/src/adjustment-maintenance.ts",
+      "sha256": "62e54f7008fd911e8d30c18c1593d38bc99b792fd52c2e339d2477dd56cd6cbb"
+    },
+    {
+      "path": "packages/database/src/config.ts",
+      "sha256": "96a4c95797f261f7c50b71e6472e91c4507366352387d102f73cef087e6aa509"
+    },
+    {
+      "path": "packages/database/src/ecowitt-config.ts",
+      "sha256": "cdae949a2b0cbf4f29c1e9e1d75a87b2f97f20666bf9735e07da47236559e48f"
+    },
+    {
+      "path": "packages/database/src/index.ts",
+      "sha256": "e93ef83f877df9e6bae9efd6d86496ebb345ef29f915c50fcfef42aa308b14c5"
+    },
+    {
+      "path": "packages/database/src/migrate.ts",
+      "sha256": "83d83edc0ac2be4caeca343c0917a9661bcf590493129bdbd95a0fdc9d9afa27"
+    },
+    {
+      "path": "packages/database/src/pool.ts",
+      "sha256": "86879680795834e8d0adc0ced4046e7b1d6ba7c6730c7df0d46f3c630502de01"
+    },
+    {
+      "path": "packages/database/src/public-stations-config.ts",
+      "sha256": "9598cbc4b7615f07a376143c48c71db1bf2362c8f8bbe9b07596969f649b93bb"
+    },
+    {
+      "path": "packages/database/src/rain-adjustment.ts",
+      "sha256": "ad5fd065af32a7f3843415c27fdd87609c8ec67431955ca3c22a3140b1b392e9"
+    },
+    {
+      "path": "packages/database/src/rain-collection.ts",
+      "sha256": "8d13c9d87aa3432a58881d747a33ca6ea95880c8602ef987a4362b5174ff4439"
+    },
+    {
+      "path": "packages/database/src/repositories.ts",
+      "sha256": "2715e7641fde21303ffcbf47a0cdf0157cc9f32f11211b8a66bad11f1e7aee59"
+    },
+    {
+      "path": "packages/database/src/tempest-config.ts",
+      "sha256": "27d0a8fdfaaf5bdb5104574aee5031039efb2035401fcebf8b6ece65d32afc43"
+    },
+    {
+      "path": "packages/database/src/tides-config.ts",
+      "sha256": "7a3061f6aa8bc2b72eebabe08ea7e5107961dca16496481abfae9cb7379e3adf"
+    },
+    {
+      "path": "packages/database/tsconfig.json",
+      "sha256": "722a772ad7312b2974f237ee3f4b8e0c59d517609ddf27927854cd245d583b64"
+    },
+    {
+      "path": "packages/domain/package.json",
+      "sha256": "46caea9d24b83f55ea8fb033968d232fd511efbef006a6ce7566cd2a95f2e4c5"
+    },
+    {
+      "path": "packages/domain/src/forecast-adjustment.ts",
+      "sha256": "59717e2edfc8d0ec483ef6da7586cc387806a2c0ca4c784726c9d62e4ad103a4"
+    },
+    {
+      "path": "packages/domain/src/forecast-anchor-record.ts",
+      "sha256": "ab9d5039bdd057ef8668a7cae5695c1c10dec5bea849d4329ffb765926e8f1e7"
+    },
+    {
+      "path": "packages/domain/src/index.ts",
+      "sha256": "5a51a464d4473cfb8805f9f8e6db4d55df2ded3fdd1c9e8527b012b333f72a9c"
+    },
+    {
+      "path": "packages/domain/src/ingestion.ts",
+      "sha256": "723b95b1ade326903e4e4d62325d60133133c02cdccd86b656ad3e9fe001b157"
+    },
+    {
+      "path": "packages/domain/src/provenance.ts",
+      "sha256": "9e354e1db4a769da0712372c082ae5a9af0b6962573839336c75d57458a38b0a"
+    },
+    {
+      "path": "packages/domain/src/rain-collection.ts",
+      "sha256": "57d5c35d752ce808831cbdce640cb333f99092d8a7afe2d8e9f3d3a83ad06d62"
+    },
+    {
+      "path": "packages/domain/src/weather-record.ts",
+      "sha256": "0f5304a9f2566b6fc2fc63af0a22c6cb90d543d6a409e119372e2c4819bf181e"
+    },
+    {
+      "path": "packages/forecast-adjustment/package.json",
+      "sha256": "8370d2245d5cc78b171f5951f94fe7c8789f7a3933a78893c3915be545ac4714"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/algorithm-v1.ts",
+      "sha256": "7f4f6f49cdc2e195a653e222809a6e3a46f68ceb46999e3ca81a87de287dace7"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/apply.ts",
+      "sha256": "8682a744222bcb265399417e381e39eb1c7332fe5780a16f73fff330701740e6"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/bootstrap-v1.ts",
+      "sha256": "0bbac10e66652b31ed26efd2910d7af9083c01b2cea2a0f6a7b78bbfa3b7d58e"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/calendar.ts",
+      "sha256": "014aaeddadee2c47b47169f5e6a7a292f70a53193292381b6a22406d995052da"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/candidate.ts",
+      "sha256": "4bdfbef5165786aca995e929b513872f8f30d3d87248fc7f07046d7ee9e8672e"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/evaluate.ts",
+      "sha256": "20480348e34a2a6f9972404e9fe02c9112c4eba5c3d800c818f6f731b083f74a"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/evidence.ts",
+      "sha256": "d4e93a5f67c3d183685edfe6efc5739ce55a9a34811e9d2c90ffbfa587f9c8cd"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/holdout-ledger.ts",
+      "sha256": "48efacfe4ba0c49f6e45bcf4e5987a62551ff45d9a2626ff5989b2072b1b3113"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/index.ts",
+      "sha256": "c0a0424c4835616f467dcfe33819bcf82564b29e1bf22a3b9c9c2583a928ed52"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+      "sha256": "7e850738195947bab7bf4733935edd8429e341dd93cd61fa1169956975f3050c"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/maintenance-policy.ts",
+      "sha256": "5df440a43655c1525e32849aec772989ee032b70e21f26f3e849658928a8e8c5"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "sha256": "66f2718173500154de3ec255adc4a84c2186f6eca5e1259cc7bea3b0900f2ffd"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "sha256": "bf65ff19151cdae04682cb3dc39975703c08296286e37bafed8c1273b78bab6b"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+      "sha256": "cfa9b19d9ce591f4d020e6a52aa38a63e0e66f934ad12a7a4c608a691801004b"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+      "sha256": "ee540e11de8238311d04d7ac82bb5f841718c31c41b4bb3b4d239bc176d376e8"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+      "sha256": "28553231d0f63df45e9de2c8d425f7ca2bed8b14782c660c0fd57a19ac7717d3"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "sha256": "8ad4f569cb93c9f03bf2fa1c374265636111fb6eefd4dd08cdb9d0b4a6415d5b"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "sha256": "4cd1cc873d72b67c19e79e820c0d8e73bf4786f487ab391e45410fbae0adc7ca"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/rain-hurdle-wind-artifact.ts",
+      "sha256": "8aa8972711e2bdb757bd6bf91ab2468a2d409b7b924393f6fb1e93daec5592ba"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "sha256": "4d456196c4ee047a9d037cac9ade47b2f62b50b389df071f097bf451d40e0e2c"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+      "sha256": "5ee3fca8132c8e8aef4a93163ba11cb3fb14890567005e3e35690a6dabf02aaf"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "sha256": "87f3d7fa3c4a862b58a794795a63c5a26f2c6d173d9d50ce44a4cb05c61ddc2c"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/runtime-bundle.ts",
+      "sha256": "9f83b96a2e71c6f270e157d5d6a3d857d43bc6f0aed5ff435806fb3cc031fd5b"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "sha256": "2e32282c0d3768d7d1261ed5659bb86d961f712e0dd7e396e660a991e9d454f3"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "sha256": "c128eb33f59b4bbfca9f1ab1aa3717b4c1d1e4a489dd10c5650aca7e1b5096c5"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/temperature-lead-research.ts",
+      "sha256": "fe7a360511ee485b4fa2e8d3ee6b21add6bf6c34fbe4bfa1a9ae4cab11b8473e"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "sha256": "33b6dbda2ebd96d4a350a3730defeaf6078bc32cf5d5f57cd58c20c4ed7a1586"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/temperature-weather-research.ts",
+      "sha256": "903d98df91e74f42f1c63414c2c811f5ef8733d2771a6735fedd2edde6e40ae1"
+    },
+    {
+      "path": "packages/forecast-adjustment/src/wind-canary.ts",
+      "sha256": "b7262b749c6883713274b2a59a2d7db664c86d84c81bb6938ce831ed8f4a386d"
+    },
+    {
+      "path": "packages/providers/src/contract.ts",
+      "sha256": "56c534e6781b4bd3f752eba1b611a5ffc0f4cedcd288c10f65d6b1673fda8d5e"
+    },
+    {
+      "path": "packages/providers/src/ecowitt.ts",
+      "sha256": "b9c0d95c580d95c80718af28c8d8beb7ea72f4417cf54d10d05ffd28141d9216"
+    },
+    {
+      "path": "packages/providers/src/noaa-tides.ts",
+      "sha256": "6d863c448eebd27b1b9d14dcf8d4b041e5ca22ca1dd2452e7782f52f8236aa6d"
+    },
+    {
+      "path": "packages/providers/src/open-meteo-previous-runs.ts",
+      "sha256": "b91023d6d71608aeee3060ce3a4e7739843c25b496926b7a4409bf7cf207d65b"
+    },
+    {
+      "path": "packages/providers/src/open-meteo-single-runs.ts",
+      "sha256": "da4c3b73613ca8efc58cd6b65b15fee9a9d019cc66fd68be4b8ba703d2a7cef4"
+    },
+    {
+      "path": "packages/providers/src/open-meteo.ts",
+      "sha256": "d3e8fede61fee2a7711808e1c5efd05b95f5261cbae5feaf32f8b22925bbe12c"
+    },
+    {
+      "path": "packages/providers/src/tempest.ts",
+      "sha256": "526ce6afa640d26f2ba77dfed248af386a970b894e9719207242bce50d855536"
+    },
+    {
+      "path": "tsconfig.base.json",
+      "sha256": "9895fbdc6826182f4f3891a98c4ca44ad5ececa662e5e9d976d6fbbe9717cb43"
+    }
+  ],
+  "roots": [
+    {
+      "source": "packages/domain/src/rain-collection.ts",
+      "exportName": "RainCaptureOutcome",
+      "rustName": "RainCaptureOutcome",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/rain-collection.ts",
+      "exportName": "RainCollectionStatus",
+      "rustName": "RainCollectionStatus",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ForecastDays",
+      "rustName": "ForecastDays",
+      "kind": "unsigned-safe-integer-literal-enum"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveProjection",
+      "rustName": "ForecastArchiveProjection",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchivePageHeaderV1",
+      "rustName": "ForecastArchivePageHeaderV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ArchiveTransferPageEnvelopeV1",
+      "rustName": "ArchiveTransferPageEnvelopeV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ArchiveTransferIdleEnvelopeV1",
+      "rustName": "ArchiveTransferIdleEnvelopeV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchivePageAcknowledgementV1",
+      "rustName": "ForecastArchivePageAcknowledgementV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveTransferAcknowledgementV1",
+      "rustName": "ForecastArchiveTransferAcknowledgementV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveFinalAcknowledgementV1",
+      "rustName": "ForecastArchiveFinalAcknowledgementV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveRequiredInputRoot",
+      "rustName": "ForecastArchiveRequiredInputRoot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveRequiredInputs",
+      "rustName": "ForecastArchiveRequiredInputs",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveInputSealV1",
+      "rustName": "ForecastArchiveInputSealV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveFinalPage",
+      "rustName": "ForecastArchiveFinalPage",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveFinalManifestV1",
+      "rustName": "ForecastArchiveFinalManifestV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveFinalManifestV2",
+      "rustName": "ForecastArchiveFinalManifestV2",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveFinalManifest",
+      "rustName": "ForecastArchiveFinalManifest",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "V1",
+            "payloadRustName": "ForecastArchiveFinalManifestV1"
+          },
+          {
+            "rustName": "V2",
+            "payloadRustName": "ForecastArchiveFinalManifestV2"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ArchiveTransferFinalEnvelopeV1",
+      "rustName": "ArchiveTransferFinalEnvelopeV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ArchiveTransferEnvelope",
+      "rustName": "ArchiveTransferEnvelope",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "Final",
+            "payloadRustName": "ArchiveTransferFinalEnvelopeV1"
+          },
+          {
+            "rustName": "Page",
+            "payloadRustName": "ArchiveTransferPageEnvelopeV1"
+          },
+          {
+            "rustName": "Idle",
+            "payloadRustName": "ArchiveTransferIdleEnvelopeV1"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiRainAdjustmentDecision",
+      "rustName": "ApiRainAdjustmentDecision",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationQualityRule",
+      "rustName": "ForecastObservationQualityRule",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationStationKey",
+      "rustName": "ForecastObservationStationKey",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationSourceLineage",
+      "rustName": "ForecastObservationSourceLineage",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "exportName": "ForecastAdjustmentRainActiveArtifactV1",
+      "rustName": "ForecastAdjustmentRainActiveArtifactV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "exportName": "ForecastAdjustmentRainRuntimeRegistryV1",
+      "rustName": "ForecastAdjustmentRainRuntimeRegistryV1",
+      "kind": "tagged-readonly-object-union",
+      "discriminator": {
+        "field": "rawReason",
+        "variants": [
+          {
+            "rustName": "PolicyRaw",
+            "payloadRustName": "ForecastAdjustmentRainRuntimeRegistryV1PolicyRaw",
+            "wireValue": "policy_raw"
+          },
+          {
+            "rustName": "Null",
+            "payloadRustName": "ForecastAdjustmentRainRuntimeRegistryV1Null",
+            "wireValue": null
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/contracts/src/precipitation-and-tides.ts",
+      "exportName": "ApiDailyPrecipitation",
+      "rustName": "ApiDailyPrecipitation",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/precipitation-and-tides.ts",
+      "exportName": "ApiTideRecord",
+      "rustName": "ApiTideRecord",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiTrendPoint",
+      "rustName": "ApiTrendPoint",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiAirQualityHourlyContext",
+      "rustName": "ApiAirQualityHourlyContext",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiPropertySensorSnapshot",
+      "rustName": "ApiPropertySensorSnapshot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/provenance.ts",
+      "exportName": "SourceKind",
+      "rustName": "SourceKind",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/provenance.ts",
+      "exportName": "StationKind",
+      "rustName": "StationKind",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/contracts/src/sites.ts",
+      "exportName": "ApiSource",
+      "rustName": "ApiSource",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/sites.ts",
+      "exportName": "ApiStation",
+      "rustName": "ApiStation",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/sites.ts",
+      "exportName": "ApiSite",
+      "rustName": "ApiSite",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiWeatherRecord",
+      "rustName": "ApiWeatherRecord",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiCurrentWeatherRecord",
+      "rustName": "ApiCurrentWeatherRecord",
+      "kind": "readonly-interface",
+      "base": "ApiWeatherRecord"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentMetric",
+      "rustName": "ForecastAdjustmentMetric",
+      "kind": "string-literal-enum",
+      "catalog": {
+        "kind": "satisfies-string-tuple"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryMetric",
+      "rustName": "ForecastAdjustmentWindCanaryMetric",
+      "kind": "string-literal-enum",
+      "catalog": {
+        "kind": "satisfies-string-tuple"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastLeadBandKey",
+      "rustName": "ForecastLeadBandKey",
+      "kind": "string-literal-enum",
+      "catalog": {
+        "kind": "string-property",
+        "key": "key"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentReasonCode",
+      "rustName": "ForecastAdjustmentReasonCode",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentRawForecastProvenance",
+      "rustName": "ForecastAdjustmentRawForecastProvenance",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "TemperatureCanarySourceForecast",
+      "rustName": "TemperatureCanarySourceForecast",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentFailRawDecision",
+      "rustName": "ForecastAdjustmentFailRawDecision",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentActiveDecision",
+      "rustName": "ForecastAdjustmentActiveDecision",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryActiveDecision",
+      "rustName": "ForecastAdjustmentWindCanaryActiveDecision",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentDecision",
+      "rustName": "ForecastAdjustmentDecision",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "Active",
+            "payloadRustName": "ForecastAdjustmentActiveDecision"
+          },
+          {
+            "rustName": "WindCanaryActive",
+            "payloadRustName": "ForecastAdjustmentWindCanaryActiveDecision"
+          },
+          {
+            "rustName": "FailRaw",
+            "payloadRustName": "ForecastAdjustmentFailRawDecision"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeRawReason",
+      "rustName": "TemperatureMosRuntimeRawReason",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "TemperatureCanaryDecisionReason",
+      "rustName": "TemperatureCanaryDecisionReason",
+      "kind": "nullable-string-literal-enum",
+      "literalUnion": {
+        "sourceAlias": "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1",
+        "field": "reasonCode"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastTemperatureCanaryDecisionV1",
+      "rustName": "ForecastTemperatureCanaryDecisionV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/apply.ts",
+      "exportName": "ForecastAdjustmentWindQualifiedMaintenanceDecision",
+      "rustName": "ForecastAdjustmentWindQualifiedMaintenanceDecision",
+      "kind": "readonly-interface",
+      "fieldProjections": {
+        "appliedMetrics": {
+          "kind": "const-catalog-array",
+          "root": "ForecastAdjustmentWindCanaryMetric"
+        },
+        "leadBand": {
+          "kind": "return-enum",
+          "root": "ForecastLeadBandKey"
+        }
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiForecastAdjustmentDecision",
+      "rustName": "ApiForecastAdjustmentDecision",
+      "kind": "named-readonly-object-union",
+      "importedObjectUnion": true,
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "Domain",
+            "payloadRustName": "ForecastAdjustmentDecision"
+          },
+          {
+            "rustName": "MaintenanceQualified",
+            "payloadRustName": "ForecastAdjustmentWindQualifiedMaintenanceDecision"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiForecastWeatherRecord",
+      "rustName": "ApiForecastWeatherRecord",
+      "kind": "readonly-interface",
+      "base": "ApiWeatherRecord",
+      "importedBase": true
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiForecastAdjustmentRuntime",
+      "rustName": "ApiForecastAdjustmentRuntime",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiForecastTemperatureAdjustmentRuntime",
+      "rustName": "ApiForecastTemperatureAdjustmentRuntime",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiRainAdjustmentRuntime",
+      "rustName": "ApiRainAdjustmentRuntime",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiForecastResponse",
+      "rustName": "ApiForecastResponse",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "BackfillChunkIdentity",
+      "rustName": "BackfillChunkIdentity",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "BackfillChunkOutcome",
+      "rustName": "BackfillChunkOutcome",
+      "kind": "readonly-interface",
+      "base": "BackfillChunkIdentity"
+    },
+    {
+      "source": "packages/domain/src/provenance.ts",
+      "exportName": "JsonValue",
+      "rustName": "JsonValue",
+      "kind": "recursive-json-value",
+      "recursiveJson": "JsonPrimitive"
+    },
+    {
+      "source": "packages/domain/src/weather-record.ts",
+      "exportName": "CanonicalWeatherMetrics",
+      "rustName": "CanonicalWeatherMetrics",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/weather-record.ts",
+      "exportName": "DeviceMetadata",
+      "rustName": "DeviceMetadata",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/weather-record.ts",
+      "exportName": "WeatherRecordMetadata",
+      "rustName": "WeatherRecordMetadata",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/weather-record.ts",
+      "exportName": "NormalizedWeatherRecord",
+      "rustName": "NormalizedWeatherRecord",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/weather-record.ts",
+      "exportName": "NormalizedWeatherRecordInput",
+      "rustName": "NormalizedWeatherRecordInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "IngestionMode",
+      "rustName": "IngestionMode",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "IngestionState",
+      "rustName": "IngestionState",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "IngestionErrorClassification",
+      "rustName": "IngestionErrorClassification",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "IngestionError",
+      "rustName": "IngestionError",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "IngestionRun",
+      "rustName": "IngestionRun",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/provenance.ts",
+      "exportName": "SourceCapability",
+      "rustName": "SourceCapability",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/provenance.ts",
+      "exportName": "SourceMaterialConfiguration",
+      "rustName": "SourceMaterialConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-anchor-record.ts",
+      "exportName": "FixedForecastLeadHours",
+      "rustName": "FixedForecastLeadHours",
+      "kind": "unsigned-safe-integer-literal-enum",
+      "catalog": {
+        "kind": "unsigned-safe-integer-tuple"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-anchor-record.ts",
+      "exportName": "NormalizedForecastAnchorRecord",
+      "rustName": "NormalizedForecastAnchorRecord",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-anchor-record.ts",
+      "exportName": "NormalizedForecastAnchorRecordInput",
+      "rustName": "NormalizedForecastAnchorRecordInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ScheduledCheckpointState",
+      "rustName": "ScheduledCheckpointState",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "StartIngestionRunInput",
+      "rustName": "StartIngestionRunInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "PersistedWeatherAdjustmentRevision",
+      "rustName": "PersistedWeatherAdjustmentRevision",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "CompleteBackfillIngestionInput",
+      "rustName": "CompleteBackfillIngestionInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "CompleteForecastAnchorBackfillIngestionInput",
+      "rustName": "CompleteForecastAnchorBackfillIngestionInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "FailIngestionRunInput",
+      "rustName": "FailIngestionRunInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "CurrentQuery",
+      "rustName": "CurrentQuery",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastProductSelection",
+      "rustName": "ForecastProductSelection",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastQuery",
+      "rustName": "ForecastQuery",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastPressureContextQuery",
+      "rustName": "ForecastPressureContextQuery",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastTrainingQuery",
+      "rustName": "ForecastTrainingQuery",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastTrainingCohort",
+      "rustName": "ForecastTrainingCohort",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastReferenceKind",
+      "rustName": "ForecastReferenceKind",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "FixedLeadAnchorTrainingRow",
+      "rustName": "FixedLeadAnchorTrainingRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "LegacyV4RetrievalSnapshotTrainingRow",
+      "rustName": "LegacyV4RetrievalSnapshotTrainingRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "LegacyV4RetrievalSnapshotTrainingRowInput",
+      "rustName": "LegacyV4RetrievalSnapshotTrainingRowInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastTrainingRow",
+      "rustName": "ForecastTrainingRow",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "FixedLeadAnchor",
+            "payloadRustName": "FixedLeadAnchorTrainingRow"
+          },
+          {
+            "rustName": "LegacyV4RetrievalSnapshot",
+            "payloadRustName": "LegacyV4RetrievalSnapshotTrainingRow"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastTrainingCohorts",
+      "rustName": "ForecastTrainingCohorts",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationProviderFamily",
+      "rustName": "ForecastObservationProviderFamily",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationExcludedSourceLineage",
+      "rustName": "ForecastObservationExcludedSourceLineage",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationStation",
+      "rustName": "ForecastObservationStation",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastNetworkEventIdentity",
+      "rustName": "ForecastNetworkEventIdentity",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentTrainingProvenance",
+      "rustName": "ForecastAdjustmentTrainingProvenance",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentMetricBand",
+      "rustName": "ForecastAdjustmentMetricBand",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentForecastIdentity",
+      "rustName": "ForecastAdjustmentForecastIdentity",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentCoefficient",
+      "rustName": "ForecastAdjustmentCoefficient",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentTrainingEnvelope",
+      "rustName": "ForecastAdjustmentTrainingEnvelope",
+      "kind": "readonly-interface",
+      "fieldProjections": {
+        "metric": {
+          "kind": "exclude-literal",
+          "root": "ForecastAdjustmentMetric"
+        }
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentMetricPolicy",
+      "rustName": "ForecastAdjustmentMetricPolicy",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentCandidateV2",
+      "rustName": "ForecastAdjustmentCandidateV2",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryTrainingIdentity",
+      "rustName": "ForecastAdjustmentWindCanaryTrainingIdentity",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryCandidateV1",
+      "rustName": "ForecastAdjustmentWindCanaryCandidateV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentRegistryActiveBundleV1",
+      "rustName": "ForecastAdjustmentRegistryActiveBundleV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentRegistryV1",
+      "rustName": "ForecastAdjustmentRegistryV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRegistryActiveBundleV1",
+      "rustName": "ForecastAdjustmentWindCanaryRegistryActiveBundleV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRegistryV1",
+      "rustName": "ForecastAdjustmentWindCanaryRegistryV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentPairedScore",
+      "rustName": "ForecastAdjustmentPairedScore",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastSeasonDaypartKey",
+      "rustName": "ForecastSeasonDaypartKey",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentCriticalSliceScore",
+      "rustName": "ForecastAdjustmentCriticalSliceScore",
+      "kind": "tagged-readonly-object-union",
+      "base": "ForecastAdjustmentPairedScore",
+      "discriminator": {
+        "field": "kind",
+        "variants": [
+          {
+            "rustName": "NearestThree",
+            "payloadRustName": "ForecastAdjustmentCriticalSliceScoreNearestThree",
+            "wireValue": "nearest_three"
+          },
+          {
+            "rustName": "ProviderFamily",
+            "payloadRustName": "ForecastAdjustmentCriticalSliceScoreProviderFamily",
+            "wireValue": "provider_family"
+          },
+          {
+            "rustName": "SeasonDaypart",
+            "payloadRustName": "ForecastAdjustmentCriticalSliceScoreSeasonDaypart",
+            "wireValue": "season_daypart"
+          },
+          {
+            "rustName": "Station",
+            "payloadRustName": "ForecastAdjustmentCriticalSliceScoreStation",
+            "wireValue": "station"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentMetricBandEvaluation",
+      "rustName": "ForecastAdjustmentMetricBandEvaluation",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/algorithm-v1.ts",
+      "exportName": "SanitizedTrainingMetrics",
+      "rustName": "SanitizedTrainingMetrics",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/evaluate.ts",
+      "exportName": "DevelopmentLosoStationScoreV1",
+      "rustName": "DevelopmentLosoStationScoreV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/evaluate.ts",
+      "exportName": "DevelopmentLosoFoldResultV1",
+      "rustName": "DevelopmentLosoFoldResultV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/evaluate.ts",
+      "exportName": "ForecastAdjustmentDevelopmentReportV1",
+      "rustName": "ForecastAdjustmentDevelopmentReportV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/evidence.ts",
+      "exportName": "ForecastAdjustmentInsufficientDataReportV1",
+      "rustName": "ForecastAdjustmentInsufficientDataReportV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentEvaluationReportV2",
+      "rustName": "ForecastAdjustmentEvaluationReportV2",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentQualificationGateName",
+      "rustName": "ForecastAdjustmentQualificationGateName",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentQualificationGate",
+      "rustName": "ForecastAdjustmentQualificationGate",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentEvidenceRedundancy",
+      "rustName": "ForecastAdjustmentEvidenceRedundancy",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentQualificationReceiptV2",
+      "rustName": "ForecastAdjustmentQualificationReceiptV2",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentEvidenceTripleV2",
+      "rustName": "ForecastAdjustmentEvidenceTripleV2",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentRuntimeBundleV2",
+      "rustName": "ForecastAdjustmentRuntimeBundleV2",
+      "kind": "readonly-interface",
+      "base": "ForecastAdjustmentEvidenceTripleV2"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryBridgeScore",
+      "rustName": "ForecastAdjustmentWindCanaryBridgeScore",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryBridgeEvaluation",
+      "rustName": "ForecastAdjustmentWindCanaryBridgeEvaluation",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryTransferReportV1",
+      "rustName": "ForecastAdjustmentWindCanaryTransferReportV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryAuthorizationV1",
+      "rustName": "ForecastAdjustmentWindCanaryAuthorizationV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRuntimeBundleV1",
+      "rustName": "ForecastAdjustmentWindCanaryRuntimeBundleV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/wind-canary.ts",
+      "exportName": "ForecastAdjustmentWindCanaryAuthorizationV2",
+      "rustName": "ForecastAdjustmentWindCanaryAuthorizationV2",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/wind-canary.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRuntimeBundleV2",
+      "rustName": "ForecastAdjustmentWindCanaryRuntimeBundleV2",
+      "kind": "readonly-interface",
+      "base": "ForecastAdjustmentWindCanaryRuntimeBundleV1",
+      "omitBaseFields": [
+        "authorization",
+        "contractVersion"
+      ]
+    },
+    {
+      "source": "packages/forecast-adjustment/src/wind-canary.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRuntimeBundle",
+      "rustName": "ForecastAdjustmentWindCanaryRuntimeBundle",
+      "kind": "named-readonly-object-union",
+      "importedObjectUnion": true,
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "TimeLimited",
+            "payloadRustName": "ForecastAdjustmentWindCanaryRuntimeBundleV1"
+          },
+          {
+            "rustName": "Permanent",
+            "payloadRustName": "ForecastAdjustmentWindCanaryRuntimeBundleV2"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/wind-canary.ts",
+      "exportName": "ForecastAdjustmentWindCanaryCandidateInputV1",
+      "rustName": "ForecastAdjustmentWindCanaryCandidateInputV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryRecentErrorState",
+      "rustName": "EcmwfTemperatureCanaryRecentErrorState",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryHour",
+      "rustName": "EcmwfTemperatureCanaryHour",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryRun",
+      "rustName": "EcmwfTemperatureCanaryRun",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanarySidecar",
+      "rustName": "EcmwfTemperatureCanarySidecar",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryStatus",
+      "rustName": "EcmwfTemperatureCanaryStatus",
+      "kind": "readonly-interface",
+      "indexedLiteralSources": {
+        "EcmwfTemperatureCanaryRun": "packages/database/src/repositories.ts"
+      },
+      "fieldProjections": {
+        "stateStatus": {
+          "kind": "indexed-literals",
+          "root": "EcmwfTemperatureCanaryRun"
+        }
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryAuditRow",
+      "rustName": "EcmwfTemperatureCanaryAuditRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryPriorHour",
+      "rustName": "EcmwfTemperatureCanaryPriorHour",
+      "kind": "readonly-interface",
+      "base": "EcmwfTemperatureCanaryHour"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "PersistEcmwfTemperatureCanaryRunInput",
+      "rustName": "PersistEcmwfTemperatureCanaryRunInput",
+      "kind": "readonly-interface",
+      "indexedLiteralSources": {
+        "EcmwfTemperatureCanaryRun": "packages/database/src/repositories.ts"
+      },
+      "fieldProjections": {
+        "adapterVersion": {
+          "kind": "indexed-literals",
+          "root": "EcmwfTemperatureCanaryRun"
+        },
+        "hours": {
+          "kind": "omit-interface-array",
+          "root": "EcmwfTemperatureCanaryHour"
+        },
+        "modelCycle": {
+          "kind": "indexed-literals",
+          "root": "EcmwfTemperatureCanaryRun"
+        },
+        "stateStatus": {
+          "kind": "indexed-literals",
+          "root": "EcmwfTemperatureCanaryRun"
+        },
+        "upstreamModel": {
+          "kind": "indexed-literals",
+          "root": "EcmwfTemperatureCanaryRun"
+        }
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeForecast",
+      "rustName": "TemperatureMosRuntimeForecast",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeRecentErrorState",
+      "rustName": "TemperatureMosRuntimeRecentErrorState",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeStrengthBand",
+      "rustName": "TemperatureMosRuntimeStrengthBand",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeModelMaterial",
+      "rustName": "TemperatureMosRuntimeModelMaterial",
+      "kind": "readonly-interface",
+      "localInterface": true,
+      "wireFieldNames": {
+        "strengthBands.1-6": "hours1To6",
+        "strengthBands.7-12": "hours7To12"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeModel",
+      "rustName": "TemperatureMosRuntimeModel",
+      "kind": "readonly-interface",
+      "base": "TemperatureMosRuntimeModelMaterial"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosPermanentRuntimeModel",
+      "rustName": "TemperatureMosPermanentRuntimeModel",
+      "kind": "readonly-interface",
+      "base": "TemperatureMosRuntimeModelMaterial"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosServingModel",
+      "rustName": "TemperatureMosServingModel",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "Monthly",
+            "payloadRustName": "TemperatureMosRuntimeModel"
+          },
+          {
+            "rustName": "Permanent",
+            "payloadRustName": "TemperatureMosPermanentRuntimeModel"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeInput",
+      "rustName": "TemperatureMosRuntimeInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryAuthorizationV1",
+      "rustName": "ForecastAdjustmentTemperatureCanaryAuthorizationV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryAuthorizationV2",
+      "rustName": "ForecastAdjustmentTemperatureCanaryAuthorizationV2",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1",
+      "rustName": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV2",
+      "rustName": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV2",
+      "kind": "readonly-interface",
+      "base": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1",
+      "omitBaseFields": [
+        "authorization",
+        "contractVersion",
+        "model"
+      ]
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryRuntimeBundle",
+      "rustName": "ForecastAdjustmentTemperatureCanaryRuntimeBundle",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "TimeLimited",
+            "payloadRustName": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1"
+          },
+          {
+            "rustName": "Permanent",
+            "payloadRustName": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV2"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureMaintenanceMaterial",
+      "rustName": "ForecastAdjustmentTemperatureMaintenanceMaterial",
+      "kind": "readonly-interface",
+      "fieldProjections": {
+        "servedForecastIdentity": {
+          "kind": "interface-field",
+          "root": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1"
+        },
+        "trainingForecastIdentity": {
+          "kind": "interface-field",
+          "root": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1"
+        }
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryRegistryV1",
+      "rustName": "ForecastAdjustmentTemperatureCanaryRegistryV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1",
+      "rustName": "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1",
+      "kind": "tagged-readonly-object-union",
+      "discriminator": {
+        "field": "state",
+        "variants": [
+          {
+            "rustName": "Active",
+            "payloadRustName": "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1Active",
+            "wireValue": "active"
+          },
+          {
+            "rustName": "Disabled",
+            "payloadRustName": "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1Disabled",
+            "wireValue": "disabled"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeAppliedResult",
+      "rustName": "TemperatureMosRuntimeAppliedResult",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeRawResult",
+      "rustName": "TemperatureMosRuntimeRawResult",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeResult",
+      "rustName": "TemperatureMosRuntimeResult",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "Applied",
+            "payloadRustName": "TemperatureMosRuntimeAppliedResult"
+          },
+          {
+            "rustName": "Raw",
+            "payloadRustName": "TemperatureMosRuntimeRawResult"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ApplyTemperatureCanaryInputV1",
+      "rustName": "ApplyTemperatureCanaryInputV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "HistoryQuery",
+      "rustName": "HistoryQuery",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "TrendQuery",
+      "rustName": "TrendQuery",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "DailyPrecipitationQuery",
+      "rustName": "DailyPrecipitationQuery",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "TideQuery",
+      "rustName": "TideQuery",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/rain-adjustment.ts",
+      "exportName": "RainAdjustmentCapture",
+      "rustName": "RainAdjustmentCapture",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/rain-adjustment.ts",
+      "exportName": "RainAdjustmentHour",
+      "rustName": "RainAdjustmentHour",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/rain-adjustment.ts",
+      "exportName": "RainAdjustmentRun",
+      "rustName": "RainAdjustmentRun",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/rain-adjustment.ts",
+      "exportName": "PersistedRainAdjustmentRevision",
+      "rustName": "PersistedRainAdjustmentRevision",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetCapture",
+      "rustName": "RainFixedGaugeTargetCapture",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/rain-collection.ts",
+      "exportName": "RainCaptureReceipt",
+      "rustName": "RainCaptureReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetRevisionRow",
+      "rustName": "RainFixedGaugeTargetRevisionRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetRevisionGroup",
+      "rustName": "RainFixedGaugeTargetRevisionGroup",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/domain/src/rain-collection.ts",
+      "exportName": "RainCaptureRequest",
+      "rustName": "RainCaptureRequest",
+      "kind": "tagged-readonly-object-union",
+      "readonlyTaggedUnion": true,
+      "discriminator": {
+        "field": "kind",
+        "variants": [
+          {
+            "rustName": "Forecast",
+            "payloadRustName": "RainCaptureRequestForecast",
+            "wireValue": "forecast"
+          },
+          {
+            "rustName": "Station",
+            "payloadRustName": "RainCaptureRequestStation",
+            "wireValue": "station"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRevisionCommitReceipt",
+      "rustName": "AdjustmentRevisionCommitReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRevisionRowReceipt",
+      "rustName": "AdjustmentRevisionRowReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRevisionGap",
+      "rustName": "AdjustmentRevisionGap",
+      "kind": "readonly-interface",
+      "fieldProjections": {
+        "projectionKind": {
+          "kind": "interface-field",
+          "root": "AdjustmentRevisionCommitReceipt"
+        }
+      }
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetSource",
+      "rustName": "RainFixedGaugeTargetSource",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetSourceCatalog",
+      "rustName": "RainFixedGaugeTargetSourceCatalog",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetRevisionResult",
+      "rustName": "RainFixedGaugeTargetRevisionResult",
+      "kind": "tagged-readonly-object-union",
+      "readonlyTaggedUnion": true,
+      "discriminator": {
+        "field": "state",
+        "variants": [
+          {
+            "rustName": "Committed",
+            "payloadRustName": "RainFixedGaugeTargetRevisionResultCommitted",
+            "wireValue": "committed"
+          },
+          {
+            "rustName": "Gap",
+            "payloadRustName": "RainFixedGaugeTargetRevisionResultGap",
+            "wireValue": "gap"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentWeatherRevisionPointer",
+      "rustName": "AdjustmentWeatherRevisionPointer",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentForecastAnchorRevisionPointer",
+      "rustName": "AdjustmentForecastAnchorRevisionPointer",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRainGateRevisionPointer",
+      "rustName": "AdjustmentRainGateRevisionPointer",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentEcmwfTemperatureRevisionPointer",
+      "rustName": "AdjustmentEcmwfTemperatureRevisionPointer",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentWeatherRevisionAdmissionKey",
+      "rustName": "AdjustmentWeatherRevisionAdmissionKey",
+      "kind": "picked-readonly-interface",
+      "pick": {
+        "root": "AdjustmentWeatherRevisionPointer",
+        "fields": [
+          "productRunAt",
+          "sourceId",
+          "sourceKind",
+          "storedContentSha256",
+          "validAt"
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentForecastAnchorRevisionAdmissionKey",
+      "rustName": "AdjustmentForecastAnchorRevisionAdmissionKey",
+      "kind": "picked-readonly-interface",
+      "pick": {
+        "root": "AdjustmentForecastAnchorRevisionPointer",
+        "fields": [
+          "leadHours",
+          "sourceId",
+          "storedContentSha256",
+          "validAt"
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRainGateRevisionAdmissionKey",
+      "rustName": "AdjustmentRainGateRevisionAdmissionKey",
+      "kind": "picked-readonly-interface",
+      "pick": {
+        "root": "AdjustmentRainGateRevisionPointer",
+        "fields": [
+          "inputSha256",
+          "modelSha256",
+          "runInitializedAt",
+          "storedContentSha256"
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentEcmwfTemperatureRevisionAdmissionKey",
+      "rustName": "AdjustmentEcmwfTemperatureRevisionAdmissionKey",
+      "kind": "picked-readonly-interface",
+      "pick": {
+        "root": "AdjustmentEcmwfTemperatureRevisionPointer",
+        "fields": [
+          "providerResponseSha256",
+          "runInitializedAt",
+          "siteId",
+          "storedContentSha256"
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentShadowFamily",
+      "rustName": "AdjustmentShadowFamily",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentShadowPrediction",
+      "rustName": "AdjustmentShadowPrediction",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRevisionServingSnapshot",
+      "rustName": "AdjustmentRevisionServingSnapshot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentShadowRegistrationReceipt",
+      "rustName": "AdjustmentShadowRegistrationReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentShadowRegistrationSlot",
+      "rustName": "AdjustmentShadowRegistrationSlot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentShadowPredictionReceipt",
+      "rustName": "AdjustmentShadowPredictionReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentHotPrediction",
+      "rustName": "AdjustmentHotPrediction",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentConfirmationAvailability",
+      "rustName": "AdjustmentConfirmationAvailability",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentConfirmationChunkAuthorization",
+      "rustName": "AdjustmentConfirmationChunkAuthorization",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRevisionProjectionKind",
+      "rustName": "AdjustmentRevisionProjectionKind",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "ApiMaintenanceShadowFamily",
+      "rustName": "ApiMaintenanceShadowFamily",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "MaintenanceShadowGapReason",
+      "rustName": "MaintenanceShadowGapReason",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentRevisionGapReason",
+      "rustName": "AdjustmentRevisionGapReason",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentRevisionStageReceipt",
+      "rustName": "AdjustmentRevisionStageReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainMaintenanceControlStateStageReceipt",
+      "rustName": "RainMaintenanceControlStateStageReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainMaintenanceControlStateGapInput",
+      "rustName": "RainMaintenanceControlStateGapInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainFixedGaugeTargetGapInput",
+      "rustName": "RainFixedGaugeTargetGapInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainFixedGaugeTargetGapReceipt",
+      "rustName": "RainFixedGaugeTargetGapReceipt",
+      "kind": "readonly-interface",
+      "base": "RainFixedGaugeTargetGapInput"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainFixedGaugeTargetGapStatusInput",
+      "rustName": "RainFixedGaugeTargetGapStatusInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentRevisionPublishReceipt",
+      "rustName": "AdjustmentRevisionPublishReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentRevisionBatchPublishReceipt",
+      "rustName": "AdjustmentRevisionBatchPublishReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentRevisionGapInput",
+      "rustName": "AdjustmentRevisionGapInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenanceStageReceipt",
+      "rustName": "AdjustmentMaintenanceStageReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenancePublishReceipt",
+      "rustName": "AdjustmentMaintenancePublishReceipt",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenanceGapInput",
+      "rustName": "AdjustmentMaintenanceGapInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+      "exportName": "MaintenanceShadowSourceIdentity",
+      "rustName": "MaintenanceShadowSourceIdentity",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+      "exportName": "MaintenanceShadowPredictionMetadata",
+      "rustName": "MaintenanceShadowPredictionMetadata",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenanceStageInput",
+      "rustName": "AdjustmentMaintenanceStageInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenancePublishInput",
+      "rustName": "AdjustmentMaintenancePublishInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenanceCaptureRequest",
+      "rustName": "AdjustmentMaintenanceCaptureRequest",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainFixedGaugeTargetGapStatus",
+      "rustName": "RainFixedGaugeTargetGapStatus",
+      "kind": "tagged-readonly-object-union",
+      "readonlyTaggedUnion": true,
+      "discriminator": {
+        "field": "state",
+        "variants": [
+          {
+            "rustName": "Absent",
+            "payloadRustName": "RainFixedGaugeTargetGapStatusAbsent",
+            "wireValue": "absent"
+          },
+          {
+            "rustName": "Present",
+            "payloadRustName": "RainFixedGaugeTargetGapStatusPresent",
+            "wireValue": "present"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRevisionProjectionFamily",
+      "rustName": "AdjustmentRevisionProjectionFamily",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+      "exportName": "MaintenanceShadowTemperatureRecentErrorState",
+      "rustName": "MaintenanceShadowTemperatureRecentErrorState",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRevisionProjection",
+      "rustName": "AdjustmentRevisionProjection",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRevisionBatchProjection",
+      "rustName": "AdjustmentRevisionBatchProjection",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentTemperatureNativeSourceProjection",
+      "rustName": "AdjustmentTemperatureNativeSourceProjection",
+      "kind": "readonly-interface",
+      "fieldProjections": {
+        "logicalKey": {
+          "kind": "interface-field",
+          "root": "AdjustmentRevisionProjection"
+        },
+        "rows": {
+          "kind": "interface-field",
+          "root": "AdjustmentRevisionProjection"
+        },
+        "source": {
+          "kind": "interface-field",
+          "root": "AdjustmentRevisionProjection"
+        }
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRainGateFeatureProjection",
+      "rustName": "AdjustmentRainGateFeatureProjection",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "RainMaintenancePersistenceCaptureMember",
+      "rustName": "RainMaintenancePersistenceCaptureMember",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "RainMaintenancePersistenceTargetRow",
+      "rustName": "RainMaintenancePersistenceTargetRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "RainMaintenancePersistenceTarget",
+      "rustName": "RainMaintenancePersistenceTarget",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRainGateControlProjection",
+      "rustName": "AdjustmentRainGateControlProjection",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRevisionProjectionDocument",
+      "rustName": "AdjustmentRevisionProjectionDocument",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "Single",
+            "payloadRustName": "AdjustmentRevisionProjection"
+          },
+          {
+            "rustName": "Batch",
+            "payloadRustName": "AdjustmentRevisionBatchProjection"
+          },
+          {
+            "rustName": "NativeTemperature",
+            "payloadRustName": "AdjustmentTemperatureNativeSourceProjection"
+          },
+          {
+            "rustName": "RainFeature",
+            "payloadRustName": "AdjustmentRainGateFeatureProjection"
+          },
+          {
+            "rustName": "RainControl",
+            "payloadRustName": "AdjustmentRainGateControlProjection"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetClaim",
+      "rustName": "AdjustmentRainFixedGaugeTargetClaim",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetCaptureBody",
+      "rustName": "AdjustmentRainFixedGaugeTargetCaptureBody",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetCaptureMember",
+      "rustName": "AdjustmentRainFixedGaugeTargetCaptureMember",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetInterval",
+      "rustName": "AdjustmentRainFixedGaugeTargetInterval",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetRow",
+      "rustName": "AdjustmentRainFixedGaugeTargetRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetProjection",
+      "rustName": "AdjustmentRainFixedGaugeTargetProjection",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetLogicalKey",
+      "rustName": "AdjustmentRainFixedGaugeTargetLogicalKey",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetActual",
+      "rustName": "AdjustmentRainFixedGaugeTargetActual",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "TemperatureMaintenanceCandidateRow",
+      "rustName": "TemperatureMaintenanceCandidateRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "WindMaintenanceCandidateRow",
+      "rustName": "WindMaintenanceCandidateRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "TemperatureMaintenanceIncumbentRow",
+      "rustName": "TemperatureMaintenanceIncumbentRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "WindMaintenanceIncumbentRow",
+      "rustName": "WindMaintenanceIncumbentRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "CaptureApiMaintenanceShadowResult",
+      "rustName": "CaptureApiMaintenanceShadowResult",
+      "kind": "tagged-readonly-object-union",
+      "readonlyTaggedUnion": true,
+      "discriminator": {
+        "field": "status",
+        "variants": [
+          {
+            "rustName": "Published",
+            "payloadRustName": "CaptureApiMaintenanceShadowResultPublished",
+            "wireValue": "published"
+          },
+          {
+            "rustName": "Gap",
+            "payloadRustName": "CaptureApiMaintenanceShadowResultGap",
+            "wireValue": "gap"
+          }
+        ]
+      }
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "HealthSnapshot",
+      "rustName": "HealthSnapshot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/health.ts",
+      "exportName": "WorkerHealth",
+      "rustName": "WorkerHealth",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/migrate.ts",
+      "exportName": "MigrationReadiness",
+      "rustName": "MigrationReadiness",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/worker.ts",
+      "exportName": "SourceRunResult",
+      "rustName": "SourceRunResult",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/worker.ts",
+      "exportName": "WorkerIterationResult",
+      "rustName": "WorkerIterationResult",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/worker.ts",
+      "exportName": "EcmwfTemperatureCanaryCollectionResult",
+      "rustName": "EcmwfTemperatureCanaryCollectionResult",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/rain-collection.ts",
+      "exportName": "RainCollectionResult",
+      "rustName": "RainCollectionResult",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/errors.ts",
+      "exportName": "WorkerDiagnosticEvent",
+      "rustName": "WorkerDiagnosticEvent",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "apps/worker/src/errors.ts",
+      "exportName": "WorkerDiagnostic",
+      "rustName": "WorkerDiagnostic",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/open-meteo.ts",
+      "exportName": "OpenMeteoLocation",
+      "rustName": "OpenMeteoLocation",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/open-meteo.ts",
+      "exportName": "OpenMeteoArchiveRequest",
+      "rustName": "OpenMeteoArchiveRequest",
+      "kind": "readonly-interface",
+      "base": "OpenMeteoLocation"
+    },
+    {
+      "source": "packages/providers/src/open-meteo-previous-runs.ts",
+      "exportName": "OpenMeteoPreviousRunsLocation",
+      "rustName": "OpenMeteoPreviousRunsLocation",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/open-meteo-previous-runs.ts",
+      "exportName": "OpenMeteoPreviousRunsRequest",
+      "rustName": "OpenMeteoPreviousRunsRequest",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/open-meteo-single-runs.ts",
+      "exportName": "OpenMeteoEcmwfSingleRunRequest",
+      "rustName": "OpenMeteoEcmwfSingleRunRequest",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/open-meteo-single-runs.ts",
+      "exportName": "OpenMeteoEcmwfSingleRunHour",
+      "rustName": "OpenMeteoEcmwfSingleRunHour",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/open-meteo-single-runs.ts",
+      "exportName": "OpenMeteoEcmwfSingleRunBatch",
+      "rustName": "OpenMeteoEcmwfSingleRunBatch",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/contract.ts",
+      "exportName": "ProviderCapability",
+      "rustName": "ProviderCapability",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/providers/src/contract.ts",
+      "exportName": "ProviderAttribution",
+      "rustName": "ProviderAttribution",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/ecowitt.ts",
+      "exportName": "EcowittLiveRequest",
+      "rustName": "EcowittLiveRequest",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/ecowitt.ts",
+      "exportName": "EcowittSensorReadings",
+      "rustName": "EcowittSensorReadings",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/ecowitt.ts",
+      "exportName": "EcowittSensorSnapshot",
+      "rustName": "EcowittSensorSnapshot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/tempest.ts",
+      "exportName": "ResolvedTempestStation",
+      "rustName": "ResolvedTempestStation",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/providers/src/noaa-tides.ts",
+      "exportName": "NoaaTideRangeBase",
+      "rustName": "NoaaTideRangeBase",
+      "kind": "readonly-interface",
+      "localInterface": true
+    },
+    {
+      "source": "packages/providers/src/noaa-tides.ts",
+      "exportName": "NoaaTideObservationRequest",
+      "rustName": "NoaaTideObservationRequest",
+      "kind": "readonly-interface",
+      "base": "NoaaTideRangeBase"
+    },
+    {
+      "source": "packages/providers/src/noaa-tides.ts",
+      "exportName": "NoaaTidePredictionRequest",
+      "rustName": "NoaaTidePredictionRequest",
+      "kind": "readonly-interface",
+      "base": "NoaaTideRangeBase"
+    },
+    {
+      "source": "packages/providers/src/noaa-tides.ts",
+      "exportName": "NoaaTideRangeRequest",
+      "rustName": "NoaaTideRangeRequest",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "Observation",
+            "payloadRustName": "NoaaTideObservationRequest"
+          },
+          {
+            "rustName": "Prediction",
+            "payloadRustName": "NoaaTidePredictionRequest"
+          }
+        ]
+      }
+    },
+    {
+      "source": "apps/worker/src/tide-backfill-cli.ts",
+      "exportName": "TideBackfillArguments",
+      "rustName": "TideBackfillArguments",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/tide-backfill-cli.ts",
+      "exportName": "PlannedTideChunk",
+      "rustName": "PlannedTideChunk",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/tide-backfill-cli.ts",
+      "exportName": "TideBackfillReport",
+      "rustName": "TideBackfillReport",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/tide-backfill-cli.ts",
+      "exportName": "TideBackfillSourceReport",
+      "rustName": "TideBackfillSourceReport",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/backfill-cli.ts",
+      "exportName": "BackfillArguments",
+      "rustName": "BackfillArguments",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/backfill-cli.ts",
+      "exportName": "PlannedBackfillChunk",
+      "rustName": "PlannedBackfillChunk",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/backfill-cli.ts",
+      "exportName": "BackfillChunkReport",
+      "rustName": "BackfillChunkReport",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/backfill-cli.ts",
+      "exportName": "BackfillReport",
+      "rustName": "BackfillReport",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "TempestBackfillArguments",
+      "rustName": "TempestBackfillArguments",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "PlannedTempestChunk",
+      "rustName": "PlannedTempestChunk",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "TempestBackfillChunkReport",
+      "rustName": "TempestBackfillChunkReport",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "TempestStationBackfillReport",
+      "rustName": "TempestStationBackfillReport",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "TempestBulkBackfillReport",
+      "rustName": "TempestBulkBackfillReport",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/public-stations-backfill-cli.ts",
+      "exportName": "PublicStationBackfillArguments",
+      "rustName": "PublicStationBackfillArguments",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/public-stations-backfill-cli.ts",
+      "exportName": "PlannedPublicStationChunk",
+      "rustName": "PlannedPublicStationChunk",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/public-stations-backfill-cli.ts",
+      "exportName": "PublicStationBackfillSourceReport",
+      "rustName": "PublicStationBackfillSourceReport",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/public-stations-backfill-cli.ts",
+      "exportName": "PublicStationBackfillReport",
+      "rustName": "PublicStationBackfillReport",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastMode",
+      "rustName": "WidgetForecastMode",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastReason",
+      "rustName": "WidgetForecastReason",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastStatus",
+      "rustName": "WidgetForecastStatus",
+      "kind": "string-literal-enum",
+      "catalog": {
+        "kind": "extend-local-string-enum",
+        "base": "WidgetForecastMode"
+      }
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastSource",
+      "rustName": "WidgetForecastSource",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastField",
+      "rustName": "WidgetForecastField",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastHour",
+      "rustName": "WidgetForecastHour",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastSnapshot",
+      "rustName": "WidgetForecastSnapshot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/web/src/widget-forecast-v2.ts",
+      "exportName": "WidgetForecastV2Hour",
+      "rustName": "WidgetForecastV2Hour",
+      "kind": "readonly-interface",
+      "base": "WidgetForecastHour",
+      "importedBase": true
+    },
+    {
+      "source": "apps/web/src/widget-forecast-v2.ts",
+      "exportName": "WidgetForecastV2Snapshot",
+      "rustName": "WidgetForecastV2Snapshot",
+      "kind": "readonly-interface",
+      "base": "WidgetForecastSnapshot",
+      "omitBaseFields": [
+        "hours",
+        "schemaVersion"
+      ]
+    },
+    {
+      "source": "apps/web/src/widget-forecast-v3.ts",
+      "exportName": "WidgetForecastV3Snapshot",
+      "rustName": "WidgetForecastV3Snapshot",
+      "kind": "readonly-interface",
+      "base": "WidgetForecastV2Snapshot",
+      "omitBaseFields": [
+        "calendar",
+        "schemaVersion"
+      ],
+      "omitInheritedBaseFields": [
+        "calendar"
+      ],
+      "fieldProjections": {
+        "calendar": {
+          "kind": "indexed-interface-field-extension",
+          "root": "WidgetForecastSnapshot"
+        }
+      }
+    },
+    {
+      "source": "packages/providers/src/contract.ts",
+      "exportName": "ProviderBatch",
+      "rustName": "ProviderBatch",
+      "kind": "readonly-interface",
+      "defaultedListParameter": {
+        "name": "RecordType",
+        "defaultRoot": "NormalizedWeatherRecord",
+        "field": "records"
+      }
+    },
+    {
+      "source": "packages/database/src/migrate.ts",
+      "exportName": "MigrationResult",
+      "rustName": "MigrationResult",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "WeatherRecordRow",
+      "rustName": "WeatherRecordRow",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "CurrentWeatherRecordRow",
+      "rustName": "CurrentWeatherRecordRow",
+      "kind": "readonly-interface",
+      "base": "WeatherRecordRow"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "DueSource",
+      "rustName": "DueSource",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ActiveSiteRow",
+      "rustName": "ActiveSiteRow",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "DailyPrecipitationRow",
+      "rustName": "DailyPrecipitationRow",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "TideRecordRow",
+      "rustName": "TideRecordRow",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "LatestWorkerHeartbeat",
+      "rustName": "LatestWorkerHeartbeat",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastObservationInputRow",
+      "rustName": "ForecastObservationInputRow",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastObservationInput",
+      "rustName": "ForecastObservationInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "TrendPointRow",
+      "rustName": "TrendPointRow",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastObservationHourlyMetrics",
+      "rustName": "ForecastObservationHourlyMetrics",
+      "kind": "readonly-nullable-metric-record",
+      "readonlyNullableMetricRecord": "ForecastAdjustmentMetric"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastObservationHourlyStationRow",
+      "rustName": "ForecastObservationHourlyStationRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "PersistedEcmwfTemperatureRevision",
+      "rustName": "PersistedEcmwfTemperatureRevision",
+      "kind": "readonly-interface",
+      "fieldProjections": {
+        "adapterVersion": {
+          "kind": "interface-field",
+          "root": "EcmwfTemperatureCanaryRun"
+        },
+        "modelCycle": {
+          "kind": "interface-field",
+          "root": "EcmwfTemperatureCanaryRun"
+        },
+        "upstreamModel": {
+          "kind": "interface-field",
+          "root": "EcmwfTemperatureCanaryRun"
+        }
+      }
+    },
+    {
+      "source": "packages/database/src/config.ts",
+      "exportName": "SiteConfigurationSource",
+      "rustName": "SiteConfigurationSource",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/config.ts",
+      "exportName": "SiteConfiguration",
+      "rustName": "SiteConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/ecowitt-config.ts",
+      "exportName": "EcowittStationConfiguration",
+      "rustName": "EcowittStationConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/ecowitt-config.ts",
+      "exportName": "EcowittConfiguration",
+      "rustName": "EcowittConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/tempest-config.ts",
+      "exportName": "TempestStationConfiguration",
+      "rustName": "TempestStationConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/tempest-config.ts",
+      "exportName": "TempestConfiguration",
+      "rustName": "TempestConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/public-stations-config.ts",
+      "exportName": "PublicStationAdapter",
+      "rustName": "PublicStationAdapter",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/database/src/public-stations-config.ts",
+      "exportName": "PublicStationProviderConfiguration",
+      "rustName": "PublicStationProviderConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/public-stations-config.ts",
+      "exportName": "PublicStationSourceConfiguration",
+      "rustName": "PublicStationSourceConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/public-stations-config.ts",
+      "exportName": "PublicStationConfigurationStation",
+      "rustName": "PublicStationConfigurationStation",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/public-stations-config.ts",
+      "exportName": "PublicStationConfiguration",
+      "rustName": "PublicStationConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/tides-config.ts",
+      "exportName": "TideProviderConfiguration",
+      "rustName": "TideProviderConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/tides-config.ts",
+      "exportName": "TideSourceConfiguration",
+      "rustName": "TideSourceConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/tides-config.ts",
+      "exportName": "TideStationConfiguration",
+      "rustName": "TideStationConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/tides-config.ts",
+      "exportName": "TideConfiguration",
+      "rustName": "TideConfiguration",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/calendar.ts",
+      "exportName": "LocalMeteorologicalSeason",
+      "rustName": "LocalMeteorologicalSeason",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/calendar.ts",
+      "exportName": "LocalDaypart",
+      "rustName": "LocalDaypart",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/calendar.ts",
+      "exportName": "RuntimeCalendarFingerprint",
+      "rustName": "RuntimeCalendarFingerprint",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/calendar.ts",
+      "exportName": "LocalCalendarFeatures",
+      "rustName": "LocalCalendarFeatures",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/algorithm-v1.ts",
+      "exportName": "CoreAdjustmentApplicationInput",
+      "rustName": "CoreAdjustmentApplicationInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/algorithm-v1.ts",
+      "exportName": "CoreAdjustmentApplicationResult",
+      "rustName": "CoreAdjustmentApplicationResult",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/apply.ts",
+      "exportName": "ApplyForecastAdjustmentInputV1",
+      "rustName": "ApplyForecastAdjustmentInputV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/apply.ts",
+      "exportName": "ForecastAdjustmentWindMaintenanceDecision",
+      "rustName": "ForecastAdjustmentWindMaintenanceDecision",
+      "kind": "readonly-interface",
+      "fieldProjections": {
+        "appliedMetrics": {
+          "kind": "const-catalog-array",
+          "root": "ForecastAdjustmentWindCanaryMetric"
+        },
+        "leadBand": {
+          "kind": "return-enum",
+          "root": "ForecastLeadBandKey"
+        }
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+      "exportName": "MaintenanceShadowComparatorAuthorityKind",
+      "rustName": "MaintenanceShadowComparatorAuthorityKind",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+      "exportName": "MaintenanceShadowServingAuthority",
+      "rustName": "MaintenanceShadowServingAuthority",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "LoadedForecastAdjustmentRuntimeV1",
+      "rustName": "LoadedForecastAdjustmentRuntimeV1",
+      "kind": "tagged-readonly-object-union",
+      "disabledReasonExtract": "ForecastAdjustmentReasonCode",
+      "discriminator": {
+        "field": "state",
+        "variants": [
+          {
+            "rustName": "Active",
+            "payloadRustName": "LoadedForecastAdjustmentRuntimeV1Active",
+            "wireValue": "active"
+          },
+          {
+            "rustName": "Disabled",
+            "payloadRustName": "LoadedForecastAdjustmentRuntimeV1Disabled",
+            "wireValue": "disabled"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "LoadedForecastAdjustmentWindCanaryRuntimeV1",
+      "rustName": "LoadedForecastAdjustmentWindCanaryRuntimeV1",
+      "kind": "tagged-readonly-object-union",
+      "disabledReasonExtract": "ForecastAdjustmentReasonCode",
+      "discriminator": {
+        "field": "state",
+        "variants": [
+          {
+            "rustName": "Active",
+            "payloadRustName": "LoadedForecastAdjustmentWindCanaryRuntimeV1Active",
+            "wireValue": "active"
+          },
+          {
+            "rustName": "Disabled",
+            "payloadRustName": "LoadedForecastAdjustmentWindCanaryRuntimeV1Disabled",
+            "wireValue": "disabled"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryRegistryV2",
+      "rustName": "ForecastAdjustmentTemperatureCanaryRegistryV2",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "exportName": "ForecastAdjustmentTemperatureMaintenanceRuntimePackage",
+      "rustName": "ForecastAdjustmentTemperatureMaintenanceRuntimePackage",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "exportName": "ForecastAdjustmentWindMaintenanceRuntimePackage",
+      "rustName": "ForecastAdjustmentWindMaintenanceRuntimePackage",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "exportName": "ForecastAdjustmentMaintenanceRuntimePackage",
+      "rustName": "ForecastAdjustmentMaintenanceRuntimePackage",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "Temperature",
+            "payloadRustName": "ForecastAdjustmentTemperatureMaintenanceRuntimePackage"
+          },
+          {
+            "rustName": "Wind",
+            "payloadRustName": "ForecastAdjustmentWindMaintenanceRuntimePackage"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRegistryV2",
+      "rustName": "ForecastAdjustmentWindCanaryRegistryV2",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "LoadedForecastAdjustmentWindCanaryRuntime",
+      "rustName": "LoadedForecastAdjustmentWindCanaryRuntime",
+      "kind": "maintenance-loader-extension-union",
+      "maintenanceLoaderExtension": {
+        "legacy": "LoadedForecastAdjustmentWindCanaryRuntimeV1",
+        "package": "ForecastAdjustmentWindMaintenanceRuntimePackage",
+        "bundleField": "candidate"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "LoadedForecastAdjustmentTemperatureCanaryRuntime",
+      "rustName": "LoadedForecastAdjustmentTemperatureCanaryRuntime",
+      "kind": "maintenance-loader-extension-union",
+      "maintenanceLoaderExtension": {
+        "legacy": "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1",
+        "package": "ForecastAdjustmentTemperatureMaintenanceRuntimePackage",
+        "bundleField": "model"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "exportName": "LoadedForecastAdjustmentRainRuntimeRegistryV1",
+      "rustName": "LoadedForecastAdjustmentRainRuntimeRegistryV1",
+      "kind": "tagged-readonly-object-union",
+      "activeImportedConstString": "artifactSha256",
+      "discriminator": {
+        "field": "state",
+        "variants": [
+          {
+            "rustName": "Active",
+            "payloadRustName": "LoadedForecastAdjustmentRainRuntimeRegistryV1Active",
+            "wireValue": "active"
+          },
+          {
+            "rustName": "Disabled",
+            "payloadRustName": "LoadedForecastAdjustmentRainRuntimeRegistryV1Disabled",
+            "wireValue": "disabled"
+          }
+        ]
+      }
+    },
+    {
+      "source": "apps/api/src/main.ts",
+      "exportName": "LoadedApiForecastAdjustmentRuntime",
+      "rustName": "LoadedApiForecastAdjustmentRuntime",
+      "kind": "named-readonly-object-union",
+      "localAlias": true,
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "Standard",
+            "payloadRustName": "LoadedForecastAdjustmentRuntimeV1"
+          },
+          {
+            "rustName": "Wind",
+            "payloadRustName": "LoadedForecastAdjustmentWindCanaryRuntime"
+          }
+        ]
+      }
+    },
+    {
+      "source": "apps/api/src/main.ts",
+      "exportName": "ForecastAdjustmentStartupSnapshot",
+      "rustName": "ForecastAdjustmentStartupSnapshot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/main.ts",
+      "exportName": "ForecastTemperatureAdjustmentStartupSnapshot",
+      "rustName": "ForecastTemperatureAdjustmentStartupSnapshot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/main.ts",
+      "exportName": "ForecastRainAdjustmentStartupSnapshot",
+      "rustName": "ForecastRainAdjustmentStartupSnapshot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/rain-adjustment.ts",
+      "exportName": "ApiRainAdjustmentStartupSnapshot",
+      "rustName": "ApiRainAdjustmentStartupSnapshot",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindForecastHour",
+      "rustName": "RainWindForecastHour",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindRunProfile",
+      "rustName": "RainWindRunProfile",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindStationHour",
+      "rustName": "RainWindStationHour",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindPredictionInput",
+      "rustName": "RainWindPredictionInput",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindPredictionHour",
+      "rustName": "RainWindPredictionHour",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindPredictionResult",
+      "rustName": "RainWindPredictionResult",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindFeaturePerformance",
+      "rustName": "RainHurdleWindFeaturePerformance",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindPerformanceHour",
+      "rustName": "RainWindPerformanceHour",
+      "kind": "readonly-interface",
+      "base": "RainWindPredictionHour"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindPerformanceResult",
+      "rustName": "RainWindPerformanceResult",
+      "kind": "readonly-interface",
+      "base": "RainWindPredictionResult",
+      "omitBaseFields": [
+        "hours"
+      ]
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindFeatureRow",
+      "rustName": "RainHurdleWindFeatureRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindFeatureProjection",
+      "rustName": "RainHurdleWindFeatureProjection",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindProjectionId",
+      "rustName": "RainHurdleWindProjectionId",
+      "kind": "string-literal-enum",
+      "catalog": {
+        "kind": "direct-const-string-tuple"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindPortableArtifactV1",
+      "rustName": "RainHurdleWindPortableArtifactV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindPortableArtifactV2",
+      "rustName": "RainHurdleWindPortableArtifactV2",
+      "kind": "readonly-interface",
+      "base": "RainHurdleWindPortableArtifactV1",
+      "omitBaseFields": [
+        "contractVersion"
+      ],
+      "addedAfterOmit": [
+        "projectionId"
+      ]
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindPortableArtifact",
+      "rustName": "RainHurdleWindPortableArtifact",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "V1",
+            "payloadRustName": "RainHurdleWindPortableArtifactV1"
+          },
+          {
+            "rustName": "V2",
+            "payloadRustName": "RainHurdleWindPortableArtifactV2"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+      "exportName": "RainMaintenanceControlSupport",
+      "rustName": "RainMaintenanceControlSupport",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+      "exportName": "RainMaintenanceControlState",
+      "rustName": "RainMaintenanceControlState",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/source-identity.ts",
+      "exportName": "RuntimeSourceIdentity",
+      "rustName": "RuntimeSourceIdentity",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/backfill-cli.ts",
+      "exportName": "BackfillSource",
+      "rustName": "BackfillSource",
+      "kind": "readonly-interface",
+      "base": "RuntimeSourceIdentity",
+      "importedBase": true,
+      "identicalImportedStringFields": [
+        "timezone"
+      ]
+    },
+    {
+      "source": "apps/worker/src/tide-backfill-cli.ts",
+      "exportName": "TideBackfillSource",
+      "rustName": "TideBackfillSource",
+      "kind": "readonly-interface",
+      "base": "RuntimeSourceIdentity",
+      "importedBase": true,
+      "identicalImportedStringFields": [
+        "sourceConfigFingerprint"
+      ]
+    },
+    {
+      "source": "apps/worker/src/public-stations-backfill-cli.ts",
+      "exportName": "PublicStationBackfillSource",
+      "rustName": "PublicStationBackfillSource",
+      "kind": "readonly-interface",
+      "base": "RuntimeSourceIdentity",
+      "importedBase": true,
+      "identicalImportedStringFields": [
+        "sourceConfigFingerprint"
+      ]
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "TempestBackfillSource",
+      "rustName": "TempestBackfillSource",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/run-deadline.ts",
+      "exportName": "IngestionDeadlines",
+      "rustName": "IngestionDeadlines",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastAnchorStorageRow",
+      "rustName": "ForecastAnchorStorageRow",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true,
+      "pgQueryOwners": [
+        "listForecastTrainingCohorts"
+      ]
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "LegacyV4ForecastStorageRow",
+      "rustName": "LegacyV4ForecastStorageRow",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true,
+      "pgQueryOwners": [
+        "listForecastTrainingCohorts"
+      ]
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastObservationStorageRow",
+      "rustName": "ForecastObservationStorageRow",
+      "kind": "readonly-interface",
+      "pgRowNamedFields": true,
+      "pgQueryOwners": [
+        "listForecastObservationHourlyStations",
+        "listCausalForecastObservationHourlyStations"
+      ]
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentEvidenceClass",
+      "rustName": "ForecastAdjustmentEvidenceClass",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentSupportState",
+      "rustName": "ForecastAdjustmentSupportState",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentComparisonState",
+      "rustName": "ForecastAdjustmentComparisonState",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentQualificationState",
+      "rustName": "ForecastAdjustmentQualificationState",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentServingState",
+      "rustName": "ForecastAdjustmentServingState",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentPerformancePair",
+      "rustName": "ForecastAdjustmentPerformancePair",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentWeightedPair",
+      "rustName": "ForecastAdjustmentWeightedPair",
+      "kind": "readonly-interface",
+      "base": "ForecastAdjustmentPerformancePair"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentMetricSummary",
+      "rustName": "ForecastAdjustmentMetricSummary",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentPairedMetricSummary",
+      "rustName": "ForecastAdjustmentPairedMetricSummary",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentBootstrapSummary",
+      "rustName": "ForecastAdjustmentBootstrapSummary",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentPerformanceEvaluation",
+      "rustName": "ForecastAdjustmentPerformanceEvaluation",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentStationTargetValue",
+      "rustName": "ForecastAdjustmentStationTargetValue",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainGaugeValue",
+      "rustName": "ForecastAdjustmentRainGaugeValue",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainGaugeTarget",
+      "rustName": "ForecastAdjustmentRainGaugeTarget",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainGaugeInterval",
+      "rustName": "ForecastAdjustmentRainGaugeInterval",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainHourlyTarget",
+      "rustName": "ForecastAdjustmentRainHourlyTarget",
+      "kind": "readonly-interface",
+      "base": "ForecastAdjustmentRainGaugeTarget"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainProbability",
+      "rustName": "ForecastAdjustmentRainProbability",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainPerformancePair",
+      "rustName": "ForecastAdjustmentRainPerformancePair",
+      "kind": "readonly-interface",
+      "base": "ForecastAdjustmentPerformancePair"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentReliabilityBin",
+      "rustName": "ForecastAdjustmentReliabilityBin",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainThresholdSummary",
+      "rustName": "ForecastAdjustmentRainThresholdSummary",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainAccumulationSummary",
+      "rustName": "ForecastAdjustmentRainAccumulationSummary",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainDiagnostics",
+      "rustName": "ForecastAdjustmentRainDiagnostics",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+      "exportName": "InstalledMaintenanceShadowReceiptV1",
+      "rustName": "InstalledMaintenanceShadowReceiptV1",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+      "exportName": "InstalledMaintenanceShadowReceiptV2",
+      "rustName": "InstalledMaintenanceShadowReceiptV2",
+      "kind": "readonly-interface",
+      "base": "InstalledMaintenanceShadowReceiptV1",
+      "omitBaseFields": [
+        "contractVersion"
+      ],
+      "ownFieldOrderAfterOmit": [
+        "actionKind",
+        "contractVersion",
+        "fullMemberRootSha256",
+        "lifecycleHeadSha256",
+        "policyDecision",
+        "policyReportSha256"
+      ]
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+      "exportName": "InstalledMaintenanceShadowReceipt",
+      "rustName": "InstalledMaintenanceShadowReceipt",
+      "kind": "named-readonly-object-union",
+      "objectUnion": {
+        "variants": [
+          {
+            "rustName": "V1",
+            "payloadRustName": "InstalledMaintenanceShadowReceiptV1"
+          },
+          {
+            "rustName": "V2",
+            "payloadRustName": "InstalledMaintenanceShadowReceiptV2"
+          }
+        ]
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+      "exportName": "InstalledRainMaintenanceControlReference",
+      "rustName": "InstalledRainMaintenanceControlReference",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+      "exportName": "AdjustmentRevisionCaptureEpochWitness",
+      "rustName": "AdjustmentRevisionCaptureEpochWitness",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentExclusionReason",
+      "rustName": "ForecastAdjustmentExclusionReason",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentDiagnosticReason",
+      "rustName": "ForecastAdjustmentDiagnosticReason",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentPreparedPairs",
+      "rustName": "ForecastAdjustmentPreparedPairs",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/sites.ts",
+      "exportName": "ApiSitesResponse",
+      "rustName": "ApiSitesResponse",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiHealthResponse",
+      "rustName": "ApiHealthResponse",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiRainCollectionResponse",
+      "rustName": "ApiRainCollectionResponse",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiCurrentWeatherResponse",
+      "rustName": "ApiCurrentWeatherResponse",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/precipitation-and-tides.ts",
+      "exportName": "ApiDailyPrecipitationResponse",
+      "rustName": "ApiDailyPrecipitationResponse",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiTrendsResponse",
+      "rustName": "ApiTrendsResponse",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/precipitation-and-tides.ts",
+      "exportName": "ApiTidesResponse",
+      "rustName": "ApiTidesResponse",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiHistoryResponse",
+      "rustName": "ApiHistoryResponse",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiErrorResponse",
+      "rustName": "ApiErrorResponse",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "TemperatureCanaryOperation",
+      "rustName": "TemperatureCanaryOperation",
+      "kind": "string-literal-enum"
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiDiagnostic",
+      "rustName": "ApiDiagnostic",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "exportName": "ForecastAdjustmentPerformancePackageInputs",
+      "rustName": "ForecastAdjustmentPerformancePackageInputs",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "exportName": "TemperaturePerformanceScoredPairMetadata",
+      "rustName": "TemperaturePerformanceScoredPairMetadata",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "exportName": "TemperaturePerformanceDataRow",
+      "rustName": "TemperaturePerformanceDataRow",
+      "kind": "readonly-interface"
+    },
+    {
+      "source": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "exportName": "TemperaturePerformanceDataWire",
+      "rustName": "TemperaturePerformanceDataWire",
+      "kind": "readonly-interface"
+    }
+  ],
+  "typeImports": [
+    {
+      "consumer": "packages/contracts/src/forecast.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentDecision": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentMetric": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "specifier": "./temperature-mos-runtime.js",
+      "entry": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exports": {
+        "TemperatureMosPermanentRuntimeModel": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "TemperatureMosRuntimeModel": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "TemperatureMosRuntimeRawReason": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "TemperatureMosRuntimeRecentErrorState": "packages/forecast-adjustment/src/temperature-mos-runtime.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/forecast.ts",
+      "specifier": "@weather/forecast-adjustment",
+      "packageJson": "packages/forecast-adjustment/package.json",
+      "entry": "packages/forecast-adjustment/src/index.ts",
+      "leaves": [
+        "packages/forecast-adjustment/src/algorithm-v1.ts",
+        "packages/forecast-adjustment/src/apply.ts",
+        "packages/forecast-adjustment/src/bootstrap-v1.ts",
+        "packages/forecast-adjustment/src/calendar.ts",
+        "packages/forecast-adjustment/src/candidate.ts",
+        "packages/forecast-adjustment/src/evaluate.ts",
+        "packages/forecast-adjustment/src/evidence.ts",
+        "packages/forecast-adjustment/src/holdout-ledger.ts",
+        "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+        "packages/forecast-adjustment/src/maintenance-policy.ts",
+        "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+        "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+        "packages/forecast-adjustment/src/performance-scorecard.ts",
+        "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+        "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+        "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+        "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+        "packages/forecast-adjustment/src/runtime-bundle.ts",
+        "packages/forecast-adjustment/src/runtime-loader.ts",
+        "packages/forecast-adjustment/src/temperature-canary.ts",
+        "packages/forecast-adjustment/src/temperature-lead-research.ts",
+        "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "packages/forecast-adjustment/src/temperature-weather-research.ts",
+        "packages/forecast-adjustment/src/wind-canary.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentWindQualifiedMaintenanceDecision": "packages/forecast-adjustment/src/apply.ts",
+        "ForecastTemperatureCanaryDecisionV1": "packages/forecast-adjustment/src/temperature-canary.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/forecast.ts",
+      "specifier": "./weather-records.js",
+      "entry": "packages/contracts/src/weather-records.ts",
+      "exports": {
+        "ApiWeatherRecord": "packages/contracts/src/weather-records.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/apply.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "CanonicalWeatherMetrics": "packages/domain/src/weather-record.ts",
+        "ForecastAdjustmentMetric": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentRawForecastProvenance": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentReasonCode": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentRuntimeBundleV2": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "./temperature-canary.js",
+      "entry": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exports": {},
+      "proofExports": {
+        "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1": "packages/forecast-adjustment/src/temperature-canary.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/forecast.ts",
+      "specifier": "./sites.js",
+      "entry": "packages/contracts/src/sites.ts",
+      "exports": {
+        "ApiSite": "packages/contracts/src/sites.ts"
+      }
+    },
+    {
+      "consumer": "apps/api/src/rain-adjustment.ts",
+      "specifier": "@weather/forecast-adjustment",
+      "packageJson": "packages/forecast-adjustment/package.json",
+      "entry": "packages/forecast-adjustment/src/index.ts",
+      "leaves": [
+        "packages/forecast-adjustment/src/algorithm-v1.ts",
+        "packages/forecast-adjustment/src/apply.ts",
+        "packages/forecast-adjustment/src/bootstrap-v1.ts",
+        "packages/forecast-adjustment/src/calendar.ts",
+        "packages/forecast-adjustment/src/candidate.ts",
+        "packages/forecast-adjustment/src/evaluate.ts",
+        "packages/forecast-adjustment/src/evidence.ts",
+        "packages/forecast-adjustment/src/holdout-ledger.ts",
+        "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+        "packages/forecast-adjustment/src/maintenance-policy.ts",
+        "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+        "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+        "packages/forecast-adjustment/src/performance-scorecard.ts",
+        "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+        "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+        "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+        "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+        "packages/forecast-adjustment/src/runtime-bundle.ts",
+        "packages/forecast-adjustment/src/runtime-loader.ts",
+        "packages/forecast-adjustment/src/temperature-canary.ts",
+        "packages/forecast-adjustment/src/temperature-lead-research.ts",
+        "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "packages/forecast-adjustment/src/temperature-weather-research.ts",
+        "packages/forecast-adjustment/src/wind-canary.ts"
+      ],
+      "exports": {
+        "LoadedForecastAdjustmentRainRuntimeRegistryV1": "packages/forecast-adjustment/src/rain-runtime-registry.ts"
+      }
+    },
+    {
+      "consumer": "packages/domain/src/weather-record.ts",
+      "specifier": "./provenance.js",
+      "entry": "packages/domain/src/provenance.ts",
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/domain/src/ingestion.ts",
+      "specifier": "./provenance.js",
+      "entry": "packages/domain/src/provenance.ts",
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/domain/src/forecast-anchor-record.ts",
+      "specifier": "./weather-record.js",
+      "entry": "packages/domain/src/weather-record.ts",
+      "exports": {
+        "CanonicalWeatherMetrics": "packages/domain/src/weather-record.ts",
+        "WeatherRecordMetadata": "packages/domain/src/weather-record.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/repositories.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "BackfillChunkIdentity": "packages/domain/src/ingestion.ts",
+        "FixedLeadAnchorTrainingRow": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentMetric": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastObservationProviderFamily": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastObservationStationKey": "packages/domain/src/forecast-adjustment.ts",
+        "IngestionError": "packages/domain/src/ingestion.ts",
+        "IngestionMode": "packages/domain/src/ingestion.ts",
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "LegacyV4RetrievalSnapshotTrainingRow": "packages/domain/src/forecast-adjustment.ts",
+        "NormalizedForecastAnchorRecord": "packages/domain/src/forecast-anchor-record.ts",
+        "NormalizedWeatherRecord": "packages/domain/src/weather-record.ts",
+        "SourceKind": "packages/domain/src/provenance.ts",
+        "StationKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/domain/src/forecast-adjustment.ts",
+      "specifier": "./weather-record.js",
+      "entry": "packages/domain/src/weather-record.ts",
+      "exports": {
+        "CanonicalWeatherMetrics": "packages/domain/src/weather-record.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/wind-canary.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentCoefficient": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentForecastIdentity": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentMetricBand": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentTrainingEnvelope": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentTrainingProvenance": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentWindCanaryRuntimeBundleV1": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentWindCanaryTrainingIdentity": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/rain-collection.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "NormalizedWeatherRecord": "packages/domain/src/weather-record.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/rain-collection.ts",
+      "specifier": "./adjustment-maintenance.js",
+      "entry": "packages/database/src/adjustment-maintenance.ts",
+      "exports": {
+        "AdjustmentRevisionCommitReceipt": "packages/database/src/adjustment-maintenance.ts",
+        "AdjustmentRevisionGap": "packages/database/src/adjustment-maintenance.ts"
+      }
+    },
+    {
+      "consumer": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "specifier": "@weather/forecast-adjustment",
+      "packageJson": "packages/forecast-adjustment/package.json",
+      "entry": "packages/forecast-adjustment/src/index.ts",
+      "leaves": [
+        "packages/forecast-adjustment/src/algorithm-v1.ts",
+        "packages/forecast-adjustment/src/apply.ts",
+        "packages/forecast-adjustment/src/bootstrap-v1.ts",
+        "packages/forecast-adjustment/src/calendar.ts",
+        "packages/forecast-adjustment/src/candidate.ts",
+        "packages/forecast-adjustment/src/evaluate.ts",
+        "packages/forecast-adjustment/src/evidence.ts",
+        "packages/forecast-adjustment/src/holdout-ledger.ts",
+        "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+        "packages/forecast-adjustment/src/maintenance-policy.ts",
+        "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+        "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+        "packages/forecast-adjustment/src/performance-scorecard.ts",
+        "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+        "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+        "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+        "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+        "packages/forecast-adjustment/src/runtime-bundle.ts",
+        "packages/forecast-adjustment/src/runtime-loader.ts",
+        "packages/forecast-adjustment/src/temperature-canary.ts",
+        "packages/forecast-adjustment/src/temperature-lead-research.ts",
+        "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "packages/forecast-adjustment/src/temperature-weather-research.ts",
+        "packages/forecast-adjustment/src/wind-canary.ts"
+      ],
+      "exports": {
+        "AdjustmentRevisionProjectionKind": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+        "MaintenanceShadowPredictionMetadata": "packages/forecast-adjustment/src/maintenance-shadow-values.ts"
+      }
+    },
+    {
+      "consumer": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "specifier": "@weather/database",
+      "packageJson": "packages/database/package.json",
+      "entry": "packages/database/src/index.ts",
+      "leaves": [
+        "packages/database/src/adjustment-maintenance.ts",
+        "packages/database/src/config.ts",
+        "packages/database/src/ecowitt-config.ts",
+        "packages/database/src/migrate.ts",
+        "packages/database/src/pool.ts",
+        "packages/database/src/public-stations-config.ts",
+        "packages/database/src/rain-adjustment.ts",
+        "packages/database/src/rain-collection.ts",
+        "packages/database/src/repositories.ts",
+        "packages/database/src/tempest-config.ts",
+        "packages/database/src/tides-config.ts"
+      ],
+      "compiledSource": {
+        "tsconfig": "packages/database/tsconfig.json",
+        "base": "tsconfig.base.json"
+      },
+      "exports": {
+        "AdjustmentRevisionCommitReceipt": "packages/database/src/adjustment-maintenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "specifier": "./maintenance-shadow-values.js",
+      "entry": "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+      "exports": {
+        "MaintenanceShadowTemperatureRecentErrorState": "packages/forecast-adjustment/src/maintenance-shadow-values.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "NormalizedWeatherRecord": "packages/domain/src/weather-record.ts"
+      }
+    },
+    {
+      "consumer": "packages/providers/src/ecowitt.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/tide-backfill-cli.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "BackfillChunkIdentity": "packages/domain/src/ingestion.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/backfill-cli.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "BackfillChunkIdentity": "packages/domain/src/ingestion.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/tempest-backfill-cli.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "BackfillChunkIdentity": "packages/domain/src/ingestion.ts",
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/public-stations-backfill-cli.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "BackfillChunkIdentity": "packages/domain/src/ingestion.ts"
+      }
+    },
+    {
+      "consumer": "apps/web/src/widget-forecast-v2.ts",
+      "specifier": "./widget-forecast.js",
+      "entry": "apps/web/src/widget-forecast.ts",
+      "exports": {
+        "WidgetForecastField": "apps/web/src/widget-forecast.ts",
+        "WidgetForecastHour": "apps/web/src/widget-forecast.ts",
+        "WidgetForecastSnapshot": "apps/web/src/widget-forecast.ts"
+      }
+    },
+    {
+      "consumer": "apps/web/src/widget-forecast-v3.ts",
+      "specifier": "./widget-forecast.js",
+      "entry": "apps/web/src/widget-forecast.ts",
+      "exports": {
+        "WidgetForecastSnapshot": "apps/web/src/widget-forecast.ts"
+      }
+    },
+    {
+      "consumer": "apps/web/src/widget-forecast-v3.ts",
+      "specifier": "./widget-forecast-v2.js",
+      "entry": "apps/web/src/widget-forecast-v2.ts",
+      "exports": {
+        "WidgetForecastV2Snapshot": "apps/web/src/widget-forecast-v2.ts"
+      }
+    },
+    {
+      "consumer": "packages/providers/src/contract.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "NormalizedWeatherRecord": "packages/domain/src/weather-record.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/config.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceCapability": "packages/domain/src/provenance.ts",
+        "SourceKind": "packages/domain/src/provenance.ts",
+        "StationKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/ecowitt-config.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/tempest-config.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/public-stations-config.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceCapability": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/tides-config.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceCapability": "packages/domain/src/provenance.ts",
+        "StationKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/algorithm-v1.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentMetric": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/apply.ts",
+      "specifier": "./calendar.js",
+      "entry": "packages/forecast-adjustment/src/calendar.ts",
+      "exports": {
+        "RuntimeCalendarFingerprint": "packages/forecast-adjustment/src/calendar.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "./wind-canary.js",
+      "entry": "packages/forecast-adjustment/src/wind-canary.ts",
+      "exports": {
+        "ForecastAdjustmentWindCanaryRuntimeBundle": "packages/forecast-adjustment/src/wind-canary.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "./maintenance-shadow-comparator.js",
+      "entry": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+      "exports": {
+        "MaintenanceShadowServingAuthority": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/evaluate.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentMetricBand": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastObservationProviderFamily": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastObservationStationKey": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentCandidateV2": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentForecastIdentity": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "specifier": "./temperature-mos-runtime.js",
+      "entry": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exports": {
+        "TemperatureMosPermanentRuntimeModel": "packages/forecast-adjustment/src/temperature-mos-runtime.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "./candidate.js",
+      "entry": "packages/forecast-adjustment/src/candidate.ts",
+      "exports": {},
+      "tupleIdentityWrapper": "deepFreeze"
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "./maintenance-runtime-package.js",
+      "entry": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "exports": {
+        "ForecastAdjustmentTemperatureMaintenanceRuntimePackage": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+        "ForecastAdjustmentWindMaintenanceRuntimePackage": "packages/forecast-adjustment/src/maintenance-runtime-package.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "specifier": "./rain-hurdle-wind-artifact.js",
+      "entry": "packages/forecast-adjustment/src/rain-hurdle-wind-artifact.ts",
+      "exports": {},
+      "literalStringValue": "RAIN_HURDLE_WIND_ARTIFACT_SHA256"
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "specifier": "./maintenance-shadow-comparator.js",
+      "entry": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+      "exports": {
+        "MaintenanceShadowServingAuthority": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts"
+      }
+    },
+    {
+      "consumer": "apps/api/src/main.ts",
+      "specifier": "@weather/forecast-adjustment",
+      "packageJson": "packages/forecast-adjustment/package.json",
+      "entry": "packages/forecast-adjustment/src/index.ts",
+      "leaves": [
+        "packages/forecast-adjustment/src/algorithm-v1.ts",
+        "packages/forecast-adjustment/src/apply.ts",
+        "packages/forecast-adjustment/src/bootstrap-v1.ts",
+        "packages/forecast-adjustment/src/calendar.ts",
+        "packages/forecast-adjustment/src/candidate.ts",
+        "packages/forecast-adjustment/src/evaluate.ts",
+        "packages/forecast-adjustment/src/evidence.ts",
+        "packages/forecast-adjustment/src/holdout-ledger.ts",
+        "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+        "packages/forecast-adjustment/src/maintenance-policy.ts",
+        "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+        "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+        "packages/forecast-adjustment/src/performance-scorecard.ts",
+        "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+        "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+        "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+        "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+        "packages/forecast-adjustment/src/runtime-bundle.ts",
+        "packages/forecast-adjustment/src/runtime-loader.ts",
+        "packages/forecast-adjustment/src/temperature-canary.ts",
+        "packages/forecast-adjustment/src/temperature-lead-research.ts",
+        "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "packages/forecast-adjustment/src/temperature-weather-research.ts",
+        "packages/forecast-adjustment/src/wind-canary.ts"
+      ],
+      "exports": {
+        "LoadedForecastAdjustmentRainRuntimeRegistryV1": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+        "LoadedForecastAdjustmentRuntimeV1": "packages/forecast-adjustment/src/runtime-loader.ts",
+        "LoadedForecastAdjustmentTemperatureCanaryRuntime": "packages/forecast-adjustment/src/runtime-loader.ts",
+        "LoadedForecastAdjustmentWindCanaryRuntime": "packages/forecast-adjustment/src/runtime-loader.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/source-identity.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/backfill-cli.ts",
+      "specifier": "./source-identity.js",
+      "entry": "apps/worker/src/source-identity.ts",
+      "exports": {
+        "RuntimeSourceIdentity": "apps/worker/src/source-identity.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/tide-backfill-cli.ts",
+      "specifier": "./source-identity.js",
+      "entry": "apps/worker/src/source-identity.ts",
+      "exports": {
+        "RuntimeSourceIdentity": "apps/worker/src/source-identity.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/public-stations-backfill-cli.ts",
+      "specifier": "./source-identity.js",
+      "entry": "apps/worker/src/source-identity.ts",
+      "exports": {
+        "RuntimeSourceIdentity": "apps/worker/src/source-identity.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/tide-backfill-cli.ts",
+      "specifier": "@weather/database",
+      "packageJson": "packages/database/package.json",
+      "entry": "packages/database/src/index.ts",
+      "leaves": [
+        "packages/database/src/adjustment-maintenance.ts",
+        "packages/database/src/config.ts",
+        "packages/database/src/ecowitt-config.ts",
+        "packages/database/src/migrate.ts",
+        "packages/database/src/pool.ts",
+        "packages/database/src/public-stations-config.ts",
+        "packages/database/src/rain-adjustment.ts",
+        "packages/database/src/rain-collection.ts",
+        "packages/database/src/repositories.ts",
+        "packages/database/src/tempest-config.ts",
+        "packages/database/src/tides-config.ts"
+      ],
+      "compiledSource": {
+        "tsconfig": "packages/database/tsconfig.json",
+        "base": "tsconfig.base.json"
+      },
+      "exports": {
+        "TideStationConfiguration": "packages/database/src/tides-config.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/public-stations-backfill-cli.ts",
+      "specifier": "@weather/database",
+      "packageJson": "packages/database/package.json",
+      "entry": "packages/database/src/index.ts",
+      "leaves": [
+        "packages/database/src/adjustment-maintenance.ts",
+        "packages/database/src/config.ts",
+        "packages/database/src/ecowitt-config.ts",
+        "packages/database/src/migrate.ts",
+        "packages/database/src/pool.ts",
+        "packages/database/src/public-stations-config.ts",
+        "packages/database/src/rain-adjustment.ts",
+        "packages/database/src/rain-collection.ts",
+        "packages/database/src/repositories.ts",
+        "packages/database/src/tempest-config.ts",
+        "packages/database/src/tides-config.ts"
+      ],
+      "compiledSource": {
+        "tsconfig": "packages/database/tsconfig.json",
+        "base": "tsconfig.base.json"
+      },
+      "exports": {
+        "PublicStationConfigurationStation": "packages/database/src/public-stations-config.ts",
+        "PublicStationSourceConfiguration": "packages/database/src/public-stations-config.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/tempest-backfill-cli.ts",
+      "specifier": "@weather/database",
+      "packageJson": "packages/database/package.json",
+      "entry": "packages/database/src/index.ts",
+      "leaves": [
+        "packages/database/src/adjustment-maintenance.ts",
+        "packages/database/src/config.ts",
+        "packages/database/src/ecowitt-config.ts",
+        "packages/database/src/migrate.ts",
+        "packages/database/src/pool.ts",
+        "packages/database/src/public-stations-config.ts",
+        "packages/database/src/rain-adjustment.ts",
+        "packages/database/src/rain-collection.ts",
+        "packages/database/src/repositories.ts",
+        "packages/database/src/tempest-config.ts",
+        "packages/database/src/tides-config.ts"
+      ],
+      "compiledSource": {
+        "tsconfig": "packages/database/tsconfig.json",
+        "base": "tsconfig.base.json"
+      },
+      "exports": {
+        "TempestStationConfiguration": "packages/database/src/tempest-config.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastObservationStationKey": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/sites.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "SourceKind": "packages/domain/src/provenance.ts",
+        "StationKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "apps/api/src/index.ts",
+      "specifier": "@weather/contracts",
+      "packageJson": "packages/contracts/package.json",
+      "entry": "packages/contracts/src/index.ts",
+      "leaves": [
+        "packages/contracts/src/forecast-archive.ts",
+        "packages/contracts/src/forecast.ts",
+        "packages/contracts/src/precipitation-and-tides.ts",
+        "packages/contracts/src/sites.ts",
+        "packages/contracts/src/weather-records.ts"
+      ],
+      "exports": {
+        "ApiForecastAdjustmentRuntime": "packages/contracts/src/forecast.ts",
+        "ApiForecastTemperatureAdjustmentRuntime": "packages/contracts/src/forecast.ts",
+        "ApiSite": "packages/contracts/src/sites.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/precipitation-and-tides.ts",
+      "specifier": "./sites.js",
+      "entry": "packages/contracts/src/sites.ts",
+      "exports": {
+        "ApiSite": "packages/contracts/src/sites.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/weather-records.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "SourceKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/weather-records.ts",
+      "specifier": "./sites.js",
+      "entry": "packages/contracts/src/sites.ts",
+      "exports": {
+        "ApiSite": "packages/contracts/src/sites.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts"
+      }
+    }
+  ],
+  "output": {
+    "path": "rust/crates/weather-contracts/src/generated.rs",
+    "sha256": "4538177a8559e60935fbac48f50e765be995e5266179ab641fa35e65a31ea8b7"
+  }
+}

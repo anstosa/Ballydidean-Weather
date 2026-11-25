@@ -13,6 +13,7 @@ import {
   createForecastAdjustmentRuntimeBundle,
   createForecastAdjustmentRuntimeLoaderForRoot,
   FORECAST_ADJUSTMENT_CANONICAL_FORECAST_IDENTITY_V1,
+  RAIN_HURDLE_WIND_MODEL_SHA256,
   runtimeCalendarFingerprint,
   verifyForecastAdjustmentTemperatureCanaryRuntimeBundle,
   verifyForecastAdjustmentWindCanaryRuntimeBundle,
@@ -27,6 +28,7 @@ import {
   siteForecastDayWindow,
   siteOvernightForecastWindow,
 } from "../dist/index.js";
+import { validRainAdjustmentRun } from "../dist/rain-adjustment.js";
 
 import { createQualifiedFixture } from "../../../packages/forecast-adjustment/test/evidence-fixtures.mjs";
 
@@ -320,13 +322,15 @@ function createFixture(overrides = {}, options = {}) {
     },
     ...overrides,
   };
-  const handler = createWeatherApi(store, {
+  const apiOptions = {
     // freeze response time
     now: () => new Date("2026-08-22T05:00:00.000Z"),
     version: "2026.08.22-1",
     ...options,
-  });
+  };
+  const handler = createWeatherApi(store, apiOptions);
   return {
+    apiOptions,
     currentQueries,
     dailyPrecipitationQueries,
     forecastQueries,
@@ -417,6 +421,269 @@ function createTemperatureCanaryRuntime() {
   });
   return { bundle, reasonCode: null, state: "active" };
 }
+
+// preserve default clock reads and equal request instants
+test("request clock reads once after legacy fallback startup snapshots", async () => {
+  let clockReads = 0;
+  const requestAt = "2026-08-22T05:00:00.000Z";
+  const { currentQueries, handler } = createFixture({}, {
+    // count legacy startup and request reads
+    now() {
+      clockReads += 1;
+      return new Date(requestAt);
+    },
+  });
+
+  assert.equal(clockReads, 2);
+  const response = await handler(
+    new Request("http://weather.test/api/v1/sites/ballydidean/current"),
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(clockReads, 3);
+  assert.equal(body.generatedAt, requestAt);
+  assert.equal(currentQueries[0].filters.asOf, requestAt);
+});
+
+// separate weather reference time from model safety time
+test("forecast data time diverges without changing model safety clocks", async () => {
+  const dataAt = "2026-08-22T05:00:00.000Z";
+  const windRuntime = createWindCanaryRuntime();
+  const safetyAt = windRuntime.bundle.authorization.expiresAt;
+  const windEvaluatedAt = [];
+  const temperatureEvaluatedAt = [];
+  const rainReadAt = [];
+  const observationReads = [];
+  const tideQueries = [];
+  let clockReads = 0;
+  const rainRun = {
+    decisionAt: "2026-08-21T20:00:00.000Z",
+    firstReceivedAt: "2026-08-21T18:00:00.000Z",
+    forecastClaimId: "private-claim",
+    generatedAt: "2026-08-21T20:00:00.000Z",
+    hours: [{
+      applied: true,
+      correctedPrecipitationMm: 0.05,
+      modelLeadHours: 18,
+      rawPrecipitationMm: 0.1,
+      reasonCode: null,
+      validAt: "2026-08-22T06:00:00.000Z",
+    }],
+    inputSha256: "a".repeat(64),
+    modelSha256: RAIN_HURDLE_WIND_MODEL_SHA256,
+    runInitializedAt: "2026-08-21T12:00:00.000Z",
+  };
+  const {
+    apiOptions,
+    currentQueries,
+    dailyPrecipitationQueries,
+    forecastQueries,
+    handler,
+    trendQueries,
+  } = createFixture({
+    // return geometry bound to the supplied data instant
+    async getForecastObservationInput(asOf) {
+      observationReads.push(asOf);
+      return {
+        projectionFrom: "2026-08-21T07:00:00.000Z",
+        queryFrom: "2026-08-21T04:00:00.000Z",
+        records: [],
+        siteSlug: "ballydidean",
+        through: asOf,
+        timezone: "America/Los_Angeles",
+      };
+    },
+    // return a run valid at data time but expired at safety time
+    async getRainAdjustmentRun(siteSlug, asOf) {
+      rainReadAt.push({ asOf, siteSlug });
+      return rainRun;
+    },
+    // capture the default tide range
+    async listTides(siteSlug, from, to) {
+      tideQueries.push({ from, siteSlug, to });
+      return [];
+    },
+  }, {
+    dataAt,
+    forecastAdjustment: {
+      // capture the wind safety instant
+      apply(_runtime, input) {
+        windEvaluatedAt.push(input.evaluatedAt);
+        return {
+          adjustedMetrics: {},
+          appliedMetrics: [],
+          contractVersion: "forecast-adjustment-decision/v1",
+          reasonCode: "canary_expired",
+          state: "disabled",
+        };
+      },
+      loadedAt: windRuntime.bundle.authorization.activatedAt,
+      runtime: windRuntime,
+    },
+    // count only the request safety read
+    now() {
+      clockReads += 1;
+      return new Date(safetyAt);
+    },
+    temperatureAdjustment: {
+      // capture the coupled temperature safety instant
+      apply(_runtime, input) {
+        temperatureEvaluatedAt.push(input.evaluatedAt);
+        return {
+          branch: null,
+          bundleSha256: null,
+          contractVersion: "forecast-temperature-canary-decision/v1",
+          correctedTemperatureC: null,
+          rawBestMatchTemperatureC: input.rawBestMatchTemperatureC,
+          reasonCode: "registry_inactive",
+          recentErrorStateSha256: null,
+          sourceForecast: null,
+          state: "disabled",
+        };
+      },
+      loadedAt: dataAt,
+      runtime: { bundle: null, reasonCode: "registry_inactive", state: "disabled" },
+    },
+  });
+
+  // prove the handler snapshots the value at construction
+  apiOptions.dataAt = safetyAt;
+  assert.equal(validRainAdjustmentRun(rainRun, dataAt), true);
+  assert.equal(validRainAdjustmentRun(rainRun, safetyAt), false);
+
+  const response = await handler(
+    new Request("http://weather.test/api/v1/sites/ballydidean/forecast"),
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(clockReads, 1);
+  assert.equal(body.generatedAt, dataAt);
+  assert.deepEqual(forecastQueries, [{
+    asOf: "2026-08-20T19:00:00.000Z",
+    hours: 37,
+    siteSlug: "ballydidean",
+  }]);
+  assert.equal(body.data[0].freshness.status, "fresh");
+  assert.equal(body.adjustmentRuntime.reasonCode, "canary_expired");
+  assert.deepEqual(rainReadAt, [{ asOf: dataAt, siteSlug: "ballydidean" }]);
+  assert.equal(body.rainAdjustmentRuntime.reasonCode, "model_unavailable");
+  assert.equal(body.data[0].rainAdjustment.reasonCode, "model_unavailable");
+  assert.deepEqual(windEvaluatedAt, [safetyAt]);
+  assert.deepEqual(temperatureEvaluatedAt, [safetyAt]);
+
+  const currentResponse = await handler(
+    new Request("http://weather.test/api/v1/sites/ballydidean/current"),
+  );
+  const currentBody = await currentResponse.json();
+
+  assert.equal(currentResponse.status, 200);
+  assert.equal(clockReads, 2);
+  assert.equal(currentBody.generatedAt, dataAt);
+  assert.equal(currentBody.data[0].freshness.status, "fresh");
+  assert.equal(currentQueries[0].filters.asOf, dataAt);
+
+  const dailyResponse = await handler(new Request(
+    "http://weather.test/api/v1/sites/ballydidean/daily-precipitation",
+  ));
+  const dailyBody = await dailyResponse.json();
+  const trendsResponse = await handler(new Request(
+    "http://weather.test/api/v1/sites/ballydidean/trends",
+  ));
+  const trendsBody = await trendsResponse.json();
+  const tidesResponse = await handler(new Request(
+    "http://weather.test/api/v1/sites/ballydidean/tides",
+  ));
+  const tidesBody = await tidesResponse.json();
+  const observationResponse = await handler(new Request(
+    "http://weather.test/internal/v1/forecast-observation-input",
+  ));
+  const observationBody = await observationResponse.json();
+
+  assert.equal(clockReads, 6);
+  assert.equal(dailyResponse.status, 200);
+  assert.equal(dailyBody.generatedAt, dataAt);
+  assert.deepEqual(dailyBody.data, {
+    accumulationMm: 2.54,
+    source: { sourceId: "13", stationSlug: "tempest-64255" },
+    validThrough: "2026-08-22T04:59:00.000Z",
+  });
+  assert.deepEqual(dailyPrecipitationQueries, [{
+    from: "2026-08-21T07:00:00.000Z",
+    siteSlug: "ballydidean",
+    to: dataAt,
+  }]);
+  assert.equal(trendsResponse.status, 200);
+  assert.equal(trendsBody.generatedAt, dataAt);
+  assert.deepEqual(trendQueries, [{
+    from: "2019-01-01T08:00:00.000Z",
+    siteSlug: "ballydidean",
+    to: dataAt,
+  }]);
+  assert.equal(tidesResponse.status, 200);
+  assert.equal(tidesBody.generatedAt, dataAt);
+  assert.deepEqual(tideQueries, [{
+    from: "2026-08-21T05:00:00.000Z",
+    siteSlug: "ballydidean",
+    to: "2026-09-01T05:00:00.000Z",
+  }]);
+  assert.equal(observationResponse.status, 200);
+  assert.equal(observationBody.generatedAt, dataAt);
+  assert.equal(observationBody.projectionFrom, "2026-08-21T07:00:00.000Z");
+  assert.equal(observationBody.queryFrom, "2026-08-21T04:00:00.000Z");
+  assert.equal(observationBody.through, dataAt);
+  assert.deepEqual(observationReads, [dataAt]);
+});
+
+// keep health and heartbeat decisions on safety time
+test("health ignores divergent weather data time", async () => {
+  const safetyAt = "2026-08-22T05:00:00.000Z";
+  const statusReads = [];
+  let clockReads = 0;
+  const runtime = createTemperatureCanaryRuntime();
+  const { handler } = createFixture({
+    // expose one future heartbeat relative to safety time
+    async getHealth() {
+      return {
+        database: "ready",
+        migration: { status: "current", version: "0001_initial_weather.sql" },
+        workerLastLoopAt: "2026-08-22T05:30:01.000Z",
+      };
+    },
+    // capture the monitoring safety instant
+    async getTemperatureCanaryStatus(_siteSlug, asOf) {
+      statusReads.push(asOf);
+      return null;
+    },
+  }, {
+    dataAt: "2026-08-22T05:30:01.000Z",
+    forecastAdjustment: {
+      loadedAt: safetyAt,
+      runtime: { bundle: null, reasonCode: "registry_inactive", state: "disabled" },
+    },
+    // count only the request safety read
+    now() {
+      clockReads += 1;
+      return new Date(safetyAt);
+    },
+    temperatureAdjustment: {
+      loadedAt: runtime.bundle.authorization.activatedAt,
+      runtime,
+    },
+  });
+
+  const response = await handler(
+    new Request("http://weather.test/api/v1/health"),
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(clockReads, 1);
+  assert.deepEqual(statusReads, [safetyAt]);
+  assert.equal(body.data.worker.freshness, "stale");
+  assert.equal(body.data.temperatureAdjustmentRuntime.state, "active");
+});
 
 // load the immutable cross-month temperature runtime
 function createPermanentTemperatureCanaryRuntime() {
@@ -1294,6 +1561,244 @@ test("temperature canary exposes explicit ECMWF provenance without mutating raw"
   });
 });
 
+// split active temperature data reads from safety monitoring and application
+test("active temperature sidecar uses data time while status uses safety time", async () => {
+  const dataAt = "2026-08-22T05:00:00.000Z";
+  const safetyAt = "2026-08-22T09:00:00.000Z";
+  const runtime = createTemperatureCanaryRuntime();
+  const sidecar = createTemperatureSidecar();
+  const applications = [];
+  const sidecarQueries = [];
+  const statusQueries = [];
+  let clockReads = 0;
+  const { handler } = createFixture({
+    // capture the sidecar data-selection instant
+    async getTemperatureCanarySidecar(siteSlug, asOf, from, to) {
+      sidecarQueries.push({ asOf, from, siteSlug, to });
+      return sidecar;
+    },
+    // capture the independent monitoring safety instant
+    async getTemperatureCanaryStatus(siteSlug, asOf) {
+      statusQueries.push({ asOf, siteSlug });
+      return {
+        firstReceivedAt: sidecar.run.firstReceivedAt,
+        hourCount: sidecar.hours.length,
+        latestRunInitializedAt: sidecar.run.runInitializedAt,
+        stateReason: sidecar.run.stateReason,
+        stateStatus: sidecar.run.stateStatus,
+      };
+    },
+  }, {
+    dataAt,
+    forecastAdjustment: {
+      loadedAt: safetyAt,
+      runtime: { bundle: null, reasonCode: "registry_inactive", state: "disabled" },
+    },
+    // count only the one request safety read
+    now() {
+      clockReads += 1;
+      return new Date(safetyAt);
+    },
+    temperatureAdjustment: {
+      // capture the coupled package application instant
+      apply(_runtime, input) {
+        applications.push({
+          evaluatedAt: input.evaluatedAt,
+          hasSourceForecast: input.sourceForecast !== null,
+        });
+        return {
+          branch: null,
+          bundleSha256: null,
+          contractVersion: "forecast-temperature-canary-decision/v1",
+          correctedTemperatureC: null,
+          rawBestMatchTemperatureC: input.rawBestMatchTemperatureC,
+          reasonCode: "not_applicable",
+          recentErrorStateSha256: null,
+          sourceForecast: null,
+          state: "disabled",
+        };
+      },
+      loadedAt: runtime.bundle.authorization.activatedAt,
+      runtime,
+    },
+  });
+
+  const response = await handler(
+    new Request("http://weather.test/api/v1/sites/ballydidean/forecast"),
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(clockReads, 1);
+  assert.equal(body.generatedAt, dataAt);
+  assert.equal(body.data.length, 1);
+  assert.equal(body.temperatureAdjustmentRuntime.state, "active");
+  assert.deepEqual(sidecarQueries, [{
+    asOf: dataAt,
+    from: "2026-08-21T07:00:00.000Z",
+    siteSlug: "ballydidean",
+    to: "2026-08-22T07:00:00.000Z",
+  }]);
+  assert.deepEqual(statusQueries, [{ asOf: safetyAt, siteSlug: "ballydidean" }]);
+  assert.deepEqual(applications, [{
+    evaluatedAt: safetyAt,
+    hasSourceForecast: true,
+  }]);
+});
+
+// keep real temperature package currentness guards on safety time
+test("temperature package rejects unsafe sidecar timing while data selection stays fixed", async () => {
+  const dataAt = "2026-08-22T05:00:00.000Z";
+  const runtime = createTemperatureCanaryRuntime();
+  const sidecar = createTemperatureSidecar();
+  const cases = [
+    {
+      branch: "direct",
+      correctedTemperatureC: 12,
+      label: "equal-clock active control",
+      reasonCode: null,
+      safetyAt: dataAt,
+      state: "active",
+    },
+    {
+      branch: null,
+      correctedTemperatureC: null,
+      label: "not yet available",
+      reasonCode: "source_not_available",
+      safetyAt: "2026-08-22T00:04:59.999Z",
+      state: "raw_fallback",
+    },
+    {
+      branch: "direct",
+      correctedTemperatureC: 12,
+      label: "receipt availability boundary",
+      reasonCode: null,
+      safetyAt: "2026-08-22T00:05:00.000Z",
+      state: "active",
+    },
+    {
+      branch: null,
+      correctedTemperatureC: null,
+      label: "maximum receipt age boundary",
+      reasonCode: "outside_operational_window",
+      safetyAt: "2026-08-22T12:05:00.000Z",
+      state: "raw_fallback",
+    },
+    {
+      branch: null,
+      correctedTemperatureC: null,
+      label: "receipt stale",
+      reasonCode: "source_stale",
+      safetyAt: "2026-08-22T12:05:00.001Z",
+      state: "raw_fallback",
+    },
+    {
+      branch: null,
+      correctedTemperatureC: null,
+      label: "valid hour reached",
+      reasonCode: "outside_operational_window",
+      safetyAt: "2026-08-22T06:00:00.000Z",
+      state: "raw_fallback",
+    },
+  ];
+
+  // serve one forecast through the real default package boundary
+  async function serveForecast(safetyAt) {
+    const diagnostics = [];
+    const sidecarQueries = [];
+    const statusQueries = [];
+    let clockReads = 0;
+    const { forecastQueries, handler } = createFixture({
+      // return one data-selected sidecar
+      async getTemperatureCanarySidecar(siteSlug, asOf, from, to) {
+        sidecarQueries.push({ asOf, from, siteSlug, to });
+        return sidecar;
+      },
+      // return one safety-observed status
+      async getTemperatureCanaryStatus(siteSlug, asOf) {
+        statusQueries.push({ asOf, siteSlug });
+        return {
+          firstReceivedAt: sidecar.run.firstReceivedAt,
+          hourCount: sidecar.hours.length,
+          latestRunInitializedAt: sidecar.run.runInitializedAt,
+          stateReason: sidecar.run.stateReason,
+          stateStatus: sidecar.run.stateStatus,
+        };
+      },
+    }, {
+      dataAt,
+      forecastAdjustment: {
+        loadedAt: dataAt,
+        runtime: { bundle: null, reasonCode: "registry_inactive", state: "disabled" },
+      },
+      // retain only unexpected API boundary failures
+      logDiagnostic(diagnostic) {
+        diagnostics.push(diagnostic);
+      },
+      // read one real safety instant
+      now() {
+        clockReads += 1;
+        return new Date(safetyAt);
+      },
+      temperatureAdjustment: {
+        loadedAt: runtime.bundle.authorization.activatedAt,
+        runtime,
+      },
+    });
+    const response = await handler(
+      new Request("http://weather.test/api/v1/sites/ballydidean/forecast"),
+    );
+    return {
+      body: await response.json(),
+      clockReads,
+      diagnostics,
+      forecastQueries,
+      response,
+      sidecarQueries,
+      statusQueries,
+    };
+  }
+
+  // contrast one active control with each real safety failure
+  for (const fixtureCase of cases) {
+    const result = await serveForecast(fixtureCase.safetyAt);
+    const decision = result.body.data[0].temperatureAdjustment;
+
+    assert.equal(result.response.status, 200, fixtureCase.label);
+    assert.equal(result.clockReads, 1, fixtureCase.label);
+    assert.equal(result.body.generatedAt, dataAt, fixtureCase.label);
+    assert.equal(result.body.data.length, 1, fixtureCase.label);
+    assert.equal(result.body.data[0].metrics.temperatureC, 12.1, fixtureCase.label);
+    assert.equal(result.body.temperatureAdjustmentRuntime.state, "active", fixtureCase.label);
+    assert.equal(result.body.temperatureAdjustmentRuntime.reasonCode, null, fixtureCase.label);
+    assert.deepEqual(result.forecastQueries, [{
+      asOf: "2026-08-20T19:00:00.000Z",
+      hours: 37,
+      siteSlug: "ballydidean",
+    }], fixtureCase.label);
+    assert.deepEqual(result.sidecarQueries, [{
+      asOf: dataAt,
+      from: "2026-08-21T07:00:00.000Z",
+      siteSlug: "ballydidean",
+      to: "2026-08-22T07:00:00.000Z",
+    }], fixtureCase.label);
+    assert.deepEqual(result.statusQueries, [{
+      asOf: fixtureCase.safetyAt,
+      siteSlug: "ballydidean",
+    }], fixtureCase.label);
+    assert.deepEqual(result.diagnostics, [], fixtureCase.label);
+    assert.equal(decision.state, fixtureCase.state, fixtureCase.label);
+    assert.equal(decision.reasonCode, fixtureCase.reasonCode, fixtureCase.label);
+    assert.equal(decision.branch, fixtureCase.branch, fixtureCase.label);
+    assert.equal(
+      decision.correctedTemperatureC,
+      fixtureCase.correctedTemperatureC,
+      fixtureCase.label,
+    );
+    assert.equal(decision.rawBestMatchTemperatureC, 12.1, fixtureCase.label);
+  }
+});
+
 // preserve permanent authorization in the public runtime projection
 test("permanent temperature runtime remains active with a null expiry", async () => {
   const runtime = createPermanentTemperatureCanaryRuntime();
@@ -1854,6 +2359,108 @@ test("cached runtime status preserves finite and permanent authorization clocks"
       assert.equal(response.status, 200);
       assert.equal(status.state, expectedState, `${metric} at ${evaluatedAt}`);
       assert.equal(status.reasonCode, expectedState === "active" ? null : "canary_expired");
+    }
+  }
+});
+
+// keep every model authorization projection on the real safety clock
+test("divergent data time cannot extend model authorization", async () => {
+  const families = [
+    {
+      bodyKey: "adjustmentRuntime",
+      optionKey: "forecastAdjustment",
+      runtime: createWindCanaryRuntime(),
+    },
+    {
+      bodyKey: "temperatureAdjustmentRuntime",
+      optionKey: "temperatureAdjustment",
+      runtime: createTemperatureCanaryRuntime(),
+    },
+  ];
+
+  // exercise both independently authorized model families
+  for (const { bodyKey, optionKey, runtime } of families) {
+    const activatedAt = runtime.bundle.authorization.activatedAt;
+    const expiresAt = runtime.bundle.authorization.expiresAt;
+    const activatedAtMs = Date.parse(activatedAt);
+    const expiresAtMs = Date.parse(expiresAt);
+    const dataAt = new Date(
+      activatedAtMs + Math.floor((expiresAtMs - activatedAtMs) / 2),
+    ).toISOString();
+    const loadedAt = activatedAt;
+
+    assert.ok(dataAt > activatedAt);
+    assert.ok(dataAt < expiresAt);
+
+    // read one family projection with one real request clock
+    async function readProjection(safetyAt) {
+      let clockReads = 0;
+      const options = {
+        dataAt,
+        forecastAdjustment: {
+          loadedAt,
+          runtime: {
+            bundle: null,
+            reasonCode: "registry_inactive",
+            state: "disabled",
+          },
+        },
+        // count only the real request safety read
+        now() {
+          clockReads += 1;
+          return new Date(safetyAt);
+        },
+        temperatureAdjustment: {
+          loadedAt,
+          runtime: {
+            bundle: null,
+            reasonCode: "registry_inactive",
+            state: "disabled",
+          },
+        },
+      };
+      // select only the family under test
+      options[optionKey] = { loadedAt, runtime };
+      const { handler } = createFixture({
+        // keep readiness independent of the tested boundary
+        async getHealth() {
+          return {
+            database: "ready",
+            migration: { status: "current", version: "0001_initial_weather.sql" },
+            workerLastLoopAt: safetyAt,
+          };
+        },
+      }, options);
+      const response = await handler(
+        new Request("http://weather.test/api/v1/health"),
+      );
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.equal(clockReads, 1);
+      return body.data[bodyKey];
+    }
+
+    const control = await readProjection(dataAt);
+    assert.equal(control.state, "active");
+    assert.equal(control.reasonCode, null);
+    assert.equal(control.loadedAt, loadedAt);
+
+    const safetyBoundaries = [
+      new Date(activatedAtMs - 1).toISOString(),
+      expiresAt,
+    ];
+
+    // reject both pre-activation and expired real safety instants
+    for (const safetyAt of safetyBoundaries) {
+      const status = await readProjection(safetyAt);
+      assert.equal(status.state, "disabled", `${optionKey} at ${safetyAt}`);
+      assert.equal(
+        status.reasonCode,
+        "canary_expired",
+        `${optionKey} at ${safetyAt}`,
+      );
+      assert.equal(status.loadedAt, loadedAt, `${optionKey} at ${safetyAt}`);
     }
   }
 });

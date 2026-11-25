@@ -1,0 +1,13 @@
+[package]
+name = "weather-worker"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+weather-adjustment = { path = "../weather-adjustment" }
+weather-contracts = { path = "../weather-contracts" }
+weather-domain = { path = "../weather-domain" }

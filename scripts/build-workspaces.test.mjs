@@ -93,13 +93,14 @@ test("workspace build rejects cycles, duplicates, and unknown local dependencies
 });
 
 // verify real package metadata still defines the intended graph
-test("workspace discovery includes all seven production packages", async () => {
+test("workspace discovery includes all eight production packages", async () => {
   const discovered = await discoverWorkspaces(new URL("..", import.meta.url));
   const ordered = orderWorkspaces(discovered);
 
-  assert.equal(ordered.length, 7);
+  assert.equal(ordered.length, 8);
   assert.deepEqual(new Set(ordered.map((workspace) => workspace.name)), new Set([
     "@weather/api",
+    "@weather/contracts",
     "@weather/web",
     "@weather/worker",
     "@weather/database",
@@ -107,4 +108,76 @@ test("workspace discovery includes all seven production packages", async () => {
     "@weather/forecast-adjustment",
     "@weather/providers",
   ]));
+});
+
+// keep generated Rust contracts ahead of whole-repository compilation
+test("root build checks Rust contract drift before compiling workspaces", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+
+  assert.match(
+    packageJson.scripts.build,
+    /^node scripts\/generate-rust-contracts\.mjs --check && node scripts\/build-workspaces\.mjs$/u,
+  );
+  assert.match(
+    packageJson.scripts.lint,
+    / && node scripts\/generate-rust-contracts\.mjs --check$/u,
+  );
+  assert.match(
+    packageJson.scripts.typecheck,
+    /^node scripts\/generate-rust-contracts\.mjs --check && npm run typecheck --workspaces$/u,
+  );
+  assert.equal(
+    packageJson.scripts["check:fast"],
+    "npm run lint && npm run build && npm run test:fast:compiled",
+  );
+});
+
+// require the same gate when compiling a contract workspace directly
+test("standalone contract consumers also check generated Rust contract drift", async () => {
+  // inspect each workspace which owns or imports the canonical contracts
+  for (const path of ["apps/api", "packages/contracts"]) {
+    const manifest = JSON.parse(await readFile(new URL(`../${path}/package.json`, import.meta.url), "utf8"));
+    assert.match(manifest.scripts.build, /^node \.\.\/\.\.\/scripts\/generate-rust-contracts\.mjs --check && /u);
+    assert.match(manifest.scripts.typecheck, /^node \.\.\/\.\.\/scripts\/generate-rust-contracts\.mjs --check && /u);
+  }
+});
+
+// keep contract generation inputs confined to the Docker build stage
+test("Docker build checks generated contracts without retaining them at runtime", async () => {
+  const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
+  const dependencyStage = dockerfile.slice(
+    dockerfile.indexOf("FROM ${NODE_IMAGE} AS dependencies"),
+    dockerfile.indexOf("FROM dependencies AS build"),
+  );
+  const buildStage = dockerfile.slice(
+    dockerfile.indexOf("FROM dependencies AS build"),
+    dockerfile.indexOf("FROM scratch AS image-check-files"),
+  );
+  const productionDependencyStage = dockerfile.slice(
+    dockerfile.indexOf("FROM dependencies AS production-dependencies"),
+    dockerfile.indexOf("FROM ${NODE_IMAGE} AS runtime"),
+  );
+  const runtimeStages = dockerfile.slice(dockerfile.indexOf("FROM ${NODE_IMAGE} AS runtime"));
+
+  assert.match(
+    dependencyStage,
+    /COPY packages\/contracts\/package\.json packages\/contracts\/package\.json[\s\S]*RUN npm ci --ignore-scripts/u,
+  );
+  assert.match(buildStage, /COPY config\/rust-contract-roots\.json config\//u);
+  assert.match(buildStage, /COPY scripts\/generate-rust-contracts\.mjs scripts\//u);
+  assert.match(buildStage, /COPY scripts\/lib\/forecast-observation-rust\.mjs scripts\/lib\//u);
+  assert.match(
+    buildStage,
+    /COPY rust\/crates\/weather-contracts\/generated\.contracts\.json rust\/crates\/weather-contracts\/retained-rain-hurdle-wind\.json rust\/crates\/weather-contracts\//u,
+  );
+  assert.match(
+    buildStage,
+    /COPY rust\/crates\/weather-contracts\/src\/generated\.rs rust\/crates\/weather-contracts\/src\//u,
+  );
+  assert.ok(buildStage.indexOf("scripts/generate-rust-contracts.mjs") < buildStage.indexOf("RUN npm run build"));
+  assert.ok(buildStage.indexOf("generated.contracts.json") < buildStage.indexOf("RUN npm run build"));
+  assert.match(productionDependencyStage, /unlink node_modules\/@weather\/contracts/u);
+  assert.doesNotMatch(runtimeStages, /rust\/crates\/weather-contracts/u);
+  assert.doesNotMatch(runtimeStages, /packages\/contracts/u);
+  assert.doesNotMatch(runtimeStages, /generate-rust-contracts\.mjs|forecast-observation-rust\.mjs|rust-contract-roots\.json/u);
 });

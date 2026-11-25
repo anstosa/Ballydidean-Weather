@@ -87,8 +87,22 @@ sp_load() {
   done
   [[ "$(printf '%s' "$manifest" | sha256sum | awk '{print $1}')" == "$expected" ]] ||
     die "operator bundle checksum differs"
-  acquire_release_transaction_lock
-  require_no_dashboard_override
+  # internal image and dashboard recovery inherit the already held exact root release lock
+  if [[ $# == 1 && ( "$1" == --inherited-family-lock || "$1" == --inherited-dashboard-lock ) ]]; then
+    require_adjustment_family_release_lock
+    release_transaction_lock_fd=$WEATHER_RELEASE_LOCK_FD
+  else
+    [[ $# == 0 || ( $# == 1 && ( "$1" == --dashboard-override || "$1" == --committed-dashboard-context || "$1" == --system-recovery ) ) ]] ||
+      die "unexpected release controller lock mode"
+    acquire_release_transaction_lock
+  fi
+  # permit committed override observation without granting a core image switch
+  if [[ ${1-} == --dashboard-override || ${1-} == --inherited-dashboard-lock ]] ||
+    { [[ ${1-} == --committed-dashboard-context || ${1-} == --system-recovery ]] && dashboard_override_present; }; then
+    require_dashboard_fixed_roots
+  else
+    require_no_dashboard_override
+  fi
   [[ -d "$sp_root" && ! -L "$sp_root" && "$(stat -c '%u:%g:%a' "$sp_root")" == 0:0:700 ]] ||
     die "auxiliary release state root differs"
   local receipt="$sp_root/installations/$expected.json"
@@ -147,6 +161,24 @@ sp_environment() {
   printf '%s\n' "$path"
 }
 
+# verify the retained generation metadata as part of each versioned stage receipt
+sp_runtime_stage_metadata() {
+  local receipt=$1 directory metadata publication
+  directory=$(dirname "$receipt")
+  metadata="$directory/runtime-generation.json"
+  publication="$directory/publication.json"
+  # legacy stages lack the generation sidecar
+  if [[ "$(sp_field "$receipt" contractVersion)" == weather-schema-preserving-stage/v1 ]]; then
+    [[ ! -e "$metadata" && ! -L "$metadata" ]] || die "legacy stage has unexpected runtime metadata"
+    return
+  fi
+  sp_private "$metadata"
+  sp_private "$publication"
+  [[ "$(sp_sha "$metadata")" == "$(sp_field "$receipt" runtimeMetadataSha256)" &&
+    "$(sp_sha "$publication")" == "$(sp_field "$receipt" publicationSha256)" ]] ||
+    die "retained runtime generation metadata differs"
+}
+
 # validate the committed application ancestry without relabeling the database
 sp_source() {
   local current environment receipt depth=0 cursor parent receipt_sha
@@ -163,12 +195,22 @@ sp_source() {
     sp_private "$receipt"
     # preserve schema rejection even inside a caller's command substitution
     node "$sp_module" validate-stage "$receipt" "$cursor" >/dev/null || die "application release receipt is invalid"
+    sp_runtime_stage_metadata "$receipt"
     [[ "$(sp_field "$receipt" targetRelease)" == "$cursor" &&
       "$(sp_field "$receipt" targetEnvironmentSha256)" == "$(sp_sha "$(release_env "$cursor")")" ]] ||
       die "application release receipt differs"
     parent=$(sp_field "$receipt" sourceRelease)
     validate_release "$parent"
     [[ "$parent" != "$cursor" ]] || die "application release ancestry is cyclic"
+    # independently rebind each committed native family descendant to its original source
+    if [[ "$(sp_field "$receipt" contractVersion)" == weather-schema-preserving-stage/v2 ]]; then
+      local publication="$sp_root/$cursor/publication.json"
+      case "$(sp_field "$publication" contractVersion)" in
+        weather-schema-preserving-family-publication/v1|weather-schema-preserving-native-descendant-publication/v1)
+          sp_native_descendant_source_binding "$publication" "$parent"
+          ;;
+      esac
+    fi
     receipt_sha=$(sp_field "$receipt" sourceEnvironmentSha256)
     [[ "$receipt_sha" == "$(sp_sha "$(sp_environment "$parent")")" ]] || die "application source receipt differs"
     cursor=$parent
@@ -284,13 +326,81 @@ sp_image() {
   [[ "$actual" == "$expected|linux/arm64" ]] || die "published application image identity differs"
 }
 
+# select the original release generation using only an immutable staged receipt and image identities
+sp_runtime_generation() {
+  local environment=$1 release generation runtime_metadata stage publication server web server_id web_id server_marker web_marker
+  release=$(env_value "$environment" WEATHER_RELEASE)
+  validate_release "$release"
+  stage="$sp_root/$release/stage.json"
+  publication="$sp_root/$release/publication.json"
+  runtime_metadata="$sp_root/$release/runtime-generation.json"
+  server=$(env_value "$environment" WEATHER_SERVER_IMAGE)
+  web=$(env_value "$environment" WEATHER_WEB_IMAGE)
+  # the old Node generation has no sidecar; refuse a native label without explicit retained authority
+  if [[ -e "$runtime_metadata" || -L "$runtime_metadata" ]]; then
+    sp_private "$runtime_metadata"
+    sp_private "$publication"
+    if [[ -e "$stage" || -L "$stage" ]]; then
+      sp_private "$stage"
+      node "$sp_module" validate-stage "$stage" "$release" >/dev/null || die "runtime stage receipt is invalid"
+      [[ "$(sp_field "$stage" contractVersion)" == weather-schema-preserving-stage/v2 &&
+        "$(sp_sha "$runtime_metadata")" == "$(sp_field "$stage" runtimeMetadataSha256)" &&
+        "$(sp_sha "$publication")" == "$(sp_field "$stage" publicationSha256)" ]] ||
+        die "runtime generation receipt differs from stage"
+    else
+      # only an in-progress exact private stage may select the pre-published runtime metadata
+      [[ "$environment" == "$sp_root/$release/environment.env" ]] || die "runtime generation stage is unavailable"
+    fi
+    server_id=$(docker image inspect --format '{{.Id}}' "$server") || die "runtime server image is unavailable"
+    web_id=$(docker image inspect --format '{{.Id}}' "$web") || die "runtime web image is unavailable"
+    generation=$(node "$sp_module" validate-runtime-generation "$runtime_metadata" "$release" "$(sp_sha "$publication")" \
+      "$server" "$server_id" "$web" "$web_id") || die "runtime generation metadata differs"
+  else
+    # old source and rollback receipts remain exactly Node-v1
+    if [[ -e "$stage" || -L "$stage" ]]; then
+      sp_private "$stage"
+      [[ "$(sp_field "$stage" contractVersion)" == weather-schema-preserving-stage/v1 ]] ||
+        die "versioned runtime stage requires immutable metadata"
+    fi
+    generation=node-v1
+  fi
+  server_marker=$(docker image inspect --format '{{index .Config.Labels "org.weather.runtime.generation"}}' "$server") || die "runtime server marker is unavailable"
+  web_marker=$(docker image inspect --format '{{index .Config.Labels "org.weather.runtime.generation"}}' "$web") || die "runtime web marker is unavailable"
+  node "$sp_module" validate-runtime-markers "$generation" "$server_marker" "$web_marker" ||
+    die "runtime image markers differ from retained generation"
+}
+
+# generate only the closed native service overlay in the operator's private temporary namespace
+sp_compose() (
+  local environment=$1 generation override
+  shift
+  generation=$(sp_runtime_generation "$environment") || exit 1
+  if [[ "$generation" == node-v1 ]]; then
+    WEATHER_ENV_FILE=$environment compose "$@"
+    exit
+  fi
+  [[ "$generation" == rust-v1 ]] || die "runtime generation is invalid"
+  override=$(mktemp "$sp_root/.runtime-compose.XXXXXX.json")
+  trap 'rm -f -- "$override"' EXIT
+  chmod 0600 "$override"
+  node "$sp_module" runtime-compose-override "$generation" >"$override" ||
+    die "native runtime Compose generation failed"
+  docker compose --project-name weather --env-file "$environment" -f "$compose_file" -f "$override" "$@"
+)
+
 # run the candidate's readiness checker through an explicitly read-only API transaction
 sp_readiness() {
-  local environment=$1 image
+  local environment=$1 image generation
   image=$(env_value "$environment" WEATHER_SERVER_IMAGE)
+  generation=$(sp_runtime_generation "$environment") || die "runtime generation unavailable"
   # compose 2.26 run lacks --pull; require its immutable image already cached
   [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" == linux/arm64 ]] ||
     die "readiness image is not cached for ARM64"
+  # the Rust image exposes the same fixed read-only migration readiness as its own executable
+  if [[ "$generation" == rust-v1 ]]; then
+    sp_compose "$environment" run --rm -T --no-deps --entrypoint /opt/weather/bin/weather-api api --readiness
+    return
+  fi
   WEATHER_ENV_FILE=$environment compose run --rm -T --no-deps --entrypoint node api \
     --input-type=module - <<'JS'
 import {createDatabasePool,loadDatabaseConfiguration,verifyMigrationReadiness} from '@weather/database';
@@ -306,9 +416,185 @@ sp_publish() {
   node --max-old-space-size=64 "$sp_module" write-json "$1"
 }
 
+# locate the retained installation authority for one exact bundle
+sp_installation_receipt() {
+  local bundle=$1 receipt
+  [[ "$bundle" =~ ^[a-f0-9]{64}$ ]] || die "invalid installation bundle"
+  receipt="$sp_root/installations/$bundle.json"
+  # the first installed predecessor retains the original receipt
+  if [[ ! -e "$receipt" && ! -L "$receipt" ]]; then receipt="$sp_root/installation.json"; fi
+  sp_private "$receipt"
+  [[ "$(sp_field "$receipt" bundleSha256)" == "$bundle" ]] || die "installation bundle differs"
+  printf '%s\n' "$receipt"
+}
+
+# prove the exact installed finite bootstrap against the retained Node predecessor
+sp_prove_native_bootstrap() {
+  local approval=$1 approval_sha=$2 coordinates transition source_release source_commit source_sha canonical_approval
+  local control old_bundle old_receipt_sha old_dropin target_release target_commit target_bundle source
+  local old_receipt target_receipt old_path member mode manifest directory snapshot proof
+  sp_private "$approval"
+  [[ "$approval_sha" =~ ^[a-f0-9]{64}$ && "$(sp_sha "$approval")" == "$approval_sha" ]] ||
+    die "bootstrap approval checksum differs"
+  coordinates=$(node "$sp_module" native-bootstrap-coordinates "$approval") || die "bootstrap approval is invalid"
+  IFS=$'\t' read -r transition source_release source_commit source_sha control old_bundle old_receipt_sha old_dropin \
+    target_release target_commit target_bundle canonical_approval <<<"$coordinates"
+  [[ "$target_bundle" == "${sp_bundle##*/}" && "$target_bundle" != "$old_bundle" && "$control" == "$sp_control_sha" ]] ||
+    die "approved bootstrap does not name this installed operator"
+  [[ ! -e "$sp_journal" && ! -L "$sp_journal" ]] || die "recover incomplete application transaction first"
+  source=$(sp_source) || die "bootstrap source unavailable"
+  [[ "$(env_value "$source" WEATHER_RELEASE)" == "$source_release" && "$(sp_sha "$source")" == "$source_sha" &&
+    "$(sp_runtime_generation "$source")" == node-v1 ]] || die "bootstrap predecessor environment differs"
+  [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$(env_value "$source" WEATHER_WEB_IMAGE)")" == "$source_commit" ]] ||
+    die "bootstrap predecessor revision differs"
+  old_receipt=$(sp_installation_receipt "$old_bundle") || die "predecessor installation receipt unavailable"
+  target_receipt=$(sp_installation_receipt "$target_bundle") || die "target installation receipt unavailable"
+  [[ "$(sp_sha "$old_receipt")" == "$old_receipt_sha" && "$(sp_field "$old_receipt" dropInSha256)" == "$old_dropin" &&
+    "$(sp_field "$old_receipt" controlPlaneSha256)" == "$control" ]] || die "bootstrap predecessor receipt differs"
+  old_path="$(dirname "$sp_bundle")/$old_bundle"
+  [[ -d "$old_path" && ! -L "$old_path" && "$(stat -c '%u:%g:%a' "$old_path")" == 0:0:755 ]] ||
+    die "retained predecessor bundle unavailable"
+  manifest=
+  # bind both retained predecessor helper bytes without sourcing either
+  for member in schema-preserving-release.mjs schema-preserving-release.sh; do
+    mode=644
+    [[ "$member" != *.sh ]] || mode=755
+    [[ -f "$old_path/$member" && ! -L "$old_path/$member" &&
+      "$(stat -c '%u:%g:%a:%h' "$old_path/$member")" == "0:0:$mode:1" ]] || die "retained predecessor bundle member differs"
+    manifest+="$(sp_sha "$old_path/$member")  $member"$'\n'
+  done
+  [[ "$(printf '%s' "$manifest" | sha256sum | awk '{print $1}')" == "$old_bundle" ]] ||
+    die "retained predecessor bundle checksum differs"
+  sp_installation "$target_receipt"
+  sp_database "$source"
+  sp_health "$source"
+  directory="$sp_root/native-bootstrap-$transition"
+  if [[ ! -e "$directory" && ! -L "$directory" ]]; then
+    install -d -m 0700 -o 0 -g 0 "$directory"
+  fi
+  [[ -d "$directory" && ! -L "$directory" && "$(stat -c '%u:%g:%a' "$directory")" == 0:0:700 ]] ||
+    die "bootstrap proof directory differs"
+  snapshot="$directory/protected.json"
+  proof="$directory/proof.json"
+  # retain the original protected snapshot across retry
+  if [[ ! -e "$snapshot" && ! -L "$snapshot" ]]; then sp_snapshot "$source" "$snapshot"; fi
+  sp_private "$snapshot"
+  sp_unchanged "$source" "$snapshot"
+  # prove the newly installed system-recover entrypoint before any Rust image staging
+  sp_system_recover
+  [[ "$(sp_source)" == "$source" ]] || die "bootstrap recovery changed predecessor"
+  sp_unchanged "$source" "$snapshot"
+  sp_installation "$target_receipt"
+  # publish or compare the exact proof; never replace retained evidence
+  node --input-type=module - "$transition" "$canonical_approval" "$source_release" "$source_commit" "$source_sha" \
+    "$old_bundle" "$old_receipt_sha" "$old_dropin" "$control" "$target_release" "$target_commit" \
+    "$target_bundle" "$(sp_sha "$target_receipt")" "$(sp_sha "$snapshot")" <<'JS' | {
+const [transitionSha256,approvalSha256,sourceRelease,sourceCommit,sourceEnvironmentSha256,
+ predecessorBundleSha256,predecessorInstallationReceiptSha256,predecessorDropInSha256,controlSha256,
+ targetRelease,targetCommit,targetBundleSha256,targetInstallationReceiptSha256,protectedSnapshotSha256]=process.argv.slice(2);
+console.log(JSON.stringify({contractVersion:'weather-predecessor-native-bootstrap-proof/v1',transitionSha256,approvalSha256,
+ sourceRelease,sourceCommit,sourceEnvironmentSha256,predecessorBundleSha256,predecessorInstallationReceiptSha256,
+ predecessorDropInSha256,controlSha256,targetRelease,targetCommit,targetBundleSha256,targetInstallationReceiptSha256,protectedSnapshotSha256}));
+JS
+    if [[ -e "$proof" || -L "$proof" ]]; then
+      sp_private "$proof"
+      node --input-type=module -e 'import assert from "node:assert/strict";import {readFileSync} from "node:fs";assert.deepEqual(JSON.parse(readFileSync(0,"utf8")),JSON.parse(readFileSync(process.argv[1],"utf8")));' "$proof"
+    else
+      sp_publish "$proof"
+    fi
+  }
+  printf 'Native bootstrap %s recovered retained Node predecessor without staging images.\n' "$transition"
+}
+
+# verify the exact target host evidence package through the installed root gateway
+sp_native_host_readiness() {
+  /usr/local/sbin/weather-remote-ops --verify-native-package "$1" ||
+    die "native host evidence package is unavailable"
+}
+
+# require installed recovery evidence before admitting a native publication
+sp_native_stage_admission() {
+  local publication=$1 source=$2 transition bundle receipt directory proof snapshot
+  transition=$(sp_field "$publication" transitionSha256)
+  bundle=${sp_bundle##*/}
+  [[ "$transition" =~ ^[a-f0-9]{64}$ ]] || die "native transition digest differs"
+  [[ "$(sp_field "$publication" sourceRelease)" == "$(env_value "$source" WEATHER_RELEASE)" &&
+    "$(sp_runtime_generation "$source")" == node-v1 ]] || die "native publication predecessor differs"
+  receipt=$(sp_installation_receipt "$bundle") || die "native installation receipt unavailable"
+  directory="$sp_root/native-bootstrap-$transition"
+  proof="$directory/proof.json"
+  snapshot="$directory/protected.json"
+  sp_private "$proof"
+  sp_private "$snapshot"
+  [[ "$(sp_sha "$snapshot")" == "$(sp_field "$proof" protectedSnapshotSha256)" &&
+    "$(sp_sha "$source")" == "$(sp_field "$proof" sourceEnvironmentSha256)" ]] || die "native bootstrap retained source differs"
+  node "$sp_module" validate-native-bootstrap-proof "$proof" "$publication" "$(sp_sha "$receipt")" "$bundle" ||
+    die "native bootstrap recovery proof is unavailable or differs"
+  sp_unchanged "$source" "$snapshot"
+  # require the generation-aware host application gateway for this exact target commit
+  sp_native_host_readiness "$(sp_field "$publication" targetCommit)"
+}
+
+# bind the descendant document to the immutable publication of its recorded native ancestor
+sp_native_descendant_source_binding() {
+  local publication=$1 parent=$2 parent_publication="$sp_root/$2/publication.json"
+  sp_private "$parent_publication"
+  [[ "$(sp_field "$publication" sourceRelease)" == "$parent" &&
+    "$(sp_field "$publication" sourceCommit)" == "$(sp_field "$parent_publication" targetCommit)" &&
+    "$(sp_field "$publication" sourcePublicationSha256)" == "$(sp_sha "$parent_publication")" ]] ||
+    die "native descendant publication source differs"
+}
+
+# require an exact committed native source before preparing any independently reviewed descendant
+sp_native_descendant_stage_admission() {
+  local publication=$1 source=$2 parent
+  parent=$(env_value "$source" WEATHER_RELEASE)
+  [[ "$(sp_runtime_generation "$source")" == rust-v1 ]] || die "native descendant source generation differs"
+  sp_native_descendant_source_binding "$publication" "$parent"
+  # the installed recovery and host evidence commands must already support the exact target
+  sp_native_host_readiness "$(sp_field "$publication" targetCommit)"
+}
+
+# retain the original independently paired native family preparation boundary
+sp_native_family_stage_admission() {
+  sp_native_descendant_stage_admission "$@"
+}
+
+# bind two independently staged native family siblings to their exact common source and action
+sp_native_family_pair() {
+  local first=$1 second=$2 left right key
+  [[ "$first" != "$second" ]] || return 1
+  left="$sp_root/$first/publication.json"
+  right="$sp_root/$second/publication.json"
+  sp_target "$first" >/dev/null
+  sp_target "$second" >/dev/null
+  [[ "$(sp_field "$left" contractVersion)" == weather-schema-preserving-family-publication/v1 &&
+    "$(sp_field "$right" contractVersion)" == weather-schema-preserving-family-publication/v1 &&
+    "$(sp_field "$left" pairedRelease)" == "$second" &&
+    "$(sp_field "$right" pairedRelease)" == "$first" &&
+    "$(sp_field "$left" familyRole)" != "$(sp_field "$right" familyRole)" ]] || return 1
+  # require the exact same original root and promotion action rather than an unrelated sibling
+  for key in sourceRelease sourceCommit sourcePublicationSha256 family familyActionSha256; do
+    [[ "$(sp_field "$left" "$key")" == "$(sp_field "$right" "$key")" ]] || return 1
+  done
+}
+
+# create generation metadata bound to exact immutable native publication and pulled images
+sp_native_runtime_metadata() {
+  local publication=$1 directory=$2
+  node --input-type=module - "$(sp_field "$publication" targetRelease)" "$(sp_sha "$publication")" \
+    "$(sp_field "$publication" materialManifestSha256)" "$(sp_field "$publication" serverImage)" \
+    "$(sp_field "$publication" serverImageId)" "$(sp_field "$publication" webImage)" "$(sp_field "$publication" webImageId)" <<'JS' |
+const [release,publicationSha256,materialManifestSha256,serverImage,serverImageId,webImage,webImageId]=process.argv.slice(2);
+console.log(JSON.stringify({contractVersion:'weather-runtime-generation/v1',generation:'rust-v1',
+ release,publicationSha256,materialManifestSha256,serverImage,serverImageId,webImage,webImageId}));
+JS
+    sp_publish "$directory/runtime-generation.json"
+}
+
 # stage only application images against the unchanged live database
 sp_stage() {
-  local release=$1 publication=$2 expected_sha=$3 source source_release directory target temporary image
+  local release=$1 publication=$2 expected_sha=$3 family_pair=${4-} source source_release directory target temporary image version runtime_hash
   validate_release "$release"
   sp_private "$publication"
   [[ "$(sp_sha "$publication")" == "$expected_sha" ]] || die "publication receipt checksum differs"
@@ -319,6 +605,22 @@ sp_stage() {
   [[ ! -e "$sp_journal" && ! -L "$sp_journal" ]] || die "recover the unfinished application transaction first"
   source=$(sp_source)
   source_release=$(env_value "$source" WEATHER_RELEASE)
+  version=$(sp_field "$publication" contractVersion)
+  # keep legacy publication and native admission separate before any staging mutation
+  if [[ "$version" == weather-schema-preserving-publication/v3 ]]; then
+    sp_native_stage_admission "$publication" "$source"
+  elif [[ "$version" == weather-schema-preserving-family-publication/v1 ]]; then
+    # the whole exact target/compensation pair must pass its capacity gate before either pull
+    [[ "$family_pair" == family-pair ]] || die "native family stages require paired preparation"
+    sp_native_family_stage_admission "$publication" "$source"
+  elif [[ "$version" == weather-schema-preserving-native-descendant-publication/v1 ]]; then
+    sp_native_descendant_stage_admission "$publication" "$source"
+  else
+    # retained legacy Node releases cannot stage application images from a committed native source
+    [[ ! -e "$sp_root/$source_release/runtime-generation.json" &&
+      ! -L "$sp_root/$source_release/runtime-generation.json" ]] ||
+      die "native source requires an independently admitted native descendant publication"
+  fi
   [[ "$source_release" != "$release" ]] || die "target application release is already active"
   directory="$sp_root/$release"
   [[ ! -e "$directory" && ! -L "$directory" ]] || die "application stage already exists"
@@ -345,7 +647,17 @@ sp_stage() {
   sp_image "$(sp_field "$publication" webImage)" "$(sp_field "$publication" webImageId)"
   [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$(sp_field "$publication" webImage)")" == \
     "$(sp_field "$publication" targetCommit)" ]] || die "web image revision differs"
-  WEATHER_ENV_FILE=$temporary compose config --quiet
+  runtime_hash=
+  # only an independently admitted native publication can create a generation sidecar
+  if [[ "$version" == weather-schema-preserving-publication/v3 ||
+    "$version" == weather-schema-preserving-family-publication/v1 ||
+    "$version" == weather-schema-preserving-native-descendant-publication/v1 ]]; then
+    [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$(sp_field "$publication" serverImage)")" == \
+      "$(sp_field "$publication" targetCommit)" ]] || die "server image revision differs"
+    sp_native_runtime_metadata "$directory/publication.json" "$directory"
+    runtime_hash=$(sp_sha "$directory/runtime-generation.json")
+  fi
+  sp_compose "$temporary" config --quiet
   sp_readiness "$source"
   sp_readiness "$temporary"
   sp_database "$source"
@@ -353,13 +665,97 @@ sp_stage() {
   [[ "$(sp_source)" == "$source" ]] || die "application source changed during stage"
   mv -- "$temporary" "$target"
   chmod 600 "$target"
-  node --input-type=module - "$source_release" "$release" "$(sp_sha "$source")" "$(sp_sha "$target")" "$(sp_sha "$directory/publication.json")" "$(sp_sha "$directory/protected.json")" <<'JS' | sp_publish "$directory/stage.json"
-const [sourceRelease,targetRelease,sourceEnvironmentSha256,targetEnvironmentSha256,publicationSha256,protectedSha256]=process.argv.slice(2);
-console.log(JSON.stringify({contractVersion:'weather-schema-preserving-stage/v1',sourceRelease,targetRelease,sourceEnvironmentSha256,targetEnvironmentSha256,publicationSha256,protectedSha256}));
+  node --input-type=module - "$source_release" "$release" "$(sp_sha "$source")" "$(sp_sha "$target")" "$(sp_sha "$directory/publication.json")" "$(sp_sha "$directory/protected.json")" "$runtime_hash" <<'JS' | sp_publish "$directory/stage.json"
+const [sourceRelease,targetRelease,sourceEnvironmentSha256,targetEnvironmentSha256,publicationSha256,protectedSha256,runtimeMetadataSha256]=process.argv.slice(2);
+const receipt={contractVersion:runtimeMetadataSha256?'weather-schema-preserving-stage/v2':'weather-schema-preserving-stage/v1',sourceRelease,targetRelease,sourceEnvironmentSha256,targetEnvironmentSha256,publicationSha256,protectedSha256};
+if(runtimeMetadataSha256)receipt.runtimeMetadataSha256=runtimeMetadataSha256;
+console.log(JSON.stringify(receipt));
 JS
   sync -f "$target" "$directory" "$releases_dir"
   printf 'Application release %s staged without a database copy or schema change.\n' "$release"
 }
+
+# invoke only the installed root gateway under the still-held release directory lock
+sp_native_family_measure_capacity() {
+  WEATHER_RELEASE_LOCK_FD=$release_transaction_lock_fd \
+    /usr/local/sbin/weather-remote-ops --family-capacity-native-unlocked "$@"
+}
+
+# prepare two exact native family stages only after the original all-role capacity check
+sp_stage_family_pair() (
+  local target_publication=$1 target_sha=$2 compensation_publication=$3 compensation_sha=$4
+  local source source_release target compensation action family capacity_root capacity temporary prior key publication release
+  sp_private "$target_publication"
+  sp_private "$compensation_publication"
+  [[ "$(sp_sha "$target_publication")" == "$target_sha" &&
+    "$(sp_sha "$compensation_publication")" == "$compensation_sha" ]] ||
+    die "native family publication checksum differs"
+  target=$(sp_field "$target_publication" targetRelease)
+  compensation=$(sp_field "$compensation_publication" targetRelease)
+  validate_release "$target"
+  validate_release "$compensation"
+  node "$sp_module" validate-publication "$target_publication" "$target" >/dev/null
+  node "$sp_module" validate-publication "$compensation_publication" "$compensation" >/dev/null
+  [[ "$(sp_field "$target_publication" contractVersion)" == weather-schema-preserving-family-publication/v1 &&
+    "$(sp_field "$compensation_publication" contractVersion)" == weather-schema-preserving-family-publication/v1 &&
+    "$(sp_field "$target_publication" familyRole)" == target &&
+    "$(sp_field "$compensation_publication" familyRole)" == compensation &&
+    "$(sp_field "$target_publication" pairedRelease)" == "$compensation" &&
+    "$(sp_field "$compensation_publication" pairedRelease)" == "$target" ]] ||
+    die "native family publication pair differs"
+  # require both stage documents to bind the exact same source and transaction
+  for key in sourceRelease sourceCommit sourcePublicationSha256 family familyActionSha256; do
+    [[ "$(sp_field "$target_publication" "$key")" == "$(sp_field "$compensation_publication" "$key")" ]] ||
+      die "native family publication pair identity differs"
+  done
+  source=$(sp_source)
+  source_release=$(env_value "$source" WEATHER_RELEASE)
+  sp_native_family_stage_admission "$target_publication" "$source"
+  sp_native_family_stage_admission "$compensation_publication" "$source"
+  action=$(sp_field "$target_publication" familyActionSha256)
+  family=$(sp_field "$target_publication" family)
+  # retain the original root-owned capacity receipt and exact six application image roles
+  capacity_root="$state_dir/adjustment-release-state"
+  ensure_adjustment_family_private_state_root "$capacity_root"
+  capacity="$capacity_root/capacity-sha256-$action.json"
+  temporary=$(mktemp "$capacity_root/.native-capacity.XXXXXXXX")
+  trap 'rm -f -- "$temporary"' EXIT
+  chmod 600 "$temporary"
+  if ! sp_native_family_measure_capacity "$action" "$family" "$source_release" \
+    "$(env_value "$source" WEATHER_SERVER_IMAGE)" "$(env_value "$source" WEATHER_WEB_IMAGE)" \
+    "$(sp_field "$target_publication" serverImage)" "$(sp_field "$target_publication" webImage)" \
+    "$(sp_field "$compensation_publication" serverImage)" "$(sp_field "$compensation_publication" webImage)" >"$temporary"; then
+    cat "$temporary" >&2
+    die "native family release capacity is blocked"
+  fi
+  # preserve prior measured receipts before replacing the source's latest capacity pointer
+  if [[ -e "$capacity" || -L "$capacity" ]]; then
+    sp_private "$capacity"
+    prior="$capacity_root/capacity-history-sha256-$action-$(sp_sha "$capacity").json"
+    if [[ ! -e "$prior" && ! -L "$prior" ]]; then
+      cp --no-clobber -- "$capacity" "$prior"
+      chmod 600 "$prior"
+      sync -f "$prior"
+    else
+      sp_private "$prior"
+      cmp -s "$capacity" "$prior" || die "prior family capacity receipt differs"
+    fi
+  fi
+  mv -T -- "$temporary" "$capacity"
+  sync -f "$capacity" "$capacity_root"
+  # reuse only an exact already committed stage after an interrupted paired preparation
+  for publication in "$target_publication" "$compensation_publication"; do
+    release=$(sp_field "$publication" targetRelease)
+    if [[ -e "$sp_root/$release/stage.json" ]]; then
+      sp_target "$release" >/dev/null
+      [[ "$(sp_sha "$sp_root/$release/publication.json")" == "$(sp_sha "$publication")" ]] ||
+        die "retained native family stage differs"
+    else
+      sp_stage "$release" "$publication" "$(sp_sha "$publication")" family-pair
+    fi
+  done
+  sp_native_family_pair "$target" "$compensation" || die "native family pair is not staged"
+)
 
 # validate immutable staging and cached images for an application transaction
 sp_target() {
@@ -372,10 +768,17 @@ sp_target() {
   sp_private "$receipt"
   # fail closed independently of the caller's errexit context
   node "$sp_module" validate-stage "$receipt" "$release" >/dev/null || die "staged application receipt is invalid"
+  sp_runtime_stage_metadata "$receipt"
   # retain the same boundary for the published image proof
   node "$sp_module" validate-publication "$publication" "$release" >/dev/null || die "publication receipt is invalid"
   source=$(sp_environment "$(sp_field "$receipt" sourceRelease)")
   target=$(sp_environment "$release")
+  # prove the same immutable source witness when reading a retained native family stage
+  case "$(sp_field "$publication" contractVersion)" in
+    weather-schema-preserving-family-publication/v1|weather-schema-preserving-native-descendant-publication/v1)
+      sp_native_descendant_source_binding "$publication" "$(sp_field "$receipt" sourceRelease)"
+      ;;
+  esac
   [[ "$(sp_sha "$source")" == "$(sp_field "$receipt" sourceEnvironmentSha256)" &&
     "$(sp_sha "$target")" == "$(sp_field "$receipt" targetEnvironmentSha256)" &&
     "$(sp_sha "$publication")" == "$(sp_field "$receipt" publicationSha256)" &&
@@ -386,12 +789,12 @@ sp_target() {
   printf '%s\n' "$target"
 }
 
-# verify the exact application trio and ordinary weather read boundary
-sp_health() {
-  local environment=$1 release service container image expected_id
-  release=$(env_value "$environment" WEATHER_RELEASE)
+# verify the selected running application services against their committed images
+sp_health_services() {
+  local environment=$1 service container image expected_id
+  shift
   # require each healthy running application to use its committed digest
-  for service in api worker web; do
+  for service in "$@"; do
     container=$(WEATHER_ENV_FILE=$environment compose ps -q "$service")
     [[ "$container" =~ ^[a-f0-9]{64}$ ]] || die "application container is missing: $service"
     image=$(env_value "$environment" WEATHER_SERVER_IMAGE)
@@ -400,15 +803,97 @@ sp_health() {
     [[ "$(docker inspect --format '{{.Config.Image}}|{{.Image}}|{{.State.Running}}|{{.State.Health.Status}}' "$container")" == \
       "$image|$expected_id|true|healthy" ]] || die "application image or health differs: $service"
   done
-  verify_dashboard_web_runtime "$environment" "$release" "$(env_value "$environment" WEATHER_WEB_IMAGE)"
+}
+
+# verify the exact application trio and ordinary weather read boundary
+sp_health() {
+  local environment=$1 release generation
+  generation=$(sp_runtime_generation "$environment") || die "runtime generation unavailable"
+  release=$(env_value "$environment" WEATHER_RELEASE)
+  sp_health_services "$environment" api worker web
+  # preserve the exact rendered release and readable API checks without executing Node in a Rust image
+  if [[ "$generation" == rust-v1 ]]; then
+    sp_compose "$environment" exec -T web /opt/weather/bin/weather-web-health web-release "$release" ||
+      die "native dashboard web health or readable API verification failed"
+  else
+    verify_dashboard_web_runtime "$environment" "$release" "$(env_value "$environment" WEATHER_WEB_IMAGE)"
+  fi
 }
 
 # replace only the application trio while retaining live infrastructure containers
 sp_switch() {
   local environment=$1
-  WEATHER_ENV_FILE=$environment compose up -d --no-deps --no-build --pull never --wait api worker
-  WEATHER_ENV_FILE=$environment compose up -d --no-deps --no-build --pull never --wait web
+  sp_compose "$environment" up -d --no-deps --no-build --pull never --wait api worker
+  sp_compose "$environment" up -d --no-deps --no-build --pull never --wait web
   sp_health "$environment"
+}
+
+# validate an exact interrupted family image switch without changing the current release marker
+sp_native_family_interrupted_journal() {
+  local source target stage publication snapshot current expected paired previous
+  sp_private "$sp_journal"
+  source=$(sp_field "$sp_journal" sourceRelease)
+  target=$(sp_field "$sp_journal" targetRelease)
+  stage=$(sp_field "$sp_journal" stageRelease)
+  previous=$(sp_field "$sp_journal" previousRelease)
+  validate_release "$source"
+  validate_release "$target"
+  validate_release "$previous"
+  [[ "$stage" == "$target" ]] || die "family journal stage differs"
+  sp_target "$stage" >/dev/null
+  publication="$sp_root/$stage/publication.json"
+  [[ "$(sp_field "$publication" contractVersion)" == weather-schema-preserving-family-publication/v1 ]] ||
+    die "interrupted application journal is not a native family switch"
+  expected=$(sp_field "$publication" sourceRelease)
+  paired=$(sp_field "$publication" pairedRelease)
+  sp_native_family_pair "$stage" "$paired" || die "interrupted family journal pair differs"
+  [[ "$source" == "$expected" || "$source" == "$paired" ]] || die "interrupted family journal source differs"
+  [[ "$(sp_sha "$sp_root/$stage/stage.json")" == "$(sp_field "$sp_journal" stageSha256)" ]] ||
+    die "interrupted family journal stage identity differs"
+  snapshot=$(sp_field "$sp_journal" protectedSnapshot)
+  [[ "${snapshot%/*}" == "$sp_root/$stage" && "${snapshot##*/}" =~ ^rollback-protected-[0-9]+-[0-9]+\.json$ ]] ||
+    die "interrupted family journal snapshot differs"
+  sp_private "$snapshot"
+  [[ "$(sp_sha "$snapshot")" == "$(sp_field "$sp_journal" protectedSha256)" ]] ||
+    die "interrupted family journal snapshot identity differs"
+  current=$(read_release_state "$state_dir/current-release")
+  [[ "$current" == "$source" || "$current" == "$target" ]] ||
+    die "interrupted family journal commit marker differs"
+  # the marker remains the sole selected authority even when its active link update was interrupted
+  sp_environment "$current"
+}
+
+# retain an interrupted family journal before executing only its verified compensation
+sp_native_family_resume_compensation() {
+  local compensation=$1 paired=$2 action=$3 catalog=$4 environment current source target previous snapshot actual archived
+  environment=$(sp_native_family_interrupted_journal)
+  current=$(env_value "$environment" WEATHER_RELEASE)
+  source=$(sp_field "$sp_journal" sourceRelease)
+  target=$(sp_field "$sp_journal" targetRelease)
+  previous=$(sp_field "$sp_journal" previousRelease)
+  [[ "$target" == "$paired" || "$target" == "$compensation" ]] ||
+    die "interrupted family recovery target differs"
+  [[ "$(sp_field "$sp_root/$target/publication.json" familyActionSha256)" == "$action" ]] ||
+    die "interrupted family recovery action differs"
+  snapshot=$(sp_field "$sp_journal" protectedSnapshot)
+  actual="$sp_root/$target/family-compensation-protected-${EPOCHSECONDS}-${BASHPID}.json"
+  sp_database "$environment"
+  sp_snapshot "$environment" "$actual"
+  # a separately verified catalog replacement is the only permitted difference from the failed switch
+  node "$sp_module" validate-family-recovery-snapshot "$snapshot" "$actual" "$state_dir/adjustment-candidate-catalog.json" "$catalog" ||
+    die "interrupted family recovery protected state differs"
+  # restore the recorded commit point without switching any application image
+  write_active_symlink "$current"
+  if [[ "$current" == "$source" ]]; then
+    write_private_state "$state_dir/previous-release" "$previous"
+  fi
+  [[ "$(sp_source)" == "$environment" ]] || die "interrupted family recovery marker differs"
+  archived="$sp_root/$target/family-interrupted-$(sp_sha "$sp_journal").json"
+  [[ ! -e "$archived" && ! -L "$archived" ]] || die "interrupted family journal archive already exists"
+  mv -T --no-clobber -- "$sp_journal" "$archived"
+  sp_private "$archived"
+  [[ ! -e "$sp_journal" && ! -L "$sp_journal" ]] || die "interrupted family journal remains"
+  sync -f "$sp_root/$target" "$sp_root" "$state_dir"
 }
 
 # restore the current-marker side of an interrupted journal
@@ -426,8 +911,13 @@ sp_reconcile() {
   [[ "$(sp_sha "$directory/stage.json")" == "$(sp_field "$sp_journal" stageSha256)" ]] || die "journal stage identity differs"
   sp_target "$stage_release" >/dev/null
   stage_source=$(sp_field "$directory/stage.json" sourceRelease)
-  [[ "$source_release:$target_release" == "$stage_source:$stage_release" ||
-    "$source_release:$target_release" == "$stage_release:$stage_source" ]] || die "journal application pair differs"
+  # preserve ordinary source/target recovery and admit only the pre-staged reciprocal family pair
+  if [[ "$source_release:$target_release" != "$stage_source:$stage_release" &&
+    "$source_release:$target_release" != "$stage_release:$stage_source" ]]; then
+    [[ "$target_release" == "$stage_release" ]] &&
+      sp_native_family_pair "$source_release" "$target_release" ||
+      die "journal application pair differs"
+  fi
   snapshot=$(sp_field "$sp_journal" protectedSnapshot)
   [[ "$snapshot" == "$directory/protected.json" ||
     ( "$snapshot" == "$directory/"* &&
@@ -524,6 +1014,9 @@ sp_activate() {
   source=$(sp_source)
   sp_target "$release" >/dev/null
   directory="$sp_root/$release"
+  # family stages can be activated only by the independently verified native family transaction
+  [[ "$(sp_field "$directory/publication.json" contractVersion)" != weather-schema-preserving-family-publication/v1 ]] ||
+    die "native family publication requires family release authority"
   [[ "$(env_value "$source" WEATHER_RELEASE)" == "$(sp_field "$directory/stage.json" sourceRelease)" ]] ||
     die "staged application source is no longer current"
   sp_transaction "$release" "$release" "$directory/protected.json"
@@ -547,7 +1040,7 @@ sp_retire_stage() {
     [[ -d "$directory" && ! -L "$directory" && "$(stat -c '%u:%g:%a' "$directory")" == 0:0:700 ]] || die "partial stage root differs"
     while IFS= read -r -d '' file; do
       case "${file##*/}" in
-        publication.json|protected.json|environment.env|stage.json) sp_private "$file" ;;
+        publication.json|protected.json|environment.env|stage.json|runtime-generation.json) sp_private "$file" ;;
         *) die "partial stage contains an unexpected object" ;;
       esac
     done < <(find -P "$directory" -mindepth 1 -maxdepth 1 -print0)
@@ -582,6 +1075,10 @@ sp_rollback() {
   source=$(sp_source)
   current=$(env_value "$source" WEATHER_RELEASE)
   previous=$(read_release_state "$state_dir/previous-release")
+  # a family publication must use its verified compensation rather than discard its active catalog
+  if [[ "$current" != "$sp_anchor" && "$(sp_field "$sp_root/$current/publication.json" contractVersion)" == weather-schema-preserving-family-publication/v1 ]]; then
+    die "native family release requires its exact compensation transaction"
+  fi
   sp_environment "$previous" >/dev/null
   stage_release=$current
   # a prior rollback can leave the forward package as the retained previous image
@@ -643,8 +1140,27 @@ sp_start_infrastructure() {
 }
 
 # converge after a host/service restart without migrating or applying ACL changes
+# resolve a durable applying family mutation independently of the generic application journal
+sp_native_family_boot_recovery() {
+  local environment=$1 stage publication generation
+  # leave Node predecessor recovery and ordinary release journals on their original path
+  generation=$(sp_runtime_generation "$environment") || die "family boot recovery generation unavailable"
+  [[ "$generation" == rust-v1 ]] || return 0
+  if [[ -e "$sp_journal" || -L "$sp_journal" ]]; then
+    sp_private "$sp_journal"
+    stage=$(sp_field "$sp_journal" stageRelease)
+    validate_release "$stage"
+    publication="$sp_root/$stage/publication.json"
+    sp_private "$publication"
+    [[ "$(sp_field "$publication" contractVersion)" == weather-schema-preserving-family-publication/v1 ]] || return 0
+  fi
+  # the original lock remains held across the actual root-native recovery process
+  WEATHER_RELEASE_LOCK_FD=$release_transaction_lock_fd \
+    /usr/local/sbin/weather-remote-ops --family-recover-native-unlocked
+}
+
 sp_system_recover() {
-  local current environment container service
+  local current environment container service dashboard=false
   current=$(read_release_state "$state_dir/current-release")
   environment=$(sp_environment "$current")
   [[ "$(read_release_state "$state_dir/schema-release")" == "$sp_anchor" ]] || die "schema owner changed"
@@ -652,15 +1168,34 @@ sp_system_recover() {
   if [[ ! -e "$sp_journal" && ! -L "$sp_journal" ]]; then
     [[ "$(sp_source)" == "$environment" ]] || die "committed application ancestry differs"
   fi
+  # reject conflicting application and dashboard journals before starting any container
+  if dashboard_override_present; then
+    [[ ! -e "$sp_journal" && ! -L "$sp_journal" && "$(sp_runtime_generation "$environment")" == rust-v1 ]] ||
+      die "dashboard recovery requires the committed native core"
+    dashboard=true
+  fi
   # start only retained infrastructure that was stopped by the inherited ExecStop
   sp_start_infrastructure "$environment"
-  if [[ -e "$sp_journal" || -L "$sp_journal" ]]; then
-    sp_reconcile
-  else
-    [[ "$(realpath -e "$state_dir/active.env")" == "$environment" ]] || die "active application environment differs"
-    [[ "$(sp_source)" == "$environment" ]] || die "committed application ancestry differs"
+  # keep a dashboard override on the selected web image while starting the unchanged native core
+  if [[ "$dashboard" == true ]]; then
     sp_database "$environment"
-    sp_switch "$environment"
+    sp_compose "$environment" up -d --no-deps --no-build --pull never --wait api worker
+    sp_health_services "$environment" api worker
+    WEATHER_RELEASE_LOCK_FD=$release_transaction_lock_fd \
+      /usr/local/sbin/weather-remote-ops --dashboard-recover-native-unlocked
+  else
+    # a crash before the generic image journal is also recoverable from the family owner's durable record
+    sp_native_family_boot_recovery "$environment"
+    current=$(read_release_state "$state_dir/current-release")
+    environment=$(sp_environment "$current")
+    if [[ -e "$sp_journal" || -L "$sp_journal" ]]; then
+      sp_reconcile
+    else
+      [[ "$(realpath -e "$state_dir/active.env")" == "$environment" ]] || die "active application environment differs"
+      [[ "$(sp_source)" == "$environment" ]] || die "committed application ancestry differs"
+      sp_database "$environment"
+      sp_switch "$environment"
+    fi
   fi
   # keep the service start successful only after all retained infrastructure is healthy
   for service in postgres cloudflared; do
@@ -672,14 +1207,27 @@ sp_system_recover() {
 
 # dispatch only the dedicated auxiliary lifecycle verbs
 sp_main() {
-  (($# >= 1)) || { printf 'usage: schema-preserving-release.sh stage RELEASE PUBLICATION_JSON SHA256 | activate RELEASE | recover | system-recover | status\n' >&2; return 2; }
+  (($# >= 1)) || { printf 'usage: schema-preserving-release.sh prove-native-bootstrap APPROVAL_JSON SHA256 | stage RELEASE PUBLICATION_JSON SHA256 | activate RELEASE | recover | system-recover | status\n' >&2; return 2; }
   local action=$1
   shift
-  sp_load
+  # boot recovery can converge a committed web override or its interrupted transaction
+  if [[ "$action" == recover || "$action" == system-recover ]]; then
+    sp_load --system-recovery
+  else
+    sp_load
+  fi
   case "$action" in
+    prove-native-bootstrap)
+      (($# == 2)) || die "native bootstrap requires reviewed approval and checksum"
+      sp_prove_native_bootstrap "$@"
+      ;;
     stage)
       (($# == 3)) || die "stage requires release, publication and checksum"
       sp_stage "$@"
+      ;;
+    stage-family-pair)
+      (($# == 4)) || die "stage-family-pair requires target and compensation publications and checksums"
+      sp_stage_family_pair "$@"
       ;;
     activate)
       (($# == 1)) || die "activate requires one staged release"

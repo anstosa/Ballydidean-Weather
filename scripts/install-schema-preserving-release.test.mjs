@@ -15,6 +15,13 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { GIT_ADAPTER_VERSION } from "./predecessor-rust-transition-git.mjs";
+import {
+  OFFLINE_BOOTSTRAP_ARTIFACT_VERSION,
+  OFFLINE_BOOTSTRAP_LIVE_GATE,
+  OFFLINE_BOOTSTRAP_REQUEST_VERSION,
+  prepareOfflineBootstrapFixture,
+} from "./predecessor-rust-transition-prepare.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const installer = join(repoRoot, "scripts/install-schema-preserving-release.sh");
@@ -27,7 +34,7 @@ function hash(bytes) {
 }
 
 // build one complete disposable installation boundary
-async function createFixture(extraBundleFile = false) {
+async function createFixture(extraBundleFile = false, operatorShellBytes = null) {
   const root = await mkdtemp(join(tmpdir(), "weather-schema-preserving-installer-"));
   const bundle = join(root, "bundle");
   const deploy = join(root, "current/deploy");
@@ -47,7 +54,7 @@ async function createFixture(extraBundleFile = false) {
   await chmod(bundle, 0o700);
   await chmod(resolve(operators, ".."), 0o755);
   await chmod(units, 0o755);
-  const shellBytes = "#!/usr/bin/env bash\nprintf helper\\n\n";
+  const shellBytes = operatorShellBytes ?? "#!/usr/bin/env bash\nprintf helper\\n\n";
   const moduleBytes = "export const helper = true;\n";
   await writeFile(join(bundle, "schema-preserving-release.sh"), shellBytes, { mode: 0o755 });
   await writeFile(join(bundle, "schema-preserving-release.mjs"), moduleBytes, { mode: 0o644 });
@@ -133,6 +140,7 @@ spi_runtime_check() {
   # create only the inert fixture snapshot
   if [[ "$4" == snapshot ]]; then printf protected >"$3"; fi
 }
+
 docker() { printf 'true|healthy\\n'; }
 systemctl() {
   if [[ "$1" == daemon-reload ]]; then
@@ -208,9 +216,215 @@ fi`;
   ], { encoding: "utf8" });
 }
 
+// bind every effect-relevant transition identity before the disposable controller runs
+function bindPreparedFixtureTransition(artifact, input, transition, fixture) {
+  assert.deepEqual(Object.keys(artifact).sort(), [
+    "artifactVersion",
+    "controlSha256",
+    "eligibility",
+    "eligibleForLiveInstallation",
+    "gitEvidenceMode",
+    "installationReceiptSha256",
+    "liveAuthorityVerified",
+    "liveGate",
+    "operatorBundle",
+    "predecessorSourceTreeSha256",
+    "recoveryDropInSha256",
+    "sourceEnvironmentSha256",
+    "targetTreeSha256",
+    "transition",
+  ]);
+  assert.equal(artifact.artifactVersion, OFFLINE_BOOTSTRAP_ARTIFACT_VERSION);
+  assert.equal(artifact.eligibility, "offline-only-ineligible");
+  assert.equal(artifact.eligibleForLiveInstallation, false);
+  assert.equal(artifact.liveAuthorityVerified, false);
+  assert.equal(artifact.liveGate, OFFLINE_BOOTSTRAP_LIVE_GATE);
+  assert.equal(artifact.gitEvidenceMode, "injected-test-fixture");
+  assert.deepEqual(artifact.transition.predecessor, input.predecessor);
+  assert.deepEqual(artifact.transition.target, input.target);
+  assert.equal(artifact.transition.contractVersion, transition.contractVersion);
+  assert.equal(artifact.transition.publicationLane, transition.publicationLane);
+  assert.equal(artifact.controlSha256, input.predecessor.controlSha256);
+  assert.equal(
+    artifact.installationReceiptSha256,
+    input.predecessor.installationReceiptSha256,
+  );
+  assert.equal(artifact.recoveryDropInSha256, input.predecessor.recoveryDropInSha256);
+  assert.equal(
+    artifact.sourceEnvironmentSha256,
+    input.predecessor.sourceEnvironmentSha256,
+  );
+  assert.equal(artifact.operatorBundle.manifestSha256, input.predecessor.bundleSha256);
+  assert.deepEqual(
+    artifact.operatorBundle.members.map((member) => member.path),
+    ["schema-preserving-release.mjs", "schema-preserving-release.sh"],
+  );
+  assert.equal(input.predecessor.release, "2026.11.04-3");
+  assert.equal(input.target.release, "2026.11.04-4");
+  return { ...fixture, previousSha: artifact.operatorBundle.manifestSha256 };
+}
+
+// execute the installed controller's real system-recover dispatch with isolated host effects
+function runFixtureSystemRecovery(
+  fixture,
+  bundleSha,
+  receiptPath,
+  receiptSha,
+  dropInSha,
+  logPath,
+) {
+  const helper = join(
+    fixture.operators,
+    bundleSha,
+    "schema-preserving-release.sh",
+  );
+  const command = `source "$1"
+state_dir="$2/state"
+releases_dir="$2/releases"
+deploy_dir="$2"
+compose_file="$2/compose.yaml"
+sp_journal="$state_dir/schema-preserving-release-v1/journal.json"
+FIXTURE_OPERATORS="$3"
+FIXTURE_UNITS="$4"
+EXPECTED_BUNDLE="$5"
+EXPECTED_RECEIPT="$6"
+EXPECTED_RECEIPT_SHA="$7"
+EXPECTED_DROPIN_SHA="$8"
+RECOVERY_LOG="$9"
+POSTGRES_ID=$(printf '%064d' 1)
+CLOUDFLARED_ID=$(printf '%064d' 5)
+: >"$RECOVERY_LOG"
+# preserve the installed controller identity while replacing privileged host admission
+sp_load() {
+  local manifest= file mode=644 dropin="$FIXTURE_UNITS/weather-compose.service.d/10-schema-preserving-release.conf"
+  [[ "$sp_bundle" == "$FIXTURE_OPERATORS/$EXPECTED_BUNDLE" ]]
+  # bind both exact installed helper files
+  for file in schema-preserving-release.mjs schema-preserving-release.sh; do
+    mode=644
+    [[ "$file" != *.sh ]] || mode=755
+    [[ -f "$sp_bundle/$file" && ! -L "$sp_bundle/$file" && "$(stat -c '%a:%h' "$sp_bundle/$file")" == "$mode:1" ]]
+    manifest+="$(sha256sum -- "$sp_bundle/$file" | awk '{print $1}')  $file"$'\\n'
+  done
+  [[ "$(printf '%s' "$manifest" | sha256sum | awk '{print $1}')" == "$EXPECTED_BUNDLE" ]]
+  [[ "$(sha256sum -- "$EXPECTED_RECEIPT" | awk '{print $1}')" == "$EXPECTED_RECEIPT_SHA" ]]
+  [[ "$(sha256sum -- "$dropin" | awk '{print $1}')" == "$EXPECTED_DROPIN_SHA" ]]
+  grep -Fxq "ExecStart=$sp_bundle/schema-preserving-release.sh system-recover" "$dropin"
+  printf 'load:%s\\n' "$EXPECTED_BUNDLE" >>"$RECOVERY_LOG"
+}
+# read one fixture marker without the production updater
+read_release_state() { cat "$1"; }
+# retain the ordinary core-only recovery fixture
+dashboard_override_present() { return 1; }
+# select only the fixture's committed application environment
+sp_environment() {
+  [[ "$1" == 2026.11.04-3 ]]
+  printf '%s/2026.11.04-3.env\\n' "$releases_dir"
+}
+# preserve the committed-source equality check
+sp_source() { sp_environment "$(read_release_state "$state_dir/current-release")"; }
+# record the retained database check boundary
+sp_database() { printf 'database:%s\\n' "$1" >>"$RECOVERY_LOG"; }
+# record the application switch boundary without creating containers
+sp_switch() { printf 'switch:%s\\n' "$1" >>"$RECOVERY_LOG"; }
+# expose only the two retained infrastructure image references
+env_value() {
+  case "$2" in
+    POSTGRES_IMAGE) printf 'postgres@sha256:%064d\\n' 3 ;;
+    CLOUDFLARED_IMAGE) printf 'cloudflared@sha256:%064d\\n' 4 ;;
+    WEATHER_RELEASE) printf '2026.11.04-3\\n' ;;
+    *) return 1 ;;
+  esac
+}
+# resolve only existing retained container identities
+compose() {
+  local service="\${!#}"
+  [[ " $* " == *' ps '* ]]
+  case "$service" in
+    postgres) printf '%s\\n' "$POSTGRES_ID" ;;
+    cloudflared) printf '%s\\n' "$CLOUDFLARED_ID" ;;
+    *) return 1 ;;
+  esac
+}
+# isolate image identity, health, and retained start operations
+docker() {
+  local image expected_id service container="\${4:-}"
+  # return one exact image identity
+  if [[ "$1:$2" == image:inspect ]]; then
+    image="$5"
+    case "$image" in
+      postgres@*) printf 'sha256:%064d\\n' 3 ;;
+      cloudflared@*) printf 'sha256:%064d\\n' 4 ;;
+      *) return 1 ;;
+    esac
+    return
+  fi
+  # return one existing container identity or health state
+  if [[ "$1" == inspect && "$2" == --format ]]; then
+    # bind the complete project and service descriptor
+    if [[ "$3" == *'.Config.Image'* ]]; then
+      if [[ "$container" == "$POSTGRES_ID" ]]; then image="postgres@sha256:$(printf '%064d' 3)"; expected_id="sha256:$(printf '%064d' 3)"; service=postgres;
+      elif [[ "$container" == "$CLOUDFLARED_ID" ]]; then image="cloudflared@sha256:$(printf '%064d' 4)"; expected_id="sha256:$(printf '%064d' 4)"; service=cloudflared;
+      else return 1; fi
+      printf '%s|%s|%s|weather|%s\\n' "$container" "$image" "$expected_id" "$service"
+    else
+      [[ "$container" == "$POSTGRES_ID" || "$container" == "$CLOUDFLARED_ID" ]]
+      printf 'health:%s\\n' "$container" >>"$RECOVERY_LOG"
+      printf 'true|healthy\\n'
+    fi
+    return
+  fi
+  # admit starts only for the two already identified containers
+  if [[ "$1" == start && ( "$2" == "$POSTGRES_ID" || "$2" == "$CLOUDFLARED_ID" ) ]]; then
+    printf 'start:%s\\n' "$2" >>"$RECOVERY_LOG"
+    return
+  fi
+  printf 'forbidden-docker:%s\\n' "$*" >>"$RECOVERY_LOG"
+  return 1
+}
+# reject unplanned host controller effects
+systemctl() { printf 'forbidden-systemctl:%s\\n' "$*" >>"$RECOVERY_LOG"; return 1; }
+# reject privilege changes inside the fixture
+sudo() { printf 'forbidden-sudo:%s\\n' "$*" >>"$RECOVERY_LOG"; return 1; }
+# fail if the real health loop ever needs to wait
+sleep() { return 92; }
+sp_main system-recover`;
+  return spawnSync("bash", [
+    "-c",
+    command,
+    "schema-preserving-recovery-test",
+    helper,
+    fixture.deploy,
+    fixture.operators,
+    fixture.units,
+    bundleSha,
+    receiptPath,
+    receiptSha,
+    dropInSha,
+    logPath,
+  ], { encoding: "utf8" });
+}
+
+// describe the only retained-host effects allowed from either recovery authority
+function recoveryEffects(bundleSha, deploy) {
+  return [
+    `load:${bundleSha}`,
+    `start:${"1".padStart(64, "0")}`,
+    `start:${"5".padStart(64, "0")}`,
+    `health:${"1".padStart(64, "0")}`,
+    `health:${"5".padStart(64, "0")}`,
+    `database:${join(deploy, "releases/2026.11.04-3.env")}`,
+    `switch:${join(deploy, "releases/2026.11.04-3.env")}`,
+    `health:${"1".padStart(64, "0")}`,
+    `health:${"5".padStart(64, "0")}`,
+  ];
+}
+
 // retain an installed predecessor while preparing a different immutable bundle
-async function createUpgradeFixture(validatorOnly = false) {
-  const fixture = await createFixture();
+async function createUpgradeFixture(validatorOnly = false, realOperator = false) {
+  const originalOperator = realOperator
+    ? await readFile(join(repoRoot, "scripts/schema-preserving-release.sh"), "utf8")
+    : null;
+  const fixture = await createFixture(false, originalOperator);
   const bootstrap = runInstaller(fixture);
   assert.equal(bootstrap.status, 0, bootstrap.stderr);
   fixture.previousSha = fixture.bundleSha;
@@ -218,7 +432,9 @@ async function createUpgradeFixture(validatorOnly = false) {
   fixture.oldReceipt = await readFile(join(fixture.deploy, "state/schema-preserving-release-v1/installation.json"), "utf8");
   fixture.bundle = join(fixture.root, "repaired-bundle");
   await mkdir(fixture.bundle, { mode: 0o700 });
-  const operator = validatorOnly
+  const operator = realOperator
+    ? `${await readFile(join(fixture.operators, fixture.previousSha, "schema-preserving-release.sh"), "utf8")}\n# distinct fixture target bundle\n`
+    : validatorOnly
     ? await readFile(join(fixture.operators, fixture.previousSha, "schema-preserving-release.sh"), "utf8")
     : "#!/usr/bin/env bash\n# repaired fixture helper\n";
   const validator = validatorOnly ? "export const helper = 'reviewed-query';\n" : "export const helper = true;\n";
@@ -253,6 +469,110 @@ test("bundle upgrade retains the legacy receipt and publishes new authority befo
     assert.equal(retry.status, 0, retry.stderr);
     const pending = runInstaller(fixture, "pending", true);
     assert.equal(pending.status, 0, pending.stderr);
+  } finally {
+    await cleanup(fixture);
+  }
+});
+
+// join preparation to the original installer using the same predecessor bytes
+test("prepared predecessor identity restores the exact installed authority after reload fails", async () => {
+  const fixture = await createUpgradeFixture(false, true);
+  try {
+    const transition = JSON.parse(await readFile(
+      join(repoRoot, "scripts/predecessor-rust-transition.fixture.json"), "utf8",
+    ));
+    const installed = join(fixture.operators, fixture.previousSha);
+    const bundleFiles = await Promise.all(["mjs", "sh"].map(
+      // preserve the actual installed predecessor bytes as repository-named inputs
+      async (extension) => ({
+        bytes: await readFile(join(installed, `schema-preserving-release.${extension}`)),
+        path: `scripts/schema-preserving-release.${extension}`,
+      }),
+    ));
+    const controlBytes = await readFile(join(fixture.deploy, "scripts/update.sh"));
+    const sourceEnvironmentBytes = await readFile(join(fixture.deploy, "state/active.env"));
+    const installationReceiptBytes = Buffer.from(fixture.oldReceipt);
+    const recoveryDropInBytes = Buffer.from(fixture.oldDropin);
+    const preparationInput = {
+      bundleFiles,
+      controlBytes,
+      installationReceiptBytes,
+      predecessor: {
+        ...transition.predecessor,
+        bundleSha256: JSON.parse(fixture.oldReceipt).bundleSha256,
+        controlSha256: hash(controlBytes),
+        installationReceiptSha256: hash(installationReceiptBytes),
+        recoveryDropInSha256: hash(recoveryDropInBytes),
+        release: "2026.11.04-3",
+        sourceEnvironmentSha256: hash(sourceEnvironmentBytes),
+      },
+      recoveryDropInBytes,
+      requestVersion: OFFLINE_BOOTSTRAP_REQUEST_VERSION,
+      sourceEnvironmentBytes,
+      target: { ...transition.target, release: "2026.11.04-4" },
+    };
+    const transitionEvidence = {
+      ...transition,
+      adapterVersion: GIT_ADAPTER_VERSION,
+      evidenceMode: "injected-test-fixture",
+      predecessorCommit: transition.predecessor.commit,
+      targetCommit: transition.target.commit,
+    };
+    const artifact = prepareOfflineBootstrapFixture(preparationInput, transitionEvidence);
+    const prepared = bindPreparedFixtureTransition(
+      artifact,
+      preparationInput,
+      transition,
+      fixture,
+    );
+    const failed = runInstaller(prepared, "reload", true);
+    assert.notEqual(failed.status, 0);
+    const dropIn = join(fixture.units, "weather-compose.service.d/10-schema-preserving-release.conf");
+    const receipts = join(fixture.deploy, "state/schema-preserving-release-v1");
+    assert.equal(await readFile(dropIn, "utf8"), fixture.oldDropin);
+    const predecessorReceipt = join(receipts, "installation.json");
+    assert.equal(await readFile(predecessorReceipt, "utf8"), fixture.oldReceipt);
+    await assert.doesNotReject(stat(join(receipts, `installations/${fixture.bundleSha}.json`)));
+
+    const predecessorRecoveryLog = join(fixture.root, "predecessor-recovery.log");
+    const recoveredPredecessor = runFixtureSystemRecovery(
+      prepared,
+      fixture.previousSha,
+      predecessorReceipt,
+      hash(fixture.oldReceipt),
+      hash(fixture.oldDropin),
+      predecessorRecoveryLog,
+    );
+    assert.equal(recoveredPredecessor.status, 0, recoveredPredecessor.stderr);
+    assert.deepEqual(
+      (await readFile(predecessorRecoveryLog, "utf8")).trim().split("\n"),
+      recoveryEffects(fixture.previousSha, fixture.deploy),
+    );
+    assert.equal(await readFile(dropIn, "utf8"), fixture.oldDropin);
+    assert.equal(await readFile(predecessorReceipt, "utf8"), fixture.oldReceipt);
+
+    const retry = runInstaller(prepared, "", true);
+    assert.equal(retry.status, 0, retry.stderr);
+    const targetReceipt = join(receipts, `installations/${fixture.bundleSha}.json`);
+    const targetReceiptBytes = await readFile(targetReceipt);
+    const targetDropInBytes = await readFile(dropIn);
+    const targetRecoveryLog = join(fixture.root, "target-recovery.log");
+    const recoveredTarget = runFixtureSystemRecovery(
+      prepared,
+      fixture.bundleSha,
+      targetReceipt,
+      hash(targetReceiptBytes),
+      hash(targetDropInBytes),
+      targetRecoveryLog,
+    );
+    assert.equal(recoveredTarget.status, 0, recoveredTarget.stderr);
+    assert.deepEqual(
+      (await readFile(targetRecoveryLog, "utf8")).trim().split("\n"),
+      recoveryEffects(fixture.bundleSha, fixture.deploy),
+    );
+    assert.doesNotMatch(await readFile(targetRecoveryLog, "utf8"), /create|publish|stage/u);
+    assert.deepEqual(await readFile(dropIn), targetDropInBytes);
+    assert.deepEqual(await readFile(targetReceipt), targetReceiptBytes);
   } finally {
     await cleanup(fixture);
   }

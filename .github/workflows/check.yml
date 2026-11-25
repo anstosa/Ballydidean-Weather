@@ -22,6 +22,7 @@ jobs:
       full_tests: ${{ steps.changes.outputs.full_tests }}
       integration: ${{ steps.changes.outputs.integration }}
       native_android: ${{ steps.changes.outputs.native_android }}
+      native_rust_arm64: ${{ steps.changes.outputs.native_rust_arm64 }}
     steps:
       - name: Check out exact workflow commit
         uses: actions/checkout@v4
@@ -82,6 +83,14 @@ jobs:
           node-version-file: .nvmrc
       - name: Install dependencies
         run: npm ci
+      - name: Verify the current runtime inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run runtime-inventory:check -- --generation node-v1 --phase baseline
+          npm run runtime-inventory:check -- --generation node-v1 --phase rollback-drill
+          npm run runtime-inventory:check -- --generation mixed --phase pre-cutover
+          npm run runtime-inventory:check -- --generation rust-v1 --phase pre-cutover
       - name: Install deployment validators
         run: sudo apt-get update && sudo apt-get install --yes age shellcheck
       - name: Lint repository
@@ -92,6 +101,77 @@ jobs:
         run: python3 mobile/scripts/native_https_fixture_test.py
       - name: Build and typecheck once
         run: npm run build
+      - name: Prove the nested Rust toolchain pin supersedes the runner default
+        shell: bash
+        run: |
+          set -euo pipefail
+          pinned=$(sed -nE 's/^channel = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' rust/rust-toolchain.toml)
+          test -n "${pinned}"
+          # use a fixed control so the moving stable channel cannot collide with the nested pin
+          control=1.85.1
+          test "${control}" != "${pinned}"
+          test -z "${RUSTUP_TOOLCHAIN+x}"
+          rustup toolchain install "${control}" --profile minimal
+          rustup default "${control}"
+          root_toolchain=$(rustup show active-toolchain)
+          root_version=$(rustc -Vv)
+          printf 'repository root:\n%s\n%s\n' "${root_toolchain}" "${root_version}"
+          [[ "${root_toolchain}" == "${control}-"*' (default)' ]]
+          test "$(awk '$1 == "release:" { print $2 }' <<< "${root_version}")" = "${control}"
+          rustup toolchain install "${pinned}" --profile minimal --component clippy --component rustfmt
+          (
+            # prove cwd selected the actual pin file rather than an equivalent override
+            cd -P rust
+            active=$(rustup show active-toolchain)
+            version=$(rustc -Vv)
+            printf 'nested Rust workspace:\n%s\n%s\n' "${active}" "${version}"
+            [[ "${active}" == "${pinned}-"*" (overridden by '${PWD}/rust-toolchain.toml')" ]]
+            test "$(awk '$1 == "release:" { print $2 }' <<< "${version}")" = "${pinned}"
+          )
+      - name: Verify the locked Rust backend workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/generate-rust-contracts.mjs --check
+          node --harmony-temporal scripts/native-calendar-compatibility.mjs --check rust/crates/weather-runtime/native-calendar/america-los-angeles-node-24.16.0.bin
+          # keep native host dispatch and publication fixtures in the exact-commit gate
+          node --test --test-concurrency=1 \
+            deploy/scripts/rust-runtime-image-material.test.mjs \
+            deploy/scripts/build-native-runtime-image-material.test.mjs \
+            deploy/scripts/native-dashboard-release-control.test.mjs \
+            deploy/scripts/native-evidence-remote-dispatch.test.mjs \
+            deploy/scripts/native-generation-remote-ops.test.mjs \
+            deploy/scripts/native-release-control-remote-dispatch.test.mjs
+          # run only standalone oracles here; the Rust tests invoke the others
+          node rust/crates/weather-api/tests/current-node-oracle.mjs
+          node rust/crates/weather-api/tests/daily-precipitation-node-oracle.mjs
+          node rust/crates/weather-api/tests/forecast-temperature-node-oracle.mjs
+          node rust/crates/weather-api/tests/forecast-wind-node-oracle.mjs
+          node rust/crates/weather-api/tests/forecast-rain-node-oracle.mjs
+          node rust/crates/weather-api/tests/maintenance-schedule-node-oracle.mjs
+          node rust/crates/weather-api/tests/sites-node-oracle.mjs
+          node rust/crates/weather-api/tests/startup-node-oracle.mjs
+          node rust/crates/weather-database/tests/active-sites-node-oracle.mjs
+          node rust/crates/weather-database/tests/current-weather-node-oracle.mjs
+          node rust/crates/weather-database/tests/database-config-node-oracle.mjs
+          node rust/crates/weather-database/tests/migration-execution-node-oracle.mjs
+          node rust/crates/weather-database/tests/migration-planning-node-oracle.mjs
+          node rust/crates/weather-worker/tests/worker-startup-node-oracle.mjs
+          # bind the compile checks to the nested workspace pin
+          pinned=$(sed -nE 's/^channel = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' rust/rust-toolchain.toml)
+          actual_rust_version="$(cd rust && rustc --version | awk '{ print $2 }')"
+          printf 'rustc %s (pinned %s)\n' "${actual_rust_version}" "${pinned}"
+          test -n "${pinned}"
+          test "${actual_rust_version}" = "${pinned}"
+          export CARGO_TARGET_DIR
+          CARGO_TARGET_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/weather-rust-target.XXXXXX")"
+          trap 'rm -rf -- "${CARGO_TARGET_DIR}"' EXIT
+          # populate the exact approved locked dependency graph before offline validation
+          (cd rust && cargo fetch --locked)
+          node scripts/check-rust-source-quality.mjs
+          # verify vendor identity and exercise the candidate compressor without selecting it for deployment
+          (cd rust/crates/weather-runtime/vendor/node-zlib-24.16.0 && sha256sum -c --quiet source.sha256)
+          (cd rust && cargo test --workspace --all-targets --locked --offline --features weather-runtime/node-zlib-candidate)
       - name: Verify the shared widget contract
         run: npm run test:mobile-shared:compiled
       - name: Run compiled unit tests
@@ -124,6 +204,366 @@ jobs:
       - name: Run deployment and recovery rehearsal
         if: needs.change-selection.outputs.deploy_integration == 'true'
         run: WEATHER_RUN_DEPLOY_INTEGRATION=1 node --test --test-concurrency=1 deploy/test/*.integration.test.mjs
+
+  native-rust-arm64:
+    name: Native Rust ARM64 parity
+    needs: [change-selection, quality-gates]
+    if: needs.change-selection.outputs.native_rust_arm64 == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 75
+    steps:
+      - name: Check out exact selected commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Set up native Node.js for the existing oracles
+        uses: actions/setup-node@v4
+        with:
+          cache: npm
+          node-version-file: .nvmrc
+      - name: Install the pinned native Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          # verify the runner and both oracle and compiler architectures
+          test "$(uname -m)" = aarch64
+          test "$(node -p process.arch)" = arm64
+          pinned=$(sed -nE 's/^channel = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' rust/rust-toolchain.toml)
+          test -n "${pinned}"
+          test -z "${RUSTUP_TOOLCHAIN+x}"
+          rustup toolchain install "${pinned}" --profile minimal
+          cd rust
+          version=$(rustc -Vv)
+          printf '%s\n' "${version}"
+          test "$(awk '$1 == "release:" { print $2 }' <<< "${version}")" = "${pinned}"
+          test "$(awk '$1 == "host:" { print $2 }' <<< "${version}")" = aarch64-unknown-linux-gnu
+      - name: Install existing oracle dependencies
+        run: npm ci
+      - name: Compile existing TypeScript oracles once
+        run: npm run build
+      - name: Execute retained functional Rust parity suites on native ARM64
+        env:
+          CARGO_BUILD_JOBS: '1'
+          RUST_TEST_THREADS: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR
+          CARGO_TARGET_DIR="$(mktemp -d "${RUNNER_TEMP}/weather-rust-arm64.XXXXXX")"
+          trap 'rm -rf -- "${CARGO_TARGET_DIR}"' EXIT
+          cd rust
+          # fetch the same locked graph for the native target before offline tests
+          cargo fetch --locked --target aarch64-unknown-linux-gnu
+          # run one named functional suite and require executed tests
+          run_native_suite() {
+            local log="$CARGO_TARGET_DIR/test-result.log"
+            cargo test --locked --offline --target aarch64-unknown-linux-gnu -p "$1" --test "$2" "${@:3}" |
+              tee "$log"
+            grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"
+          }
+          # run native runtime unit suites against the exact same locked target
+          run_native_lib_suite() {
+            local log="$CARGO_TARGET_DIR/test-result.log"
+            cargo test --locked --offline --target aarch64-unknown-linux-gnu -p "$1" --lib "$2" |
+              tee "$log"
+            grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"
+          }
+          run_native_suite weather-adjustment temperature_mos_inference
+          run_native_suite weather-api tides
+          run_native_suite weather-database tides
+          run_native_suite weather-edge native_public_assets
+          run_native_suite weather-edge forecast_recorded_products
+          run_native_lib_suite weather-edge edge_process_environment
+          run_native_lib_suite weather-edge edge_startup_configuration
+          run_native_suite weather-runtime ecowitt_scheduled
+          run_native_suite weather-runtime native_cold_custody_command private_archive_native_http_transport_matches_node
+          run_native_suite weather-runtime native_cold_custody_command native_evidence_command_emits_and_reenters_actual_ack
+          run_native_suite weather-runtime native_evidence_read_commands
+          run_native_suite weather-runtime native_evidence_gap_commands
+          run_native_suite weather-runtime revision_cold_start native_evidence_cold_start_matches_node_database_envelopes
+          run_native_suite weather-runtime shadow_metadata_custody
+          run_native_suite weather-runtime native_edge_http_transport
+          run_native_suite weather-runtime native_edge_process_http
+          run_native_suite weather-runtime native_worker_process
+          run_native_suite weather-runtime native_worker_health
+          run_native_suite weather-runtime native_worker_catalogs
+          run_native_suite weather-runtime native_rain_capture_values
+          run_native_lib_suite weather-runtime native_open_meteo_values
+          run_native_lib_suite weather-runtime native_public_backfill_time
+          run_native_lib_suite weather-runtime native_scheduled_values
+          run_native_lib_suite weather-runtime native_postgres
+          run_native_lib_suite weather-runtime native_outbound_http_test
+          run_native_lib_suite weather-runtime native_open_meteo_transport_test
+          run_native_lib_suite weather-runtime native_open_meteo_scheduled_transport
+          run_native_lib_suite weather-runtime native_tempest_tide_transport
+          run_native_lib_suite weather-runtime native_ambient_transport
+          run_native_lib_suite weather-runtime native_ecowitt_transport
+          run_native_lib_suite weather-runtime native_wunderground_transport
+          run_native_lib_suite weather-runtime native_netatmo_transport
+          run_native_lib_suite weather-runtime native_purpleair_transport
+          run_native_lib_suite weather-runtime native_xweather_tile_transport
+          run_native_lib_suite weather-runtime native_edge_admin_files
+          run_native_lib_suite weather-runtime native_edge_admin_owner
+          run_native_lib_suite weather-runtime native_edge_widget_source
+          run_native_lib_suite weather-runtime native_edge_tile_owner
+          run_native_lib_suite weather-runtime native_edge_scorecard
+          run_native_lib_suite weather-runtime native_rain_collection_transport
+          run_native_lib_suite weather-runtime native_worker_provider_factory
+          run_native_lib_suite weather-runtime native_worker_backfill_owner
+          run_native_lib_suite weather-runtime native_worker_scheduler
+          run_native_lib_suite weather-runtime native_worker_runtime_owner
+          run_native_lib_suite weather-runtime native_worker_sidecar_owner
+          run_native_lib_suite weather-runtime native_forecast_scheduler_values
+          run_native_lib_suite weather-runtime native_noaa_tide_transport
+          run_native_lib_suite weather-runtime native_edge_recorded_owner
+          run_native_lib_suite weather-runtime native_edge_recorded_projection
+          run_native_lib_suite weather-runtime native_edge_widget_projection
+          run_native_lib_suite weather-runtime native_edge_route_graph
+          run_native_lib_suite weather-runtime native_edge_route_execution
+          run_native_lib_suite weather-runtime native_edge_admin_admission
+          run_native_lib_suite weather-runtime native_edge_post_response
+          run_native_lib_suite weather-runtime native_edge_public_handler
+          run_native_lib_suite weather-runtime native_scheduler_capture
+          run_native_lib_suite weather-runtime native_widget_forecast_admission
+          run_native_lib_suite weather-runtime native_background_forecast_scheduler
+          run_native_lib_suite weather-runtime native_edge_preview
+          run_native_lib_suite weather-runtime native_edge_viewer_context
+          run_native_lib_suite weather-runtime native_historical_backfill_output
+          run_native_lib_suite weather-runtime native_postgres_backfill
+          run_native_lib_suite weather-runtime native_postgres_pool
+          run_native_lib_suite weather-runtime native_postgres_rain_receipt
+          run_native_lib_suite weather-runtime native_model_evidence_values
+          run_native_lib_suite weather-runtime native_api_capture_codec
+          run_native_lib_suite weather-runtime native_api_capture_execution
+          run_native_lib_suite weather-runtime native_worker_temperature_archive_binding
+          run_native_lib_suite weather-runtime native_postgres_worker_rain_inference
+          run_native_lib_suite weather-runtime native_postgres_worker_temperature
+          run_native_lib_suite weather-runtime native_postgres_api_capture_ports
+          run_native_lib_suite weather-runtime native_temperature_canary_provider
+          run_native_lib_suite weather-runtime native_edge_upstream_test
+          run_native_lib_suite weather-runtime native_edge_startup_material
+          run_native_lib_suite weather-runtime retry_after_supports_http_date
+          run_native_lib_suite weather-runtime native_runtime_material
+          run_native_lib_suite weather-runtime native_api_time_values
+          run_native_lib_suite weather-runtime native_api_model_admission
+          run_native_lib_suite weather-runtime native_api_installed_owner
+          run_native_lib_suite weather-runtime native_postgres_api_serve
+          run_native_lib_suite weather-runtime native_worker_rain_capture_owner
+          run_native_lib_suite weather-runtime native_worker_rain_task_binding
+          run_native_lib_suite weather-runtime native_calendar_compatibility
+          run_native_lib_suite weather-runtime native_forecast_archive_codec
+          run_native_lib_suite weather-runtime native_forecast_allocation_statfs
+          run_native_lib_suite weather-runtime native_edge_private_handler_test
+          run_native_lib_suite weather-runtime native_edge_composed_process_test
+          run_native_lib_suite weather-runtime native_installed_worker_process
+          run_native_lib_suite weather-runtime native_installed_forecast_archive_operator_test
+          run_native_lib_suite weather-runtime native_unsupported_terminal_proof
+          run_native_lib_suite weather-runtime native_future_input_seal_current
+          run_native_lib_suite weather-runtime native_future_input_seal_install
+          run_native_lib_suite weather-runtime native_maintenance_anchor_current_v3
+          run_native_lib_suite weather-runtime native_maintenance_anchor_install_v3
+          run_native_lib_suite weather-runtime native_maintenance_anchor_finalize_v3
+          run_native_lib_suite weather-runtime native_maintenance_anchor_install_v2
+          run_native_lib_suite weather-runtime native_maintenance_finalization_proof_v2
+          run_native_lib_suite weather-runtime native_maintenance_retirement_files_v2
+          run_native_lib_suite weather-runtime native_maintenance_retirement_expected_v2
+          run_native_lib_suite weather-runtime native_maintenance_legacy_metadata_v2
+          run_native_lib_suite weather-runtime native_maintenance_revision_retirement_v2
+          run_native_lib_suite weather-runtime native_maintenance_anchor_finalize_v2
+          run_native_lib_suite weather-runtime native_maintenance_backing_capacity
+          run_native_lib_suite weather-runtime native_maintenance_local_archive_envelope
+          run_native_lib_suite weather-runtime native_maintenance_local_archive_readiness
+          run_native_lib_suite weather-runtime native_maintenance_controller_lock
+          run_native_lib_suite weather-runtime native_maintenance_capture_readiness_wire
+          run_native_lib_suite weather-runtime native_fit_ascii_collation
+          run_native_lib_suite weather-runtime native_maintenance_capture_native_installation
+          run_native_lib_suite weather-runtime native_maintenance_catalog_wire
+          run_native_lib_suite weather-runtime native_maintenance_plaintext_object_store
+          run_native_lib_suite weather-runtime native_maintenance_archive_segment
+          run_native_lib_suite weather-runtime native_maintenance_archive_journal
+          run_native_lib_suite weather-runtime native_maintenance_archive_genesis
+          run_native_lib_suite weather-runtime native_maintenance_revision_gap_drain
+          run_native_lib_suite weather-runtime native_maintenance_capture_cycle_core
+          run_native_lib_suite weather-runtime native_maintenance_revision_cold_drain
+          run_native_lib_suite weather-runtime native_maintenance_registration_lifecycle_remote
+          run_native_lib_suite weather-runtime native_maintenance_registration_lifecycle_host
+          run_native_lib_suite weather-runtime native_maintenance_future_only_journal
+          run_native_lib_suite weather-runtime native_maintenance_gap_archive_validators
+          run_native_lib_suite weather-runtime native_maintenance_cold_remote_documents
+          run_native_lib_suite weather-runtime native_maintenance_cold_remote_page
+          run_native_lib_suite weather-runtime native_maintenance_cold_archive_segment
+          run_native_lib_suite weather-runtime native_maintenance_cold_archive_validators
+          run_native_lib_suite weather-runtime native_maintenance_attempt_report
+          run_native_lib_suite weather-runtime native_maintenance_due_planner
+          run_native_lib_suite weather-runtime native_maintenance_controller_lease
+          run_native_lib_suite weather-runtime native_maintenance_due_attempt_journal
+          run_native_lib_suite weather-runtime native_maintenance_due_work
+          run_native_lib_suite weather-runtime native_maintenance_due_terminal_remote
+          run_native_lib_suite weather-runtime native_maintenance_historical_catalog
+          run_native_lib_suite weather-runtime native_maintenance_historical_fit
+          run_native_lib_suite weather-runtime native_maintenance_policy_temperature_wind
+          run_native_lib_suite weather-runtime native_maintenance_archive_member
+          run_native_lib_suite weather-runtime native_maintenance_cold_journal
+          run_native_lib_suite weather-runtime native_maintenance_open_pack
+          run_native_lib_suite weather-runtime native_maintenance_cold_pack_seal_journal
+          run_native_lib_suite weather-runtime native_maintenance_full_graph
+          run_native_lib_suite weather-runtime native_maintenance_graph_restore
+          run_native_lib_suite weather-runtime native_maintenance_graph_manifest
+          run_native_lib_suite weather-runtime native_maintenance_cas_pack
+          run_native_lib_suite weather-runtime native_maintenance_capture_remote_authority
+          run_native_lib_suite weather-runtime native_maintenance_fit_runtime_readiness
+          run_native_lib_suite weather-runtime native_maintenance_journal_store
+          run_native_lib_suite weather-runtime native_maintenance_database_ledger
+          run_native_lib_suite weather-runtime native_maintenance_backing_census
+          run_native_lib_suite weather-runtime native_maintenance_capture_installed_closure
+          run_native_lib_suite weather-runtime native_maintenance_registration_policy
+          run_native_lib_suite weather-runtime native_maintenance_rolling_schedule
+          run_native_lib_suite weather-runtime native_maintenance_capture_job
+          run_native_lib_suite weather-runtime native_maintenance_capture_readiness
+          run_native_lib_suite weather-runtime native_maintenance_journal
+          run_native_lib_suite weather-runtime native_family_release_lineage
+          run_native_lib_suite weather-runtime native_family_release_current
+          run_native_lib_suite weather-runtime native_family_release_status
+          run_native_lib_suite weather-runtime native_family_release_live_runtime
+          run_native_lib_suite weather-runtime native_family_lineage_host
+          run_native_lib_suite weather-runtime native_family_catalog_image_verifier
+          run_native_lib_suite weather-runtime native_capture_epoch_init_authority
+          # execute the fixed health command's parser on the native release architecture
+          cargo test --locked --offline --target aarch64-unknown-linux-gnu -p weather-runtime --bin weather-http-health |
+            tee "$CARGO_TARGET_DIR/health-test-result.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$CARGO_TARGET_DIR/health-test-result.log"
+          run_native_lib_suite weather-runtime native_process_shutdown
+          run_native_lib_suite weather-runtime native_api_revision_document_decode
+          run_native_lib_suite weather-runtime native_migration_output
+          run_native_lib_suite weather-runtime native_worker_database
+          run_native_suite weather-runtime native_wire_primitives
+          run_native_suite weather-runtime api_repository native_
+          run_native_suite weather-worker open_meteo_backfill_arguments
+          # exercise the integrated native maintenance receipt/controller paths with the candidate codec
+          for filter in native_maintenance_terminal_seal_owner native_maintenance_terminal_record_remote \
+            native_maintenance_qualified_release_package native_maintenance_control_reference_semantic \
+            controller_run_serialization_preserves_source_optional_fields \
+            native_registration_schedule_initializer_matches_source native_registration_schedule_projection_matches_predecessor \
+            native_registration_lifecycle_projection_matches_predecessor native_host_owner_operation::tests \
+            native_host_owner_access_installed::tests native_confirmation_export_projection::tests \
+            native_adjustment_evaluation_v2_envelope_matches_predecessor native_evaluation_export_archive_matches_predecessor \
+            native_node_gzip_incremental_matches_predecessor; do
+            cargo test --locked --offline --target aarch64-unknown-linux-gnu -p weather-runtime \
+              --features node-zlib-candidate --lib "$filter" | tee "$CARGO_TARGET_DIR/controller-test-result.log"
+            grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$CARGO_TARGET_DIR/controller-test-result.log"
+          done
+          cargo test --locked --offline --target aarch64-unknown-linux-gnu -p weather-runtime \
+            --features node-zlib-candidate --bin weather-maintenance-capture \
+            non_installed_candidate_cannot_construct_controller_owner | tee "$CARGO_TARGET_DIR/controller-command-result.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$CARGO_TARGET_DIR/controller-command-result.log"
+          # require the exact pinned Node fork on native ARM64 before candidate adoption
+          (cd crates/weather-runtime/vendor/node-zlib-24.16.0 && sha256sum -c --quiet source.sha256)
+          cargo test --locked --offline --target aarch64-unknown-linux-gnu -p weather-runtime --features node-zlib-candidate --lib native_node_gzip_candidate |
+            tee "$CARGO_TARGET_DIR/gzip-candidate-result.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$CARGO_TARGET_DIR/gzip-candidate-result.log"
+      - name: Set up the native candidate image builder
+        uses: docker/setup-buildx-action@v3
+      - name: Build native ARM64 candidate images and independent expected material
+        shell: bash
+        run: |
+          set -euo pipefail
+          material_root=$(mktemp -d "${RUNNER_TEMP}/weather-native-build-material.XXXXXX")
+          printf '%s\n' "${material_root}" > "${RUNNER_TEMP}/weather-native-build-material-root"
+          docker buildx build --platform linux/arm64 --target native-server \
+            --build-arg "WEATHER_SOURCE_REVISION=${GITHUB_SHA}" \
+            --provenance=false --tag weather-native-server:check --load .
+          docker buildx build --platform linux/arm64 --target native-web \
+            --build-arg "WEATHER_SOURCE_REVISION=${GITHUB_SHA}" \
+            --build-arg "WEATHER_WEB_REVISION=${GITHUB_SHA}" \
+            --provenance=false --tag weather-native-web:check --load .
+          # export comparison bytes from the build graph, never from either runtime image
+          docker buildx build --platform linux/arm64 --target native-runtime-material-build \
+            --provenance=false --output "type=local,dest=${material_root}" .
+      - name: Inspect loaded native ARM64 image configuration and material
+        shell: bash
+        run: |
+          set -euo pipefail
+          material_root=$(cat "${RUNNER_TEMP}/weather-native-build-material-root")
+          inspection_root=$(mktemp -d "${RUNNER_TEMP}/weather-native-image-inspection.XXXXXX")
+          server_root="${inspection_root}/server"
+          web_root="${inspection_root}/web"
+          mkdir -p "${server_root}" "${web_root}"
+          server_container=
+          web_container=
+          # remove partial container state and disposable extracted material on every exit
+          cleanup() {
+            test -z "${server_container}" || docker rm --force "${server_container}" >/dev/null
+            test -z "${web_container}" || docker rm --force "${web_container}" >/dev/null
+            rm -rf -- "${inspection_root}" "${material_root}"
+          }
+          trap cleanup EXIT
+          docker image inspect weather-native-server:check > "${inspection_root}/server-image.json"
+          docker image inspect weather-native-web:check > "${inspection_root}/web-image.json"
+          node --input-type=module - \
+            "${inspection_root}/server-image.json" \
+            "${inspection_root}/web-image.json" <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+
+          // verify one loaded image's platform and non-Node startup boundary
+          function verifyImage(path, command, environment) {
+            const [image] = JSON.parse(readFileSync(path, "utf8"));
+            assert.equal(image.Architecture, "arm64");
+            assert.equal(image.Os, "linux");
+            assert.equal(image.Config.User, "10002:10002");
+            assert.equal(image.Config.WorkingDir, "/opt/weather");
+            assert.equal(image.Config.Entrypoint, null);
+            assert.deepEqual(image.Config.Cmd, command);
+            assert.deepEqual(image.Config.Env, environment);
+            assert.deepEqual(image.Config.Labels, {
+              "org.opencontainers.image.revision": process.env.GITHUB_SHA,
+              "org.weather.runtime.generation": "rust-v1",
+            });
+            assert.equal(image.Config.Healthcheck, undefined);
+            assert.equal(image.Config.ExposedPorts, null);
+            assert.equal(image.Config.Volumes, null);
+          }
+
+          const pathEnvironment = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+          verifyImage(
+            process.argv[2],
+            ["/opt/weather/bin/weather-api"],
+            [pathEnvironment, "NODE_ENV=production"],
+          );
+          verifyImage(
+            process.argv[3],
+            ["/opt/weather/bin/weather-web"],
+            [
+              pathEnvironment,
+              "NODE_ENV=production",
+              "WEATHER_SITE_CONFIG_PATH=/opt/weather/edge-config/ballydidean.json",
+              `WEATHER_WEB_REVISION=${process.env.GITHUB_SHA}`,
+            ],
+          );
+          NODE
+          server_container=$(docker create weather-native-server:check)
+          web_container=$(docker create weather-native-web:check)
+          docker cp "${server_container}:/opt/weather/." "${server_root}/"
+          docker cp "${web_container}:/opt/weather/." "${web_root}/"
+          node deploy/scripts/build-native-runtime-image-material.mjs \
+            "${GITHUB_SHA}" "${GITHUB_WORKSPACE}" "${material_root}" \
+            > "${inspection_root}/expected.json"
+          node deploy/scripts/rust-runtime-image-material.mjs --inspect \
+            "${inspection_root}/expected.json" "${server_root}" "${web_root}" \
+            > "${inspection_root}/inspection.json"
+          node --input-type=module - "${inspection_root}/inspection.json" <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+
+          const inspection = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          assert.equal(inspection.artifactClass, "offline-extracted-image-material-inspection");
+          assert.deepEqual(inspection.platform, { architecture: "arm64", os: "linux" });
+          assert.equal(inspection.images.length, 2);
+          assert.equal(inspection.images[0].name, "server");
+          assert.equal(inspection.images[1].name, "web");
+          assert.equal(inspection.inspection.extractedFileBytes, true);
+          assert.equal(inspection.inspection.provesElfArchitecture, true);
+          NODE
 
   native-android:
     name: Native Android
@@ -243,6 +683,7 @@ jobs:
       - change-selection
       - quality-gates
       - native-android
+      - native-rust-arm64
     runs-on: ubuntu-latest
     steps:
       - name: Check out exact workflow commit
@@ -259,5 +700,7 @@ jobs:
           CI_CHANGE_SELECTION_RESULT: ${{ needs.change-selection.result }}
           CI_NATIVE_ANDROID: ${{ needs.change-selection.outputs.native_android }}
           CI_NATIVE_ANDROID_RESULT: ${{ needs.native-android.result }}
+          CI_NATIVE_RUST_ARM64: ${{ needs.change-selection.outputs.native_rust_arm64 }}
+          CI_NATIVE_RUST_ARM64_RESULT: ${{ needs.native-rust-arm64.result }}
           CI_QUALITY_GATES_RESULT: ${{ needs.quality-gates.result }}
         run: node scripts/ci-changes.mjs

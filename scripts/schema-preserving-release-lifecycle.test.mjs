@@ -91,6 +91,7 @@ const guards = String.raw`
 log=$2
 root=$3
 die() { printf 'die:%s\n' "$*" >>"$log"; exit 70; }
+dashboard_override_present() { return 1; }
 forbidden() { printf 'FORBIDDEN:%s\n' "\${FUNCNAME[1]}" >>"$log"; exit 91; }
 backup_release_database() { forbidden; }
 create_database_fixture_clone() { forbidden; }
@@ -108,6 +109,9 @@ sp_field() {
     serverImageId) printf 'sha256:%064d\n' 2 ;;
     webImageId) printf 'sha256:%064d\n' 3 ;;
     targetCommit) printf '%040d\n' 4 ;;
+    contractVersion)
+      # minimal legacy publication fixtures intentionally stub the pure validation boundary
+      if [[ "$1" == */publication.json ]]; then printf 'weather-schema-preserving-publication/v2\n'; else command node "$sp_module" field "$1" "$2"; fi ;;
     *) command node "$sp_module" field "$1" "$2" ;;
   esac
 }
@@ -127,7 +131,7 @@ node() {
 }
 env_value() {
   case "$2" in
-    WEATHER_RELEASE) basename "$1" .env ;;
+    WEATHER_RELEASE) if [[ "$1" == */environment.env ]]; then basename "$(dirname "$1")"; else basename "$1" .env; fi ;;
     POSTGRES_IMAGE) printf 'postgres-image\n' ;;
     CLOUDFLARED_IMAGE) printf 'cloudflare-image\n' ;;
     WEATHER_DATABASE_NAME) printf 'weather\n' ;;
@@ -225,10 +229,12 @@ scenario=$4; program=$5
 docker() {
   printf 'docker:%s\n' "$*" >>"$log"
   [[ "$scenario" != missing ]] || return 1
+  # the predecessor image has no runtime-generation label
+  if [[ "$*" == *org.weather.runtime.generation* ]]; then return 0; fi
   [[ "$scenario" != wrong-arch ]] && printf 'linux/arm64\n' || printf 'linux/amd64\n'
 }
 compose() { printf 'compose:%s\n' "$*" >>"$log"; cat >"$program"; }
-sp_readiness /fixture.env
+sp_readiness /2026.11.03-3.env
 `}`;
     try {
       const result = runBash(context, body, [log, context.root, scenario, program]);
@@ -255,7 +261,7 @@ sp_readiness /fixture.env
 async function transactionFiles(context) {
   const directory = join(context.spRoot, "2026.11.04-1");
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await writeFile(join(directory, "stage.json"), '{"sourceRelease":"2026.11.03-3"}\n', { mode: 0o600 });
+  await writeFile(join(directory, "stage.json"), `${JSON.stringify(stageReceipt())}\n`, { mode: 0o600 });
   await writeFile(join(directory, "protected.json"), "protected\n", { mode: 0o600 });
   await writeFile(join(context.releases, "2026.11.03-3.env"), "source\n", { mode: 0o600 });
   await writeFile(join(context.releases, "2026.11.04-1.env"), "target\n", { mode: 0o600 });
@@ -683,7 +689,7 @@ sp_source() { release_env 2026.11.03-3; }
 sp_start_infrastructure() { printf 'retained-start:%s\n' "$1" >>"$log"; }
 sp_database() { printf 'database-readonly\n' >>"$log"; }
 sp_health() { printf 'app-health\n' >>"$log"; }
-docker() { printf 'docker:%s\n' "$*" >>"$log"; printf 'true|healthy\n'; }
+docker() { printf 'docker:%s\n' "$*" >>"$log"; if [[ "$*" != *org.weather.runtime.generation* ]]; then printf 'true|healthy\n'; fi; }
 compose() { printf 'compose:%s\n' "$*" >>"$log"; [[ "$1" != ps ]] || printf 'container\n'; }
 sp_system_recover
 `}`;
@@ -694,6 +700,55 @@ sp_system_recover
     assert.match(output, /retained-start:.*2026\.11\.03-3\.env[\s\S]*database-readonly[\s\S]*compose:up -d --no-deps --no-build --pull never --wait api worker[\s\S]*compose:up -d --no-deps --no-build --pull never --wait web/u);
     assert.doesNotMatch(output, /compose:up .*postgres|compose:up .*cloudflared/u);
     assert.doesNotMatch(output, /FORBIDDEN:|volume|clone|migrat/u);
+  } finally {
+    await rm(context.root, { force: true, recursive: true });
+  }
+});
+
+// recover the committed native core before delegating only its dashboard web image
+test("system recovery retains the native dashboard web override", async () => {
+  const context = await fixture();
+  const log = join(context.root, "dashboard-recover.log");
+  await mkdir(context.spRoot, { mode: 0o700 });
+  const environment = join(context.releases, "2026.11.04-3.env");
+  await writeFile(environment, "source\n", { mode: 0o600 });
+  await symlink(environment, join(context.state, "active.env"));
+  // replace only the fixed remote gateway executable with the fixture's recorded owner
+  const source = (await readFile(context.operator, "utf8")).replace(
+    "/usr/local/sbin/weather-remote-ops --dashboard-recover-native-unlocked",
+    "dashboard_recovery_fixture --dashboard-recover-native-unlocked",
+  );
+  await writeFile(context.operator, source, { mode: 0o755 });
+  const body = `${guards}\n${String.raw`
+release_transaction_lock_fd=42
+dashboard_override_present() { return 0; }
+sp_environment() { release_env "$1"; }
+read_release_state() { [[ "$1" == *schema-release ]] && printf '2026.11.03-3\n' || printf '2026.11.04-3\n'; }
+sp_source() { release_env 2026.11.04-3; }
+sp_runtime_generation() { printf 'rust-v1\n'; }
+sp_start_infrastructure() { printf 'retained-start:%s\n' "$1" >>"$log"; }
+sp_database() { printf 'database-readonly\n' >>"$log"; }
+sp_compose() { printf 'native-compose:%s\n' "$*" >>"$log"; }
+sp_health_services() { printf 'core-health:%s\n' "$*" >>"$log"; }
+sp_switch() { forbidden; }
+sp_native_family_boot_recovery() { forbidden; }
+dashboard_recovery_fixture() { printf 'dashboard-recover:%s:%s\n' "$WEATHER_RELEASE_LOCK_FD" "$1" >>"$log"; }
+docker() { printf 'true|healthy\n'; }
+compose() { [[ "$1" == ps ]] && printf 'container\n'; }
+sp_system_recover
+`}`;
+  try {
+    const result = runBash(context, body, [log, context.root]);
+    assert.equal(result.status, 0, result.stderr);
+    const output = await transcript(log);
+    assert.match(output, /retained-start:.*2026\.11\.04-3\.env[\s\S]*database-readonly[\s\S]*native-compose:.*up -d --no-deps --no-build --pull never --wait api worker[\s\S]*core-health:.*api worker[\s\S]*dashboard-recover:42:--dashboard-recover-native-unlocked/u);
+    assert.doesNotMatch(output, /native-compose:.*\bweb\b|FORBIDDEN:/u);
+    // block conflicting core and dashboard journals before starting anything
+    await writeFile(join(context.spRoot, "journal.json"), "{}\n", { mode: 0o600 });
+    await writeFile(log, "");
+    const conflict = runBash(context, body, [log, context.root]);
+    assert.notEqual(conflict.status, 0);
+    assert.match(await transcript(log), /^die:dashboard recovery requires the committed native core\n$/u);
   } finally {
     await rm(context.root, { force: true, recursive: true });
   }
@@ -755,6 +810,188 @@ after=$(declare -f verify_forecast_product_read_index)
     const output = await transcript(log);
     assert.match(output, /7e48acb14710a625cdcbb796bf1bf49ab4e00bf1aeb9bb763ac86410e08663e0/u);
     assert.doesNotMatch(output, /e637542cb2e742fe8f22f60313a11f00adbc1d140a811ee718524849fcece12a/u);
+  } finally {
+    await rm(context.root, { force: true, recursive: true });
+  }
+});
+
+// exercise the actual generation-aware composition using retained stage material
+test("mixed generations select their own executable and health commands", async () => {
+  const context = await fixture();
+  const log = join(context.root, "mixed-generation.log");
+  const directory = await transactionFiles(context);
+  const hash = "0".repeat(63) + "1";
+  const server = `ghcr.io/anstosa/weather-server@sha256:${"a".repeat(64)}`;
+  const web = `ghcr.io/anstosa/weather-web@sha256:${"b".repeat(64)}`;
+  const serverId = `sha256:${"c".repeat(64)}`;
+  const webId = `sha256:${"d".repeat(64)}`;
+  const target = "2026.11.04-1";
+  await writeFile(join(directory, "publication.json"), "{}\n", { mode: 0o600 });
+  await writeFile(join(directory, "runtime-generation.json"), JSON.stringify({
+    contractVersion: "weather-runtime-generation/v1",
+    generation: "rust-v1",
+    materialManifestSha256: "e".repeat(64),
+    publicationSha256: hash,
+    release: target,
+    serverImage: server,
+    serverImageId: serverId,
+    webImage: web,
+    webImageId: webId,
+  }), { mode: 0o600 });
+  await writeFile(join(directory, "stage.json"), JSON.stringify(stageReceipt({
+    contractVersion: "weather-schema-preserving-stage/v2",
+    publicationSha256: hash,
+    runtimeMetadataSha256: hash,
+  })), { mode: 0o600 });
+  const body = `${guards}\n${String.raw`
+fixture_server=$4; fixture_web=$5; fixture_server_id=$6; fixture_web_id=$7
+env_value() {
+  case "$2" in
+    WEATHER_RELEASE) basename "$1" .env ;;
+    WEATHER_SERVER_IMAGE) printf '%s\n' "$fixture_server" ;;
+    WEATHER_WEB_IMAGE) printf '%s\n' "$fixture_web" ;;
+  esac
+}
+docker() {
+  # model the actual image coordinates and record the rendered native override
+  if [[ "$1 $2" == 'image inspect' ]]; then
+    if [[ "$3 $4" == *org.weather.runtime.generation* ]]; then printf '%s\n' "$generation_marker"; return; fi
+    if [[ "$5" == "$fixture_server" ]]; then printf '%s\n' "$fixture_server_id"; else printf '%s\n' "$fixture_web_id"; fi
+    return
+  fi
+  printf 'docker:%s\n' "$*" >>"$log"
+  cat "$9" >>"$log"
+}
+generation_marker=''
+sp_compose "$(release_env 2026.11.03-3)" config --quiet
+generation_marker=rust-v1
+sp_runtime_stage_metadata "$sp_root/2026.11.04-1/stage.json"
+sp_compose "$(release_env 2026.11.04-1)" config --quiet
+`}`;
+  try {
+    const result = runBash(context, body, [log, context.root, server, web, serverId, webId]);
+    assert.equal(result.status, 0, result.stderr);
+    const output = await transcript(log);
+    assert.match(output, /compose:config --quiet[\s\S]*docker:compose --project-name weather/u);
+    assert.match(output, /"command":\["\/opt\/weather\/bin\/weather-api"\]/u);
+    assert.match(output, /"command":\["\/opt\/weather\/bin\/weather-web"\]/u);
+    assert.match(output, /"test":\["CMD","\/opt\/weather\/bin\/weather-web-health","web"\]/u);
+  } finally {
+    await rm(context.root, { force: true, recursive: true });
+  }
+});
+
+// prove a native publication cannot reach image pulling before completed bootstrap recovery
+test("native stage waits for the retained predecessor recovery proof", async () => {
+  const context = await fixture();
+  const log = join(context.root, "native-stage.log");
+  const publication = join(context.root, "publication.json");
+  await writeFile(publication, JSON.stringify({
+    contractVersion: "weather-schema-preserving-publication/v3",
+    transitionSha256: "a".repeat(64),
+    sourceRelease: "2026.11.03-3",
+  }), { mode: 0o600 });
+  const body = `${guards}\n${String.raw`
+sp_bundle="$root/$(printf '%064d' 1)"
+sp_source() { release_env 2026.11.03-3; }
+sp_health() { printf 'health\n' >>"$log"; }
+sp_database() { printf 'database\n' >>"$log"; }
+sp_installation_receipt() { printf '%s/installation.json\n' "$root"; }
+sp_field() {
+  case "$2" in
+    operatorSha256|validatorSha256) printf '%064d\n' 1 ;;
+    *) command node "$sp_module" field "$1" "$2" ;;
+  esac
+}
+sp_stage 2026.11.04-1 "$4" "$(sp_sha "$4")"
+`}`;
+  try {
+    const result = runBash(context, body, [log, context.root, publication]);
+    assert.notEqual(result.status, 0);
+    const output = await transcript(log);
+    assert.match(output, /native-bootstrap-a{64}\/proof\.json/u);
+    assert.doesNotMatch(output, /mkdir:|docker:pull|snapshot:|compose:|FORBIDDEN:/u);
+  } finally {
+    await rm(context.root, { force: true, recursive: true });
+  }
+});
+
+// retain exact publication/image coordinates when staging native runtime metadata
+test("native stage writes create-once runtime generation metadata", async () => {
+  const context = await fixture();
+  const directory = join(context.spRoot, "2026.11.04-1");
+  const publication = join(directory, "publication.json");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const fields = {
+    targetRelease: "2026.11.04-1",
+    materialManifestSha256: "e".repeat(64),
+    serverImage: `ghcr.io/anstosa/weather-server@sha256:${"a".repeat(64)}`,
+    serverImageId: `sha256:${"b".repeat(64)}`,
+    webImage: `ghcr.io/anstosa/weather-web@sha256:${"c".repeat(64)}`,
+    webImageId: `sha256:${"d".repeat(64)}`,
+  };
+  const bytes = JSON.stringify(fields);
+  await writeFile(publication, bytes, { mode: 0o600 });
+  try {
+    const result = runBash(context, 'sp_native_runtime_metadata "$2" "$3"', [publication, directory]);
+    assert.equal(result.status, 0, result.stderr);
+    const metadataPath = join(directory, "runtime-generation.json");
+    const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+    assert.deepEqual(metadata, {
+      contractVersion: "weather-runtime-generation/v1",
+      generation: "rust-v1",
+      materialManifestSha256: fields.materialManifestSha256,
+      publicationSha256: createHash("sha256").update(bytes).digest("hex"),
+      release: fields.targetRelease,
+      serverImage: fields.serverImage,
+      serverImageId: fields.serverImageId,
+      webImage: fields.webImage,
+      webImageId: fields.webImageId,
+    });
+    const repeated = runBash(context, 'sp_native_runtime_metadata "$2" "$3"', [publication, directory]);
+    assert.notEqual(repeated.status, 0);
+    assert.deepEqual(JSON.parse(await readFile(metadataPath, "utf8")), metadata);
+  } finally {
+    await rm(context.root, { force: true, recursive: true });
+  }
+});
+
+// exercise paired preparation and its measured capacity-before-stage ordering
+test("native family stages measure the complete pair before either stage", async () => {
+  const context = await fixture();
+  const log = join(context.root, "family-pair.log");
+  await mkdir(context.spRoot, { mode: 0o700 });
+  const target = join(context.root, "target.json");
+  const compensation = join(context.root, "compensation.json");
+  const action = "a".repeat(64);
+  const document = {
+    contractVersion: "weather-schema-preserving-family-publication/v1",
+    sourceRelease: "2026.11.03-3",
+    sourceCommit: "b".repeat(40),
+    sourcePublicationSha256: "c".repeat(64),
+    family: "rain",
+    familyActionSha256: action,
+    serverImage: "fixture-server",
+    webImage: "fixture-web",
+  };
+  await writeFile(target, JSON.stringify({ ...document, targetRelease: "2026.11.04-1", pairedRelease: "2026.11.04-2", familyRole: "target" }) + "\n", { mode: 0o600 });
+  await writeFile(compensation, JSON.stringify({ ...document, targetRelease: "2026.11.04-2", pairedRelease: "2026.11.04-1", familyRole: "compensation" }) + "\n", { mode: 0o600 });
+  const body = `${guards}\n${String.raw`
+target=$4; compensation=$5
+sp_source() { release_env 2026.11.03-3; }
+sp_native_family_stage_admission() { printf 'admission:%s\n' "$1" >>"$log"; }
+sp_field() { command node "$sp_module" field "$1" "$2"; }
+ensure_adjustment_family_private_state_root() { mkdir -p -m 700 "$1"; }
+sp_native_family_measure_capacity() { printf 'capacity-pair:%s\n' "$*" >>"$log"; printf '{"state":"capacity_ready"}\n'; }
+sp_stage() { printf 'stage:%s:%s\n' "$1" "$4" >>"$log"; }
+sp_native_family_pair() { printf 'paired:%s:%s\n' "$1" "$2" >>"$log"; }
+sp_stage_family_pair "$target" "$(sp_sha "$target")" "$compensation" "$(sp_sha "$compensation")"
+`}`;
+  try {
+    const result = runBash(context, body, [log, context.root, target, compensation]);
+    assert.equal(result.status, 0, result.stderr);
+    const events = await transcript(log);
+    assert.match(events, /capacity-pair:.*\nstage:2026\.11\.04-1:family-pair\nstage:2026\.11\.04-2:family-pair\npaired:2026\.11\.04-1:2026\.11\.04-2/u);
   } finally {
     await rm(context.root, { force: true, recursive: true });
   }

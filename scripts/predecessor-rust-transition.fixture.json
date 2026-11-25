@@ -1,0 +1,190 @@
+{
+  "addedFiles": [
+    {
+      "path": "config/backend-runtime-inventory.json",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    {
+      "path": "rust/Cargo.lock",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "path": "rust/Cargo.toml",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "path": "rust/rust-toolchain.toml",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "path": "scripts/check-backend-runtime-inventory.mjs",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "path": "scripts/generate-rust-contracts.mjs",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  ],
+  "changedMembers": [],
+  "contractVersion": "weather-predecessor-rust-transition/v1",
+  "predecessor": {
+    "bundleSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "controlSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "installationReceiptSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "recoveryDropInSha256": "8888888888888888888888888888888888888888888888888888888888888888",
+    "release": "2099.01.01-1",
+    "sourceEnvironmentSha256": "9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  "predecessorMembers": [
+    {
+      "path": "Dockerfile",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "path": "deploy/scripts/common.sh",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+      "path": "packages/database/migrations/0023_forecast_product_read_index.sql",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  ],
+  "publicationLane": "predecessor-control-bootstrap",
+  "target": {
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "release": "2099.01.01-2"
+  },
+  "targetMembers": [
+    {
+      "path": "Dockerfile",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "path": "config/backend-runtime-inventory.json",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    {
+      "path": "deploy/scripts/common.sh",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+      "path": "packages/contracts/src/api.ts",
+      "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+    },
+    {
+      "path": "packages/database/migrations/0023_forecast_product_read_index.sql",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    {
+      "path": "rust/Cargo.lock",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "path": "rust/Cargo.toml",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "path": "rust/apps/weather-migrate/src/lib.rs",
+      "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    {
+      "path": "rust/crates/weather-adjustment/src/lib.rs",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "path": "rust/crates/weather-contracts/src/lib.rs",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "path": "rust/crates/weather-database/src/lib.rs",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "path": "rust/crates/weather-domain/src/lib.rs",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "path": "rust/rust-toolchain.toml",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "path": "scripts/check-backend-runtime-inventory.mjs",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "path": "scripts/generate-rust-contracts.mjs",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  ],
+  "targetOnlyRoots": [
+    {
+      "members": [
+        {
+          "path": "packages/contracts/src/api.ts",
+          "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      ],
+      "root": "packages/contracts",
+      "treeSha256": "a68ed32aff8366a649c2362fc890c5d45765396ce97dd2f380449e0122258e45"
+    },
+    {
+      "members": [
+        {
+          "path": "rust/apps/weather-migrate/src/lib.rs",
+          "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+        }
+      ],
+      "root": "rust/apps/weather-migrate",
+      "treeSha256": "52a91f17e68adf5a7aac7f6a63db8dfe684aa21aaabc72329036806a1a378a10"
+    },
+    {
+      "members": [
+        {
+          "path": "rust/crates/weather-adjustment/src/lib.rs",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "root": "rust/crates/weather-adjustment",
+      "treeSha256": "04fc288b58e2656817f1d46545eb7100a5ac3023a4f8b71e272c7dfc72516a20"
+    },
+    {
+      "members": [
+        {
+          "path": "rust/crates/weather-contracts/src/lib.rs",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "root": "rust/crates/weather-contracts",
+      "treeSha256": "b396c84b548995f8f3e808648753ff6fc4cfb9c162b9c1c02354e54d1bf3b90c"
+    },
+    {
+      "members": [
+        {
+          "path": "rust/crates/weather-database/src/lib.rs",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "root": "rust/crates/weather-database",
+      "treeSha256": "03c9ab56ef37b9b1d37139a75bf24f53230120fb8c9e6443daf7013bef55cada"
+    },
+    {
+      "members": [
+        {
+          "path": "rust/crates/weather-domain/src/lib.rs",
+          "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "root": "rust/crates/weather-domain",
+      "treeSha256": "e5d79bac8405683de164a13974ab7956dac26d13578c659f881679bb0e99148c"
+    }
+  ]
+}

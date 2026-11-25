@@ -1,0 +1,232 @@
+{
+  "actual": {
+    "server": [
+      {
+        "buildSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "path": "/opt/weather/bin/weather-api",
+        "role": "binary",
+        "runtimeSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "sourcePath": "rust/apps/weather-api",
+        "sourceSha256": "3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      {
+        "buildSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "path": "/opt/weather/bin/weather-api-health",
+        "role": "binary",
+        "runtimeSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "sourcePath": "rust/crates/weather-runtime/src/bin/weather-http-health.rs",
+        "sourceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "buildSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "path": "/opt/weather/bin/weather-migrate",
+        "role": "binary",
+        "runtimeSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "sourcePath": "rust/apps/weather-migrate",
+        "sourceSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      {
+        "buildSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "path": "/opt/weather/bin/weather-worker",
+        "role": "binary",
+        "runtimeSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "sourcePath": "rust/apps/weather-worker",
+        "sourceSha256": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      {
+        "buildSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "path": "/opt/weather/bin/weather-worker-health",
+        "role": "binary",
+        "runtimeSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sourcePath": "rust/crates/weather-runtime/src/bin/weather-worker-health.rs",
+        "sourceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      {
+        "buildSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+        "path": "/opt/weather/config/runtime-targets.json",
+        "role": "config",
+        "runtimeSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+        "sourcePath": "config/runtime-targets.json",
+        "sourceSha256": "6666666666666666666666666666666666666666666666666666666666666666"
+      },
+      {
+        "buildSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "path": "/opt/weather/migrations/0023_forecast_product_read_index.sql",
+        "role": "migration",
+        "runtimeSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "sourcePath": "packages/database/migrations/0023_forecast_product_read_index.sql",
+        "sourceSha256": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      {
+        "buildSha256": "8888888888888888888888888888888888888888888888888888888888888888",
+        "path": "/opt/weather/models/forecast-adjustments/runtime.json",
+        "role": "model",
+        "runtimeSha256": "8888888888888888888888888888888888888888888888888888888888888888",
+        "sourcePath": "config/forecast-adjustments/runtime.json",
+        "sourceSha256": "8888888888888888888888888888888888888888888888888888888888888888"
+      }
+    ],
+    "web": [
+      {
+        "buildSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+        "path": "/opt/weather/bin/weather-web",
+        "role": "binary",
+        "runtimeSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+        "sourcePath": "rust/apps/weather-web",
+        "sourceSha256": "9999999999999999999999999999999999999999999999999999999999999999"
+      },
+      {
+        "buildSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "path": "/opt/weather/bin/weather-web-health",
+        "role": "binary",
+        "runtimeSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "sourcePath": "rust/crates/weather-runtime/src/bin/weather-http-health.rs",
+        "sourceSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      {
+        "buildSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "path": "/opt/weather/edge-config/ballydidean.json",
+        "role": "config",
+        "runtimeSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "sourcePath": "config/sites/ballydidean.json",
+        "sourceSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      {
+        "buildSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "/opt/weather/static/assets/widget.js",
+        "role": "static",
+        "runtimeSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sourcePath": "apps/web/dist/assets/widget.js",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "buildSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "path": "/opt/weather/static/index.html",
+        "role": "static",
+        "runtimeSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sourcePath": "apps/web/dist/index.html",
+        "sourceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "build": {
+    "identitySha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "profile": "release",
+    "target": "aarch64-unknown-linux-gnu"
+  },
+  "expected": {
+    "server": [
+      {
+        "buildSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "path": "/opt/weather/bin/weather-api",
+        "role": "binary",
+        "runtimeSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "sourcePath": "rust/apps/weather-api",
+        "sourceSha256": "3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      {
+        "buildSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "path": "/opt/weather/bin/weather-api-health",
+        "role": "binary",
+        "runtimeSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "sourcePath": "rust/crates/weather-runtime/src/bin/weather-http-health.rs",
+        "sourceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "buildSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "path": "/opt/weather/bin/weather-migrate",
+        "role": "binary",
+        "runtimeSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "sourcePath": "rust/apps/weather-migrate",
+        "sourceSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      {
+        "buildSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "path": "/opt/weather/bin/weather-worker",
+        "role": "binary",
+        "runtimeSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "sourcePath": "rust/apps/weather-worker",
+        "sourceSha256": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      {
+        "buildSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "path": "/opt/weather/bin/weather-worker-health",
+        "role": "binary",
+        "runtimeSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sourcePath": "rust/crates/weather-runtime/src/bin/weather-worker-health.rs",
+        "sourceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      {
+        "buildSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+        "path": "/opt/weather/config/runtime-targets.json",
+        "role": "config",
+        "runtimeSha256": "6666666666666666666666666666666666666666666666666666666666666666",
+        "sourcePath": "config/runtime-targets.json",
+        "sourceSha256": "6666666666666666666666666666666666666666666666666666666666666666"
+      },
+      {
+        "buildSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "path": "/opt/weather/migrations/0023_forecast_product_read_index.sql",
+        "role": "migration",
+        "runtimeSha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "sourcePath": "packages/database/migrations/0023_forecast_product_read_index.sql",
+        "sourceSha256": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      {
+        "buildSha256": "8888888888888888888888888888888888888888888888888888888888888888",
+        "path": "/opt/weather/models/forecast-adjustments/runtime.json",
+        "role": "model",
+        "runtimeSha256": "8888888888888888888888888888888888888888888888888888888888888888",
+        "sourcePath": "config/forecast-adjustments/runtime.json",
+        "sourceSha256": "8888888888888888888888888888888888888888888888888888888888888888"
+      }
+    ],
+    "web": [
+      {
+        "buildSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+        "path": "/opt/weather/bin/weather-web",
+        "role": "binary",
+        "runtimeSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+        "sourcePath": "rust/apps/weather-web",
+        "sourceSha256": "9999999999999999999999999999999999999999999999999999999999999999"
+      },
+      {
+        "buildSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "path": "/opt/weather/bin/weather-web-health",
+        "role": "binary",
+        "runtimeSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "sourcePath": "rust/crates/weather-runtime/src/bin/weather-http-health.rs",
+        "sourceSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      {
+        "buildSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "path": "/opt/weather/edge-config/ballydidean.json",
+        "role": "config",
+        "runtimeSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "sourcePath": "config/sites/ballydidean.json",
+        "sourceSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      {
+        "buildSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "/opt/weather/static/assets/widget.js",
+        "role": "static",
+        "runtimeSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sourcePath": "apps/web/dist/assets/widget.js",
+        "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "buildSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "path": "/opt/weather/static/index.html",
+        "role": "static",
+        "runtimeSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sourcePath": "apps/web/dist/index.html",
+        "sourceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "inputVersion": "weather-rust-runtime-image-material-input/v1",
+  "source": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "treeSha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  }
+}

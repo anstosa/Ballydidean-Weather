@@ -1,0 +1,140 @@
+{
+  "contractVersion": "weather-backend-performance-amended-disposition/v1",
+  "amendedDefinition": {
+    "contractVersion": "weather-backend-performance-amended-schedule-definition/v1",
+    "scheduleContractVersion": "weather-backend-performance-planned-schedule/v3",
+    "dispositionContractVersion": "weather-backend-performance-amended-disposition/v1",
+    "canonicalization": {
+      "algorithm": "recursive-json-v1",
+      "input": "the amendedDefinition JSON value only",
+      "objectKeys": "ascending ECMAScript UTF-16 code-unit order",
+      "arrays": "preserve declared order",
+      "primitives": "JSON.stringify representation",
+      "whitespace": "none",
+      "digest": "SHA-256 over UTF-8 canonical JSON bytes"
+    },
+    "sourceOrigin": "fixed repository-relative checked files; no runtime origin override",
+    "parent": {
+      "builder": {
+        "path": "scripts/backend-performance-workload.mjs",
+        "bytes": 35655,
+        "rawSha256": "17ab59f7a64a1c3c261e1a510a131d44db1962f002f260efee0e36411f0b7cc4"
+      },
+      "workload": {
+        "path": "config/backend-performance-workload-v2.json",
+        "bytes": 268871,
+        "rawSha256": "b44eb296f1145a55202e941e24e750c0b0d5a4c37075c6f8e9ca346470bca53f",
+        "contractVersion": "weather-backend-performance-workload/v2"
+      },
+      "schedule": {
+        "contractVersion": "weather-backend-performance-planned-schedule/v2",
+        "definitionSha256": "5722eeecd2734a1cfe4e7887cfc887dc6ac052cb397e08f8389fd6b284c5c364"
+      }
+    },
+    "policyProvenance": {
+      "acceptedOperatorPolicy": "omit dedicated security-test operations while preserving protections and ordinary functional controls",
+      "operatorPolicySha256": "c8a0c6e6f9b74ecb3479da7b6cec3966432ae56525a2962601604ece11e1a8df",
+      "reviewedClassificationSha256": "3414ac2336896b312db6508a44f8fe8e039f21584f222cbe74bccd6d93057186",
+      "disposition": "fixed reviewed projection; intentionally omitted rows are never passing rows"
+    },
+    "omittedOperationIds": [
+      "admin.live.reject-foreign-origin",
+      "admin.live.reject-unauthenticated",
+      "admin.live.revoked-session"
+    ],
+    "omittedOperationSourceOrder": [
+      "admin.live.reject-unauthenticated",
+      "admin.live.reject-foreign-origin",
+      "admin.live.revoked-session"
+    ],
+    "removedMeasuredTransitions": [
+      {
+        "bindingSlot": "transition.admin.liveSessionRevoked",
+        "producerOperationId": "admin.live.logout",
+        "reason": "no retained measured consumer; logout behavior remains retained",
+        "scope": "measured schedule topology only"
+      }
+    ],
+    "ordering": {
+      "runSlotIds": [
+        "run-slot-01",
+        "run-slot-02",
+        "run-slot-03",
+        "run-slot-04",
+        "run-slot-05"
+      ],
+      "groupPolicy": "retain all parent groups in unchanged global order and dependency chain",
+      "operationPolicy": "retain the source-ordered subsequence and assign contiguous one-based projected group order",
+      "attemptOrdinalPolicy": "assign contiguous one-based projected ordinals independently in each run slot",
+      "attemptIdNamespace": "planned-v3:",
+      "provenancePolicy": "retain original attempt id ordinal and group order for every retained row",
+      "adminLiveOriginalRetainedOrders": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        10
+      ],
+      "adminLiveProjectedOrders": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    "totals": {
+      "operations": 104,
+      "groups": 59,
+      "usedTypedSlots": 155,
+      "measuredTransitions": 9,
+      "runSlots": 5,
+      "groupInstances": 295,
+      "warmAttempts": 5600,
+      "applicationCacheColdAttempts": 15,
+      "processPoolColdAttempts": 140,
+      "dbOsColdAttempts": 140,
+      "oncePerRunAttempts": 380,
+      "plannedAttempts": 6275,
+      "preStateReceipts": 295,
+      "restoreReceipts": 295,
+      "publicGetAttempts": 5895
+    },
+    "retainedContracts": {
+      "baselineAndCandidateSamePlan": true,
+      "canonicalEligible": false,
+      "publicGetOperationCount": 28,
+      "publicGetRequiredTerminalOracle": "security headers match source contract",
+      "adminLogout": {
+        "operationId": "admin.live.logout",
+        "originalOrderWithinGroup": 10,
+        "projectedOrderWithinGroup": 8,
+        "terminalOracle": [
+          "status=303",
+          "location=/admin",
+          "clear-cookie attributes valid",
+          "cookie value redacted and not hashed"
+        ]
+      },
+      "requiredAdminOperationIds": [
+        "admin.live.login",
+        "admin.live.read-page",
+        "admin.live.read-current",
+        "admin.live.read-layout",
+        "admin.live.read-settings",
+        "admin.live.read-scorecard",
+        "admin.live.reject-invalid",
+        "admin.live.logout"
+      ],
+      "groupProtection": "all 59 group identities dependencies pre-state gates and final restore gates unchanged",
+      "sourceRows": "retained operation payload deadline timeout and ordinary terminal-oracle contracts unchanged"
+    }
+  },
+  "amendedDefinitionSha256": "73883cdde0ec1ddfe7f4cc624e82c652f7f56727744b2e654833fd3b996f98ce"
+}

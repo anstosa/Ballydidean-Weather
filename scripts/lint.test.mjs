@@ -38,3 +38,55 @@ test("lint scans authored native text without walking build artifacts", async ()
     await rm(root, { force: true, recursive: true });
   }
 });
+
+// keep the canonical contract package out of runtime module graphs
+test("lint requires type-only syntax at canonical contract package boundaries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "weather-contract-lint-"));
+
+  try {
+    // exercise both the API consumer and the canonical forecast type source
+    for (const [directory, dependency, type] of [
+      ["apps/api/src", "@weather/contracts", "ApiSite"],
+      ["packages/contracts/src", "@weather/forecast-adjustment", "ForecastTemperatureCanaryDecisionV1"],
+    ]) {
+      const sourceDirectory = join(root, directory);
+      const source = join(sourceDirectory, "index.ts");
+      await mkdir(sourceDirectory, { recursive: true });
+      await writeFile(
+        source,
+        `import type { ${type} } from "${dependency}";\nexport type { ${type} } from "${dependency}";\n`,
+      );
+      const accepted = await executeFile(process.execPath, [lintScript, directory], {
+        cwd: root,
+      });
+      assert.match(accepted.stdout, /Linted 1 files\./u);
+
+      const rejectedSources = [
+        {
+          diagnostic: `project import ${dependency} must use import type`,
+          source: `import { ${type} } from "${dependency}";\n`,
+        },
+        {
+          diagnostic: `project export ${dependency} must use export type`,
+          source: `export { ${type} } from "${dependency}";\n`,
+        },
+        {
+          diagnostic: `project import ${dependency} must be static and type-only`,
+          source: `const contracts = import("${dependency}");\n`,
+        },
+      ];
+
+      // keep every value-bearing form out of the emitted module graph
+      for (const rejected of rejectedSources) {
+        await writeFile(source, rejected.source);
+        await assert.rejects(
+          executeFile(process.execPath, [lintScript, directory], { cwd: root }),
+          // require the boundary-specific diagnostic
+          (error) => `${error.stdout}${error.stderr}`.includes(rejected.diagnostic),
+        );
+      }
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});

@@ -10,6 +10,7 @@ const full = Object.freeze({
   deployIntegration: true,
   fullBrowser: true,
   nativeAndroid: true,
+  nativeRustArm64: true,
 });
 
 // retain both paths for copies and renames, including deleted sources
@@ -65,6 +66,7 @@ export function classifyPaths(paths) {
     deployIntegration: false,
     fullBrowser: false,
     nativeAndroid: false,
+    nativeRustArm64: false,
   };
 
   // apply the broadest matching dependency boundary
@@ -103,9 +105,16 @@ export function classifyPaths(paths) {
       continue;
     }
 
-    // absent platform paths cannot narrow validation
+    // absent platform paths retain every existing gate without selecting unrelated Rust work
     if (path.startsWith("mobile/ios/")) {
-      return { ...full };
+      Object.assign(result, {
+        fullTests: true,
+        integration: true,
+        deployIntegration: true,
+        fullBrowser: true,
+        nativeAndroid: true,
+      });
+      continue;
     }
 
     // unknown shared mobile paths require the native lane
@@ -118,6 +127,7 @@ export function classifyPaths(paths) {
     if (path.startsWith("packages/forecast-adjustment/")) {
       result.fullTests = true;
       result.integration = true;
+      result.nativeRustArm64 = true;
       continue;
     }
 
@@ -131,6 +141,7 @@ export function classifyPaths(paths) {
     if (path.startsWith("apps/web/")) {
       result.fullBrowser = true;
       result.nativeAndroid = true;
+      result.nativeRustArm64 = true;
       continue;
     }
 
@@ -138,12 +149,14 @@ export function classifyPaths(paths) {
     if (path.startsWith("apps/worker/")) {
       result.fullTests = true;
       result.integration = true;
+      result.nativeRustArm64 = true;
       continue;
     }
 
     // API changes retain real database coverage
     if (path.startsWith("apps/api/")) {
       result.integration = true;
+      result.nativeRustArm64 = true;
       continue;
     }
 
@@ -195,6 +208,7 @@ export function verifyRequiredJobs(selection, results) {
   }
 
   requireSelectedResult("native Android", selection.nativeAndroid, results.nativeAndroid);
+  requireSelectedResult("native Rust ARM64", selection.nativeRustArm64, results.nativeRustArm64);
   return true;
 }
 
@@ -254,6 +268,7 @@ function classifyMain() {
     `deploy_integration=${result.deployIntegration}`,
     `full_browser=${result.fullBrowser}`,
     `native_android=${result.nativeAndroid}`,
+    `native_rust_arm64=${result.nativeRustArm64}`,
   ];
   process.stdout.write(`${lines.join("\n")}\n`);
 
@@ -268,10 +283,12 @@ function aggregateMain() {
   verifyRequiredJobs(
     {
       nativeAndroid: process.env.CI_NATIVE_ANDROID,
+      nativeRustArm64: process.env.CI_NATIVE_RUST_ARM64,
     },
     {
       changeSelection: process.env.CI_CHANGE_SELECTION_RESULT,
       nativeAndroid: process.env.CI_NATIVE_ANDROID_RESULT,
+      nativeRustArm64: process.env.CI_NATIVE_RUST_ARM64_RESULT,
       qualityGates: process.env.CI_QUALITY_GATES_RESULT,
     },
   );

@@ -17,6 +17,39 @@ readonly -a ADJUSTMENT_RUNNER_UNIT_FILES=(
   "scripts/systemd/system/weather-adjustment-monthly.service"
   "scripts/systemd/system/weather-adjustment-monthly.timer"
 )
+readonly -a ADJUSTMENT_RUNNER_NATIVE_UNIT_FILES=(
+  "scripts/systemd/native/weather-adjustment-archive.service"
+  "scripts/systemd/native/weather-adjustment-daily.service"
+  "scripts/systemd/native/weather-adjustment-daily.timer"
+  "scripts/systemd/native/weather-adjustment-monthly.service"
+  "scripts/systemd/native/weather-adjustment-monthly.timer"
+)
+readonly -a ADJUSTMENT_RUNNER_NATIVE_SOURCE_FILES=(
+  "deploy/config/ssh_config.example"
+  "rust/Cargo.lock"
+  "rust/Cargo.toml"
+  "rust/crates/weather-runtime/Cargo.toml"
+  "rust/crates/weather-runtime/src/bin/weather-maintenance-capture.rs"
+  "rust/crates/weather-runtime/src/bin/weather-maintenance-fit.rs"
+  "rust/crates/weather-runtime/src/bin/weather-maintenance-wind-fit.rs"
+  "rust/rust-toolchain.toml"
+  "rust/crates/weather-runtime/src/lib.rs"
+  "rust/crates/weather-runtime/src/native_maintenance_candidate_owner.rs"
+  "rust/crates/weather-runtime/src/native_maintenance_capture_host_readiness.rs"
+  "rust/crates/weather-runtime/src/native_maintenance_capture_native_installation.rs"
+  "rust/crates/weather-runtime/src/native_maintenance_fit_candidate.rs"
+  "rust/crates/weather-runtime/src/native_maintenance_fit_runtime_readiness.rs"
+  "rust/crates/weather-runtime/src/native_maintenance_fit_sandbox.rs"
+  "rust/crates/weather-runtime/src/native_maintenance_fit_snapshot.rs"
+  "rust/crates/weather-runtime/src/native_maintenance_rain_fit.rs"
+  "rust/crates/weather-runtime/src/native_maintenance_temperature_fit.rs"
+  "${ADJUSTMENT_RUNNER_NATIVE_UNIT_FILES[@]}"
+)
+readonly -a ADJUSTMENT_RUNNER_NATIVE_EXECUTABLES=(
+  "weather-maintenance-capture"
+  "weather-maintenance-fit"
+  "weather-maintenance-wind-fit"
+)
 readonly -a ADJUSTMENT_RUNNER_FILES=(
   "deploy/config/ssh_config.example"
   "deploy/scripts/adjustment-evaluation-package.mjs"
@@ -130,8 +163,18 @@ readonly -a ADJUSTMENT_RUNNER_FILES=(
 # print one reviewed source manifest
 adjustment_runner_manifest_lines() {
   local source_root="$1"
+  local generation="${2:-node}"
   local source_real
+  local -a reviewed_files=("${ADJUSTMENT_RUNNER_FILES[@]}")
   source_real="$(readlink -f -- "${source_root}")"
+
+  # extend only the explicit native candidate with checked-in build provenance and unit templates
+  if [[ "${generation}" == "native" ]]; then
+    reviewed_files=("${ADJUSTMENT_RUNNER_NATIVE_SOURCE_FILES[@]}")
+  elif [[ "${generation}" != "node" ]]; then
+    printf '%s\n' "runner generation is invalid" >&2
+    return 1
+  fi
 
   # require a literal owner-controlled checkout root
   if [[ ! -d "${source_root}" || -L "${source_root}" || "${source_real}" != "${source_root}" ||
@@ -142,7 +185,7 @@ adjustment_runner_manifest_lines() {
 
   local relative
   # hash only the closed public-code allowlist
-  for relative in "${ADJUSTMENT_RUNNER_FILES[@]}"; do
+  for relative in "${reviewed_files[@]}"; do
     local path="${source_root}/${relative}"
     local resolved
     resolved="$(readlink -f -- "${path}")"
@@ -160,13 +203,23 @@ adjustment_runner_manifest_lines() {
 # print the closed source manifest identity
 adjustment_runner_manifest_digest() {
   local source_root="$1"
-  adjustment_runner_manifest_lines "${source_root}" | sha256sum | cut -d' ' -f1
+  local generation="${2:-node}"
+  adjustment_runner_manifest_lines "${source_root}" "${generation}" | sha256sum | cut -d' ' -f1
 }
 
 # bind every reviewed member to one literal source commit
 require_source_commit() {
   local source_root="$1"
   local source_commit="$2"
+  local generation="${3:-node}"
+  local -a reviewed_files=("${ADJUSTMENT_RUNNER_FILES[@]}")
+  # add native source and unit provenance only for an explicit candidate install
+  if [[ "${generation}" == "native" ]]; then
+    reviewed_files=("${ADJUSTMENT_RUNNER_NATIVE_SOURCE_FILES[@]}")
+  elif [[ "${generation}" != "node" ]]; then
+    printf '%s\n' "runner generation is invalid" >&2
+    return 1
+  fi
   # require one full sha-1 commit matching the checkout head
   if [[ ! "${source_commit}" =~ ^[a-f0-9]{40}$ ||
     "$(/usr/bin/git -C "${source_root}" rev-parse --verify HEAD)" != "${source_commit}" ||
@@ -175,9 +228,20 @@ require_source_commit() {
     printf '%s\n' "source commit identity is invalid" >&2
     return 1
   fi
+  # require the whole tracked Rust build tree to match the committed native source
+  if [[ "${generation}" == "native" ]]; then
+    local untracked_rust
+    # refuse tracked or untracked build source drift
+    if ! /usr/bin/git -C "${source_root}" diff --quiet "${source_commit}" -- rust ||
+      ! untracked_rust="$(/usr/bin/git -C "${source_root}" ls-files --others --exclude-standard -- rust)" ||
+      [[ -n "${untracked_rust}" ]]; then
+      printf '%s\n' "native Rust build source differs from source commit" >&2
+      return 1
+    fi
+  fi
   local relative
   # compare every installed byte to the immutable commit object
-  for relative in "${ADJUSTMENT_RUNNER_FILES[@]}"; do
+  for relative in "${reviewed_files[@]}"; do
     local committed_sha256
     if ! committed_sha256="$(/usr/bin/git -C "${source_root}" show \
       "${source_commit}:${relative}" | sha256sum | cut -d' ' -f1)"; then
@@ -191,6 +255,50 @@ require_source_commit() {
       return 1
     fi
   done
+}
+
+# print the exact three-file native binary manifest from one controlled build directory
+adjustment_native_binary_manifest_lines() {
+  local binary_root="$1"
+  local binary_real
+  binary_real="$(readlink -f -- "${binary_root}")"
+  # prohibit linked, foreign or externally writable build roots
+  if [[ ! -d "${binary_root}" || -L "${binary_root}" || "${binary_real}" != "${binary_root}" ||
+    "$(stat -c '%u' -- "${binary_root}")" != "$(id -u)" ||
+    $((8#$(stat -c '%a' -- "${binary_root}") & 8#022)) -ne 0 ]]; then
+    printf '%s\n' "native binary root is invalid" >&2
+    return 1
+  fi
+  local entry_count
+  entry_count="$(find "${binary_root}" -mindepth 1 -maxdepth 1 -printf '.' | wc -c)"
+  # refuse hidden receipts, nested directories and every undeclared build artifact
+  if [[ "${entry_count}" -ne "${#ADJUSTMENT_RUNNER_NATIVE_EXECUTABLES[@]}" ]]; then
+    printf '%s\n' "native binary inventory differs" >&2
+    return 1
+  fi
+  local executable
+  # bind every executable byte to its fixed installed path
+  for executable in "${ADJUSTMENT_RUNNER_NATIVE_EXECUTABLES[@]}"; do
+    local path="${binary_root}/${executable}"
+    local resolved
+    local mode
+    resolved="$(readlink -f -- "${path}")"
+    mode="$(stat -c '%a' -- "${path}" 2>/dev/null || true)"
+    # require a literal owner executable without group or other write authority
+    if [[ ! -f "${path}" || -L "${path}" || "${resolved}" != "${path}" ||
+      "$(stat -c '%u' -- "${path}")" != "$(id -u)" ||
+      -z "${mode}" || $((8#${mode} & 8#100)) -eq 0 || $((8#${mode} & 8#022)) -ne 0 ]]; then
+      printf 'native executable is invalid: %s\n' "${executable}" >&2
+      return 1
+    fi
+    printf '%s  bin/%s\n' "$(sha256sum -- "${path}" | cut -d' ' -f1)" "${executable}"
+  done
+}
+
+# print the closed native binary manifest identity
+adjustment_native_binary_manifest_digest() {
+  local binary_root="$1"
+  adjustment_native_binary_manifest_lines "${binary_root}" | sha256sum | cut -d' ' -f1
 }
 
 # require one literal owner-controlled directory
@@ -340,9 +448,15 @@ restore_runner_unit() {
 install_runner_units() {
   local release_root="$1"
   local unit_root="$2"
+  local generation="${3:-node}"
+  local -a unit_files=("${ADJUSTMENT_RUNNER_UNIT_FILES[@]}")
+  # select native templates only for the explicit native generation
+  if [[ "${generation}" == "native" ]]; then
+    unit_files=("${ADJUSTMENT_RUNNER_NATIVE_UNIT_FILES[@]}")
+  fi
   local relative
   # publish the closed unit set before one manager reload
-  for relative in "${ADJUSTMENT_RUNNER_UNIT_FILES[@]}"; do
+  for relative in "${unit_files[@]}"; do
     install_runner_unit \
       "${release_root}/${relative}" "${unit_root}/$(basename -- "${relative}")"
   done
@@ -351,9 +465,15 @@ install_runner_units() {
 # require every reviewed public unit to be loaded from its root-owned fragment
 require_loaded_runner_units() {
   local unit_root="$1"
+  local generation="${2:-node}"
+  local -a unit_files=("${ADJUSTMENT_RUNNER_UNIT_FILES[@]}")
+  # inspect the same generation-specific unit set that was just installed
+  if [[ "${generation}" == "native" ]]; then
+    unit_files=("${ADJUSTMENT_RUNNER_NATIVE_UNIT_FILES[@]}")
+  fi
   local relative
   # bind the closed unit set after one manager reload
-  for relative in "${ADJUSTMENT_RUNNER_UNIT_FILES[@]}"; do
+  for relative in "${unit_files[@]}"; do
     require_loaded_public_unit "${unit_root}/$(basename -- "${relative}")"
   done
 }
@@ -395,20 +515,27 @@ require_user_manager_readiness() {
 # require the pinned runtime and installed capture readiness
 require_runtime_readiness() {
   local release_root="$1"
+  local generation="${2:-node}"
   local ssh_config="${release_root}/deploy/config/ssh_config.example"
-  # require exact local executables and fixed ssh configuration
-  if [[ ! -x "${ADJUSTMENT_RUNNER_NODE}" ||
-    "$("${ADJUSTMENT_RUNNER_NODE}" --version)" != "v24.16.0" ||
-    ! -x /usr/bin/ssh || ! -x /usr/bin/flock ||
+  # require the common fixed host executables and public SSH configuration
+  if [[ ! -x /usr/bin/ssh || ! -x /usr/bin/flock ||
     ! -f "${ssh_config}" || -L "${ssh_config}" ]]; then
     printf '%s\n' "adjustment archive runtime readiness is unproven" >&2
     return 1
   fi
   require_user_manager_readiness
-  # prove the installed closure and every read-only capture authority
-  "${ADJUSTMENT_RUNNER_NODE}" \
-    "${release_root}/scripts/research/adjustment_maintenance_capture_job.mjs" \
-      --readiness >/dev/null
+  # prove the selected installed closure and every read-only capture authority
+  if [[ "${generation}" == "native" ]]; then
+    "${release_root}/bin/weather-maintenance-capture" --readiness >/dev/null
+  elif [[ "${generation}" == "node" && -x "${ADJUSTMENT_RUNNER_NODE}" &&
+    "$("${ADJUSTMENT_RUNNER_NODE}" --version)" == "v24.16.0" ]]; then
+    "${ADJUSTMENT_RUNNER_NODE}" \
+      "${release_root}/scripts/research/adjustment_maintenance_capture_job.mjs" \
+        --readiness >/dev/null
+  else
+    printf '%s\n' "adjustment archive runtime readiness is unproven" >&2
+    return 1
+  fi
 }
 
 # reload only the root-owned system unit definitions
@@ -436,18 +563,41 @@ install_adjustment_maintenance_runner() {
   local expected_manifest_sha256="$3"
   local install_root="$4"
   local unit_root="$5"
+  local generation="${6:-node}"
+  local native_binary_root="${7:-}"
+  local expected_native_binary_manifest_sha256="${8:-}"
   local source_manifest_sha256
+  local -a reviewed_files=("${ADJUSTMENT_RUNNER_FILES[@]}")
+  local -a unit_files=("${ADJUSTMENT_RUNNER_UNIT_FILES[@]}")
 
+  # select native source, unit and binary inputs only through the explicit candidate mode
+  if [[ "${generation}" == "native" ]]; then
+    reviewed_files=("${ADJUSTMENT_RUNNER_NATIVE_SOURCE_FILES[@]}")
+    unit_files=("${ADJUSTMENT_RUNNER_NATIVE_UNIT_FILES[@]}")
+  elif [[ "${generation}" != "node" || -n "${native_binary_root}" ||
+    -n "${expected_native_binary_manifest_sha256}" ]]; then
+    printf '%s\n' "runner generation is invalid" >&2
+    return 1
+  fi
   # reject caller-selected identities outside lowercase sha-256
-  if [[ ! "${expected_manifest_sha256}" =~ ^[a-f0-9]{64}$ ]]; then
+  if [[ ! "${expected_manifest_sha256}" =~ ^[a-f0-9]{64}$ ||
+    ( "${generation}" == "native" &&
+      ! "${expected_native_binary_manifest_sha256}" =~ ^[a-f0-9]{64}$ ) ]]; then
     printf '%s\n' "expected source manifest is invalid" >&2
     return 1
   fi
-  require_source_commit "${source_root}" "${source_commit}"
-  source_manifest_sha256="$(adjustment_runner_manifest_digest "${source_root}")"
+  require_source_commit "${source_root}" "${source_commit}" "${generation}"
+  source_manifest_sha256="$(adjustment_runner_manifest_digest "${source_root}" "${generation}")"
   # stop source drift before any installation mutation
   if [[ "${source_manifest_sha256}" != "${expected_manifest_sha256}" ]]; then
     printf '%s\n' "source manifest differs" >&2
+    return 1
+  fi
+  # bind native build output before creating any private installation directory
+  if [[ "${generation}" == "native" &&
+    "$(adjustment_native_binary_manifest_digest "${native_binary_root}")" != \
+      "${expected_native_binary_manifest_sha256}" ]]; then
+    printf '%s\n' "native binary manifest differs" >&2
     return 1
   fi
   local releases_root="${install_root}/releases"
@@ -486,20 +636,43 @@ install_adjustment_maintenance_runner() {
   if [[ ! -e "${release_root}" && ! -L "${release_root}" ]]; then
     mkdir -m 0700 -- "${incoming_root}"
     # copy every verified member into a regular-file-only layout
-    for relative in "${ADJUSTMENT_RUNNER_FILES[@]}"; do
+    for relative in "${reviewed_files[@]}"; do
       mkdir -p -- "${incoming_root}/$(dirname -- "${relative}")"
       install -m 0400 -- "${source_root}/${relative}" "${incoming_root}/${relative}"
       runner_after_copy "${relative}" "${incoming_root}" "${source_root}"
     done
     # reject any source race by hashing only the copied frozen bytes
-    if [[ "$(adjustment_runner_manifest_digest "${incoming_root}")" != \
+    if [[ "$(adjustment_runner_manifest_digest "${incoming_root}" "${generation}")" != \
       "${expected_manifest_sha256}" ]]; then
       chmod -R u+w -- "${incoming_root}"
       rm -rf -- "${incoming_root}"
       printf '%s\n' "copied release manifest differs" >&2
       return 1
     fi
-    adjustment_runner_manifest_lines "${incoming_root}" >"${incoming_root}/MANIFEST.sha256"
+    # add only digest-bound native executables after all checked-in source bytes are frozen
+    if [[ "${generation}" == "native" ]]; then
+      mkdir -m 0700 -- "${incoming_root}/bin"
+      local executable
+      for executable in "${ADJUSTMENT_RUNNER_NATIVE_EXECUTABLES[@]}"; do
+        install -m 0500 -- \
+          "${native_binary_root}/${executable}" "${incoming_root}/bin/${executable}"
+      done
+      # re-hash installed bytes so a build-directory race cannot enter the release
+      if [[ "$(adjustment_native_binary_manifest_digest "${incoming_root}/bin")" != \
+        "${expected_native_binary_manifest_sha256}" ]]; then
+        chmod -R u+w -- "${incoming_root}"
+        rm -rf -- "${incoming_root}"
+        printf '%s\n' "copied native binary manifest differs" >&2
+        return 1
+      fi
+    fi
+    {
+      adjustment_runner_manifest_lines "${incoming_root}" "${generation}"
+      # append native executable identities only for the explicit candidate generation
+      if [[ "${generation}" == "native" ]]; then
+        adjustment_native_binary_manifest_lines "${incoming_root}/bin"
+      fi
+    } >"${incoming_root}/MANIFEST.sha256"
     chmod 0400 -- "${incoming_root}/MANIFEST.sha256"
     # freeze every release directory after all files exist
     while IFS= read -r directory; do
@@ -510,15 +683,22 @@ install_adjustment_maintenance_runner() {
   else
     adjustment_require_controlled_directory "${release_root}" "controlled"
     # reuse only the exact immutable release bytes
-    if [[ "$(adjustment_runner_manifest_digest "${release_root}")" != \
+    if [[ "$(adjustment_runner_manifest_digest "${release_root}" "${generation}")" != \
       "${expected_manifest_sha256}" ]]; then
       printf '%s\n' "installed release manifest differs" >&2
+      return 1
+    fi
+    # require a reused native release to retain the same exact executable closure
+    if [[ "${generation}" == "native" &&
+      "$(adjustment_native_binary_manifest_digest "${release_root}/bin")" != \
+        "${expected_native_binary_manifest_sha256}" ]]; then
+      printf '%s\n' "installed native binary manifest differs" >&2
       return 1
     fi
   fi
 
   # run readiness only from the frozen installed release before public mutation
-  if ! require_runtime_readiness "${release_root}"; then
+  if ! require_runtime_readiness "${release_root}" "${generation}"; then
     printf '%s\n' "adjustment capture readiness is unproven" >&2
     # remove only the unpublished release created by this transaction
     if [[ "${release_created}" == "true" ]]; then
@@ -548,7 +728,7 @@ install_adjustment_maintenance_runner() {
   local unit_file
   local unit_name
   # retain every root-owned public unit for rollback
-  for relative in "${ADJUSTMENT_RUNNER_UNIT_FILES[@]}"; do
+  for relative in "${unit_files[@]}"; do
     unit_name="$(basename -- "${relative}")"
     unit_file="${unit_root}/${unit_name}"
     previous_units["${unit_name}"]="absent"
@@ -574,11 +754,11 @@ install_adjustment_maintenance_runner() {
   # activate the pointer and unit as one rollback-capable transaction
   if ln -s -- "releases/${source_commit}" "${current_temporary}" &&
     mv -Tf -- "${current_temporary}" "${current_link}" &&
-    install_runner_units "${release_root}" "${unit_root}" &&
+    install_runner_units "${release_root}" "${unit_root}" "${generation}" &&
     reload_systemd \
       "${source_root}" "${expected_manifest_sha256}" "${install_root}" \
       "${release_root}" "${primary_unit_file}" "${unit_root}" &&
-    require_loaded_runner_units "${unit_root}"; then
+    require_loaded_runner_units "${unit_root}" "${generation}"; then
     activation_status=0
   else
     activation_status=$?
@@ -588,7 +768,7 @@ install_adjustment_maintenance_runner() {
   if [[ "${activation_status}" -ne 0 ]]; then
     rm -f -- "${current_temporary}"
     # clear only this transaction's named public temporary files
-    for relative in "${ADJUSTMENT_RUNNER_UNIT_FILES[@]}"; do
+    for relative in "${unit_files[@]}"; do
       adjustment_public_remove \
         "${unit_root}/$(basename -- "${relative}").incoming-$$" >/dev/null 2>&1 || true
     done
@@ -599,7 +779,7 @@ install_adjustment_maintenance_runner() {
       mv -Tf -- "${current_temporary}" "${current_link}"
     fi
     # restore the exact prior state of every public unit
-    for relative in "${ADJUSTMENT_RUNNER_UNIT_FILES[@]}"; do
+    for relative in "${unit_files[@]}"; do
       unit_name="$(basename -- "${relative}")"
       unit_file="${unit_root}/${unit_name}"
       if [[ "${previous_units["${unit_name}"]}" == "absent" ]]; then
@@ -625,19 +805,32 @@ install_adjustment_maintenance_runner() {
 
 # execute only the fixed production install surface
 main() {
-  # accept exactly one reviewed source commit identity
-  if [[ "$#" -ne 1 ]]; then
-    printf 'usage: %s SOURCE_COMMIT\n' "$0" >&2
+  local generation="node"
+  local source_commit
+  local native_binary_root=""
+  local native_binary_manifest_sha256=""
+  # preserve the predecessor default and admit native only through the explicit four-operand mode
+  if [[ "$#" -eq 1 && "$1" != "--native" ]]; then
+    source_commit="$1"
+  elif [[ "$#" -eq 4 && "$1" == "--native" ]]; then
+    generation="native"
+    source_commit="$2"
+    native_binary_root="$3"
+    native_binary_manifest_sha256="$4"
+  else
+    printf 'usage: %s SOURCE_COMMIT | --native SOURCE_COMMIT BINARY_DIR BINARY_MANIFEST_SHA256\n' \
+      "$0" >&2
     return 2
   fi
   local source_root
   source_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-  require_source_commit "${source_root}" "$1"
+  require_source_commit "${source_root}" "${source_commit}" "${generation}"
   local manifest_sha256
-  manifest_sha256="$(adjustment_runner_manifest_digest "${source_root}")"
+  manifest_sha256="$(adjustment_runner_manifest_digest "${source_root}" "${generation}")"
   install_adjustment_maintenance_runner \
-    "${source_root}" "$1" "${manifest_sha256}" "${ADJUSTMENT_RUNNER_INSTALL_ROOT}" \
-    "${ADJUSTMENT_RUNNER_UNIT_ROOT}"
+    "${source_root}" "${source_commit}" "${manifest_sha256}" \
+    "${ADJUSTMENT_RUNNER_INSTALL_ROOT}" "${ADJUSTMENT_RUNNER_UNIT_ROOT}" \
+    "${generation}" "${native_binary_root}" "${native_binary_manifest_sha256}"
 }
 
 # avoid execution when regression tests source this file

@@ -44,7 +44,7 @@ export function projectRainCollectionStatus(status: RainCollectionStatus) {
   return {
     contractVersion: RAIN_COLLECTION_POLICY.contractVersion,
     modelEnabled: false,
-    qualificationEnabled: false,
+    qualificationEnabled: false as const,
     stationAccessAuthorized: RAIN_COLLECTION_POLICY.stationAccessAuthorized,
     expectedStations: RAIN_COLLECTION_STATIONS.length,
     startsAt: RAIN_COLLECTION_POLICY.startsAt,

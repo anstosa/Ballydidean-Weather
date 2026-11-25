@@ -1,0 +1,10 @@
+[package]
+name = "weather-api"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+weather-contracts = { path = "../weather-contracts" }
+weather-database = { path = "../weather-database" }
+weather-adjustment = { path = "../weather-adjustment" }

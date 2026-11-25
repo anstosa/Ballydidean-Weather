@@ -22,3 +22,6 @@ mobile/android/.kotlin
 mobile/android/build
 mobile/android/app/build
 mobile/android/host-evidence
+
+# Rust candidate outputs are rebuilt for the actual image target
+rust/target

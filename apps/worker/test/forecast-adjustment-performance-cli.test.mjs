@@ -529,6 +529,7 @@ test("package composition scopes global edge freezes and rejects duplicate colli
   ]), /edge receipt row identity collision/);
 });
 
+// keep temperature dispatch output clock-free and loader-equivalent
 test("temperature loader preserves native inputs and matched Best Match diagnostic", async () => {
   const validAt = "2026-10-08T13:00:00.000Z";
   const runInitializedAt = "2026-10-08T06:00:00.000Z";
@@ -636,6 +637,28 @@ test("temperature loader preserves native inputs and matched Best Match diagnost
     "as_issued",
   );
   assert.deepEqual(data.actualServingFallbacks, []);
+
+  let serializedTemperatureData = "";
+  let temperatureClockCalls = 0;
+  await runForecastAdjustmentPerformanceCli([
+    "temperature-data",
+    "--forecast-package", "forecast",
+    "--adjustment-package", "adjustment",
+  ], {
+    // reuse the direct loader's verified package fixture
+    loadPackages: async () => packages,
+    // count any accidental current-clock acquisition
+    now: () => {
+      temperatureClockCalls += 1;
+      return NOW;
+    },
+    // capture the canonical bridge output
+    writeOutput: (value) => {
+      serializedTemperatureData += value;
+    },
+  });
+  assert.deepEqual(JSON.parse(serializedTemperatureData), data);
+  assert.equal(temperatureClockCalls, 0);
 
   // preserve nonactive public-serving decisions outside the ECMWF comparator
   const activeEdge = packages.edgeRows[0];
@@ -767,6 +790,86 @@ test("temperature loader preserves native inputs and matched Best Match diagnost
   assert.notEqual(revised.rows[0].targetIdentity, data.rows[0].targetIdentity);
 });
 
+// keep unsupported commands outside every command clock
+test("unsupported command rejects without reading the clock", async () => {
+  let clockCalls = 0;
+  await assert.rejects(
+    // execute one parsed but unsupported command
+    () => runForecastAdjustmentPerformanceCli(["unsupported"], {
+      // count any dispatcher-level clock acquisition
+      now: () => {
+        clockCalls += 1;
+        return NOW;
+      },
+    }),
+    {
+      message: "unsupported forecast adjustment performance command: unsupported",
+      name: "Error",
+    },
+  );
+  assert.equal(clockCalls, 0);
+});
+
+// retain parse-first and command-clock validation boundaries
+test("consuming commands read the clock before command-specific validation", async () => {
+  // require one command clock before one unchanged validation error
+  const assertClockBeforeError = async (arguments_, message) => {
+    let clockCalls = 0;
+    await assert.rejects(
+      // execute one syntactically valid command
+      () => runForecastAdjustmentPerformanceCli(arguments_, {
+        // count the command-owned clock acquisition
+        now: () => {
+          clockCalls += 1;
+          return NOW;
+        },
+      }),
+      { message, name: "Error" },
+    );
+    assert.equal(clockCalls, 1);
+  };
+
+  await assertClockBeforeError(
+    ["wind-requalify"],
+    "wind requalification requires matched forecast and adjustment packages",
+  );
+  await assertClockBeforeError(
+    ["rain-evaluate"],
+    "rain evaluation requires matched forecast and adjustment packages",
+  );
+  await assertClockBeforeError(
+    ["scorecard"],
+    "--temperature-report is required exactly once",
+  );
+  await assertClockBeforeError(
+    ["verify-scorecard"],
+    "--input is required exactly once",
+  );
+});
+
+// keep syntactic option errors before every command clock
+test("syntactic option failures reject before reading the clock", async () => {
+  let clockCalls = 0;
+  await assert.rejects(
+    // execute one command with a missing option value
+    () => runForecastAdjustmentPerformanceCli([
+      "wind-requalify", "--forecast-package",
+    ], {
+      // count any clock read across the parse boundary
+      now: () => {
+        clockCalls += 1;
+        return NOW;
+      },
+    }),
+    {
+      message: "forecast adjustment performance options are invalid",
+      name: "Error",
+    },
+  );
+  assert.equal(clockCalls, 0);
+});
+
+// keep wind timing and serving results unchanged
 test("wind command evaluates all thirteen active pairs without changing serving", async () => {
   const root = await privateTestDirectory("weather-performance-wind-");
   const output = join(root, "wind.json");
@@ -820,16 +923,27 @@ test("wind command evaluates all thirteen active pairs without changing serving"
       targetCutoffAt: "2026-10-07T10:00:00.000Z",
     },
   };
+  let windClockCalls = 0;
   await runForecastAdjustmentPerformanceCli([
     "wind-requalify",
     "--forecast-package", "forecast",
     "--adjustment-package", "adjustment",
     "--output", output,
   ], {
-    loadPackages: async () => packages,
-    now: () => NOW,
+    // require clock capture before verified package loading
+    loadPackages: async () => {
+      assert.equal(windClockCalls, 1);
+      return packages;
+    },
+    // count the wind command clock acquisition
+    now: () => {
+      windClockCalls += 1;
+      return NOW;
+    },
   });
   const report = JSON.parse(await readFile(output, "utf8"));
+  assert.equal(windClockCalls, 1);
+  assert.equal(report.generatedAt, NOW.toISOString());
   assert.equal(report.family.family, "wind");
   assert.match(report.sourceRevision, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u);
   assert.equal(report.family.slices.length, 13);
@@ -1036,6 +1150,7 @@ test("wind command evaluates all thirteen active pairs without changing serving"
   assert.equal(weakReport.family.recommendation, "review_disable");
 });
 
+// keep rain timing and empty-evidence results unchanged
 test("rain command completes honestly when verified package has no mature rows", async () => {
   const root = await privateTestDirectory("weather-performance-rain-");
   const output = join(root, "rain.json");
@@ -1055,6 +1170,7 @@ test("rain command completes honestly when verified package has no mature rows",
       targetCutoffAt: "2026-10-07T10:00:00.000Z",
     },
   };
+  let rainClockCalls = 0;
   await runForecastAdjustmentPerformanceCli([
     "rain-evaluate",
     "--forecast-package", "forecast",
@@ -1062,10 +1178,20 @@ test("rain command completes honestly when verified package has no mature rows",
     "--source-revision", SOURCE_REVISION,
     "--output", output,
   ], {
-    loadPackages: async () => packages,
-    now: () => NOW,
+    // require clock capture before verified package loading
+    loadPackages: async () => {
+      assert.equal(rainClockCalls, 1);
+      return packages;
+    },
+    // count the rain command clock acquisition
+    now: () => {
+      rainClockCalls += 1;
+      return NOW;
+    },
   });
   const report = JSON.parse(await readFile(output, "utf8"));
+  assert.equal(rainClockCalls, 1);
+  assert.equal(report.generatedAt, NOW.toISOString());
   assert.equal(report.family.supportState, "insufficient");
   assert.equal(report.family.comparisonState, "unscored");
   assert.equal(report.family.rainDiagnostics.thresholds.length, 3);
@@ -1155,6 +1281,7 @@ test("rain command separates receipt-backed issuance from development replay", a
     .reduce((sum, bin) => sum + bin.count, 0), 1);
 });
 
+// keep scorecard timing validity and admission output unchanged
 test("scorecard rejects stale reports and verifies exact current manifests", async () => {
   const root = await privateTestDirectory("weather-performance-scorecard-");
   const forecastManifest = {
@@ -1197,6 +1324,7 @@ test("scorecard rejects stale reports and verifies exact current manifests", asy
     paths[family] = path;
   }
   const output = join(root, "scorecard.json");
+  let scorecardClockCalls = 0;
   await runForecastAdjustmentPerformanceCli([
     "scorecard",
     "--forecast-manifest", forecastPath,
@@ -1205,16 +1333,41 @@ test("scorecard rejects stale reports and verifies exact current manifests", asy
     "--wind-report", paths.wind,
     "--rain-report", paths.rain,
     "--output", output,
-  ], { now: () => NOW });
+  ], {
+    // count the scorecard command clock acquisition
+    now: () => {
+      scorecardClockCalls += 1;
+      return NOW;
+    },
+  });
   const scorecard = JSON.parse(await readFile(output, "utf8"));
+  assert.equal(scorecardClockCalls, 1);
+  assert.equal(scorecard.generatedAt, NOW.toISOString());
+  assert.equal(
+    scorecard.validThrough,
+    new Date(NOW.getTime() + 7 * 86_400_000).toISOString(),
+  );
   assert.equal(scorecard.servingChanged, false);
   assert.equal(scorecard.operatorApprovalRequired, true);
 
   let verified = "";
+  let verifyClockCalls = 0;
   await runForecastAdjustmentPerformanceCli([
     "verify-scorecard", "--input", output,
-  ], { now: () => NOW, writeOutput: (value) => { verified += value; } });
-  assert.match(verified, /^[a-f0-9]{64}\n$/u);
+  ], {
+    // count the scorecard admission clock acquisition
+    now: () => {
+      verifyClockCalls += 1;
+      return NOW;
+    },
+    // require capture before emitting the admitted digest
+    writeOutput: (value) => {
+      assert.equal(verifyClockCalls, 1);
+      verified += value;
+    },
+  });
+  assert.equal(verifyClockCalls, 1);
+  assert.equal(verified, `${digest(await readFile(output))}\n`);
 
   const forecastManifest2 = {
     createdAtUtc: "2026-10-08T10:00:00.000Z",

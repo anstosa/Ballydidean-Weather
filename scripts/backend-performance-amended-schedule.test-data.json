@@ -1,0 +1,77 @@
+{
+  "contractVersion": "weather-backend-performance-amended-schedule-test-data/v2",
+  "amendedScheduleVersion": "weather-backend-performance-planned-schedule/v3",
+  "amendedDefinitionVersion": "weather-backend-performance-amended-schedule-definition/v1",
+  "amendedDefinitionSha256": "73883cdde0ec1ddfe7f4cc624e82c652f7f56727744b2e654833fd3b996f98ce",
+  "dispositionVersion": "weather-backend-performance-amended-disposition/v1",
+  "sourceScheduleVersion": "weather-backend-performance-planned-schedule/v2",
+  "sourceWorkloadVersion": "weather-backend-performance-workload/v2",
+  "sourcePins": {
+    "disposition": {
+      "bytes": 5233,
+      "sha256": "f2236d5105772534b5a9820df30f71f853126f55b0627a9eee659bae5f21dff6"
+    },
+    "builder": {
+      "bytes": 35655,
+      "sha256": "17ab59f7a64a1c3c261e1a510a131d44db1962f002f260efee0e36411f0b7cc4"
+    },
+    "workload": {
+      "bytes": 268871,
+      "sha256": "b44eb296f1145a55202e941e24e750c0b0d5a4c37075c6f8e9ca346470bca53f"
+    }
+  },
+  "sourceScheduleDefinitionSha256": "5722eeecd2734a1cfe4e7887cfc887dc6ac052cb397e08f8389fd6b284c5c364",
+  "reviewedOmittedOperationIds": [
+    "admin.live.reject-foreign-origin",
+    "admin.live.reject-unauthenticated",
+    "admin.live.revoked-session"
+  ],
+  "omittedSourceOrder": [
+    "admin.live.reject-unauthenticated",
+    "admin.live.reject-foreign-origin",
+    "admin.live.revoked-session"
+  ],
+  "adminRetainedOriginalOrders": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    10
+  ],
+  "adminProjectedOrders": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "orphanedTransition": "transition.admin.liveSessionRevoked",
+  "publicGroupId": "group.http-public-matrix",
+  "passiveHeaderOracle": "security headers match source contract",
+  "wrongBuilderSentinelCode": "amended-schedule.test-wrong-builder-evaluated",
+  "counts": {
+    "operations": 104,
+    "groups": 59,
+    "bindingSlots": 155,
+    "transitions": 9,
+    "runSlots": 5,
+    "groupInstances": 295,
+    "attemptsPerRunSlot": 1255,
+    "plannedAttempts": 6275,
+    "omittedAttempts": 15,
+    "publicGetAttempts": 5895,
+    "warmAttempts": 5600,
+    "applicationCacheColdAttempts": 15,
+    "processPoolColdAttempts": 140,
+    "dbOsColdAttempts": 140,
+    "oncePerRunAttempts": 380,
+    "preStateReceipts": 295,
+    "restoreReceipts": 295
+  }
+}

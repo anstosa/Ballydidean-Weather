@@ -1,0 +1,26 @@
+# Explicit candidate-only override; the ordinary release still uses compose.yaml.
+services:
+  migration:
+    build:
+      target: native-server
+    command: [/opt/weather/bin/weather-migrate]
+  api:
+    build:
+      target: native-server
+    command: [/opt/weather/bin/weather-api]
+    healthcheck:
+      test: [CMD, /opt/weather/bin/weather-api-health, api]
+  worker:
+    build:
+      target: native-server
+    command: [/opt/weather/bin/weather-worker]
+    healthcheck:
+      test: [CMD, /opt/weather/bin/weather-worker-health]
+  web:
+    build:
+      target: native-web
+    command: [/opt/weather/bin/weather-web]
+    environment:
+      WEATHER_SITE_CONFIG_PATH: /opt/weather/edge-config/ballydidean.json
+    healthcheck:
+      test: [CMD, /opt/weather/bin/weather-web-health, web]

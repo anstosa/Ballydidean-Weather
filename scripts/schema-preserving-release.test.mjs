@@ -22,6 +22,13 @@ import {
   SOURCE_ENV_SHA256,
   SOURCE_RELEASE,
   STAGE_CONTRACT_VERSION,
+  RUNTIME_STAGE_CONTRACT_VERSION,
+  RUNTIME_GENERATION_CONTRACT_VERSION,
+  validateRuntimeGeneration,
+  validateNativeFamilyRecoverySnapshot,
+  validateNativeDashboardCapacity,
+  validateRuntimeImageMarkers,
+  runtimeGenerationComposeOverride,
   UPDATE_SHA256,
   readPrivateJson,
   validateDate,
@@ -36,6 +43,50 @@ const SCRIPT = new URL("./schema-preserving-release.mjs", import.meta.url).pathn
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 const TARGET_COMMIT = "c".repeat(40);
+
+// retain the exact web-only capacity identities emitted by the native measurement owner
+test("native dashboard capacity binds the core server and source web compensation", () => {
+  const core = "2026.11.25-1";
+  const server = `ghcr.io/anstosa/weather-server@sha256:${HASH_A}`;
+  const source = `ghcr.io/anstosa/weather-web@sha256:${HASH_B}`;
+  const target = `ghcr.io/anstosa/weather-web@sha256:${"d".repeat(64)}`;
+  const receipt = {
+    publicationSha256: HASH_A,
+    availableFreeBytes: 9_000_000_000,
+    captureReservedBytes: 4_112_384,
+    compatibilityFixtureBytes: 67_108_864,
+    compatibilityFixtureInodes: 4096,
+    compensationScope: "fixed-core-web-only-source-restore",
+    compressedPeakBytes: 123,
+    contractVersion: "dashboard-web-release-capacity/v1",
+    futureStateBytes: 1_048_576,
+    imageDigests: [
+      ["source", "server", server], ["source", "web", source],
+      ["target", "server", server], ["target", "web", target],
+      ["compensating", "server", server], ["compensating", "web", source],
+    ].map(([role, runtime, image]) => ({ role, runtime, digest: image.split("@")[1] })),
+    measuredAt: "2026-11-25T13:49:00.000Z",
+    newLayerInodes: 1024,
+    persistentGrowthBytes: 12,
+    persistentOwnedBytes: 23,
+    protectedFreeBytes: 2_030_043_136,
+    pullPeakGrowthBytes: 34,
+    releaseTransactionPeakGrowthBytes: 45,
+    reasons: [],
+    requiredFreeBytes: 2_200_000_000,
+    requiredFreeInodes: 42_000,
+    retainedControlBytes: 64,
+    retirementCreditBytes: 0,
+    sourceRelease: core,
+    state: "capacity_ready",
+  };
+  assert.equal(validateNativeDashboardCapacity(receipt, HASH_A, core, server, source, target), receipt);
+  // a compensation image or measured refusal never admits the web pull
+  const wrong = structuredClone(receipt);
+  wrong.imageDigests[5].digest = target.split("@")[1];
+  assert.throws(() => validateNativeDashboardCapacity(wrong, HASH_A, core, server, source, target), /identity differs/u);
+  assert.throws(() => validateNativeDashboardCapacity({ ...receipt, state: "capacity_blocked" }, HASH_A, core, server, source, target), /decision differs/u);
+});
 
 // build the minimum protected tree
 function validTree() {
@@ -176,7 +227,7 @@ test("stage receipt rejects contract release shape and digest drift", () => {
   assert.equal(validateStageReceipt(receipt, receipt.targetRelease), receipt);
 
   const badContract = structuredClone(receipt);
-  badContract.contractVersion = "weather-schema-preserving-stage/v2";
+  badContract.contractVersion = "weather-schema-preserving-stage/v3";
   assert.throws(() => validateStageReceipt(badContract, receipt.targetRelease), /contractVersion/u);
 
   const wrongTarget = structuredClone(receipt);
@@ -433,4 +484,53 @@ test("write-json and private reads reject oversized input", () => {
   writeFileSync(input, oversized, { mode: 0o600 });
   chmodSync(input, 0o600);
   assert.throws(() => readPrivateJson(input), /size is out of bounds/u);
+});
+
+
+// bind actual mixed generation metadata and preserve the predecessor's original command/probe view
+test("retained runtime generation selects exact disjoint Rust commands and Node rollback", () => {
+  const publication = validPublication();
+  const expected = {
+    release: publication.targetRelease,
+    publicationSha256: HASH_A,
+    serverImage: publication.serverImage,
+    serverImageId: publication.serverImageId,
+    webImage: publication.webImage,
+    webImageId: publication.webImageId,
+  };
+  const native = { contractVersion: RUNTIME_GENERATION_CONTRACT_VERSION, generation: "rust-v1",
+    materialManifestSha256: HASH_B, ...expected };
+  assert.equal(validateRuntimeGeneration(native, expected), native);
+  assert.equal(validateRuntimeImageMarkers("rust-v1", "rust-v1", "rust-v1"), "rust-v1");
+  const rust = runtimeGenerationComposeOverride("rust-v1");
+  assert.deepEqual(rust.services.api.command, ["/opt/weather/bin/weather-api"]);
+  assert.deepEqual(rust.services.worker.healthcheck.test, ["CMD", "/opt/weather/bin/weather-worker-health"]);
+  assert.deepEqual(rust.services.web.healthcheck.test, ["CMD", "/opt/weather/bin/weather-web-health", "web"]);
+  const node = { ...native, generation: "node-v1", materialManifestSha256: null };
+  assert.equal(validateRuntimeGeneration(node, expected), node);
+  assert.equal(validateRuntimeImageMarkers("node-v1", "", "<no value>"), "node-v1");
+  assert.equal(runtimeGenerationComposeOverride("node-v1"), null);
+  const stage = { ...validStageReceipt(), contractVersion: RUNTIME_STAGE_CONTRACT_VERSION,
+    runtimeMetadataSha256: HASH_B };
+  assert.equal(validateStageReceipt(stage, stage.targetRelease), stage);
+});
+
+// preserve the installed protected-state snapshot across an exact family compensation catalog change
+test("family recovery retains the protected snapshot except its independently selected catalog", () => {
+  const state = "/opt/weather/current/deploy/state";
+  const catalogPath = `${state}/adjustment-candidate-catalog.json`;
+  const paths = [
+    `${state}/schema-release`, catalogPath, `${state}/adjustment-capture-epoch.json`,
+    `${state}/adjustment-release-state/current.json`, "/var/lib/weather/xweather/forecast-adjustment-settings.json",
+  ];
+  const previous = {
+    infrastructure: "retained postgres and cloudflared",
+    files: paths.map((path, index) => ({
+      path, inode: `2:${index}`, mode: 33152, owner: "0:0", sha256: HASH_A,
+    })),
+  };
+  const current = structuredClone(previous);
+  current.files[1].inode = "2:47";
+  current.files[1].sha256 = HASH_B;
+  assert.equal(validateNativeFamilyRecoverySnapshot(previous, current, catalogPath, HASH_B), true);
 });

@@ -1,4 +1,8 @@
 import type { RainAdjustmentRun, RainAdjustmentHour } from "@weather/database";
+import type {
+  ApiRainAdjustmentDecision,
+  ApiRainAdjustmentRuntime,
+} from "@weather/contracts";
 import {
   RAIN_HURDLE_WIND_MODEL_SHA256,
   type LoadedForecastAdjustmentRainRuntimeRegistryV1,
@@ -12,24 +16,7 @@ export interface ApiRainAdjustmentStartupSnapshot {
   readonly runtime: LoadedForecastAdjustmentRainRuntimeRegistryV1;
 }
 
-export interface ApiRainAdjustmentDecision {
-  readonly contractVersion: "forecast-rain-adjustment-decision/v1";
-  readonly state: "active" | "disabled" | "raw_fallback";
-  readonly reasonCode: string | null;
-  readonly bundleSha256: string | null;
-  readonly correctedPrecipitationMm: number | null;
-  readonly rawBestMatchPrecipitationMm: number | null;
-  readonly sourceForecast: null | {
-    readonly runInitializedAt: string;
-    readonly firstReceivedAt: string;
-    readonly validAt: string;
-    readonly rawPrecipitationMm: number;
-    readonly modelLeadHours: number;
-    readonly decisionAt: string;
-    readonly upstreamModel: "ecmwf_ifs";
-    readonly providerKey: "open-meteo";
-  };
-}
+export type { ApiRainAdjustmentDecision, ApiRainAdjustmentRuntime } from "@weather/contracts";
 
 // validate the entire public-safe snapshot before exposing any adjusted amount
 export function validRainAdjustmentRun(run: RainAdjustmentRun | null, now: string): run is RainAdjustmentRun {
@@ -114,7 +101,7 @@ export function rainAdjustmentRuntime(
   run: RainAdjustmentRun | null,
   now: string,
   selection?: ApiRainAdjustmentStartupSnapshot,
-) {
+): ApiRainAdjustmentRuntime {
   // expose the exact startup refusal without consulting retained output
   if (selection?.runtime.state === "disabled") {
     return {

@@ -24,6 +24,7 @@ import {
   forecastLeadBandFor,
   type CanonicalWeatherMetrics,
   type ForecastObservationStationKey,
+  type JsonValue,
 } from "@weather/domain";
 import type { RainAdjustmentCapture } from "@weather/database";
 
@@ -65,6 +66,25 @@ export interface VerifiedForecastAdjustmentPerformancePackages {
   readonly inputs: ForecastAdjustmentPerformancePackageInputs;
 }
 
+export interface TemperaturePerformanceScoredPairMetadata {
+  readonly evidenceClass:
+    | "as_issued"
+    | "prospective_receipt"
+    | "retrospective_counterfactual"
+    | "development";
+  readonly fallback: boolean;
+  readonly firstEdgeCommittedAt: string | null;
+  readonly horizonHours: number;
+  readonly key: string;
+  readonly localDate: string;
+  readonly provenanceComplete: boolean;
+  readonly rowIdentity: string;
+  readonly sourceReceiptAt: string | null;
+  readonly targetKey: string;
+  readonly validAt: string;
+  readonly vintageKey: string;
+}
+
 export interface TemperaturePerformanceDataRow {
   readonly actualTemperatureC: number | null;
   readonly bestMatchRawTemperatureC: number | null;
@@ -80,18 +100,12 @@ export interface TemperaturePerformanceDataRow {
     readonly applied: boolean;
     readonly predictionTemperatureC: number;
     readonly reasonCode: string | null;
-    readonly scoredPairMetadata: Omit<
-      ForecastAdjustmentPerformancePair,
-      "adjustedPrediction" | "rawPrediction" | "target"
-    >;
+    readonly scoredPairMetadata: TemperaturePerformanceScoredPairMetadata;
     readonly servingBundleSha256: string;
   };
-  readonly recentErrorState: unknown;
+  readonly recentErrorState: JsonValue;
   readonly runInitializedAt: string;
-  readonly scoredPairMetadata: Omit<
-    ForecastAdjustmentPerformancePair,
-    "adjustedPrediction" | "rawPrediction" | "target"
-  >;
+  readonly scoredPairMetadata: TemperaturePerformanceScoredPairMetadata;
   readonly scoreEligible: boolean;
   readonly targetIdentity: string | null;
   readonly targetMaxReceiptAt: string | null;
@@ -100,6 +114,12 @@ export interface TemperaturePerformanceDataRow {
 
 export interface TemperaturePerformanceData {
   readonly actualServingFallbacks: readonly JsonObject[];
+  readonly inputs: ForecastAdjustmentPerformancePackageInputs;
+  readonly rows: readonly TemperaturePerformanceDataRow[];
+}
+
+export interface TemperaturePerformanceDataWire {
+  readonly actualServingFallbacks: readonly Readonly<Record<string, JsonValue>>[];
   readonly inputs: ForecastAdjustmentPerformancePackageInputs;
   readonly rows: readonly TemperaturePerformanceDataRow[];
 }
@@ -1980,7 +2000,10 @@ export async function loadTemperaturePerformanceData(
       targetKey: target.targetIdentity ?? `missing:${validAt}`,
       validAt,
       vintageKey: runInitializedAt,
-    } as const;
+    } as const satisfies Omit<
+      ForecastAdjustmentPerformancePair,
+      "adjustedPrediction" | "rawPrediction" | "target"
+    >;
     const capturedBundle = temperatureAdjustment?.bundleSha256;
     const activeBundle = temperatureBundles?.activeBundle;
     const capturedState = temperatureAdjustment?.state;
@@ -2032,7 +2055,7 @@ export async function loadTemperaturePerformanceData(
         "temperature raw wind",
       ),
       recordedRuntimeResult,
-      recentErrorState: run.recentErrorState,
+      recentErrorState: run.recentErrorState as JsonValue,
       runInitializedAt,
       scoredPairMetadata,
       scoreEligible: modelLeadHours >= 7 && modelLeadHours <= 18,
@@ -2394,94 +2417,137 @@ async function createScorecard(
   return scorecard;
 }
 
+// run the retained/live-v4 wind requalification without serving mutations
+async function runWindRequalifyCommand(
+  values: ReadonlyMap<string, readonly string[]>,
+  dependencies: ForecastAdjustmentPerformanceCliDependencies,
+): Promise<0> {
+  const now = dependencies.now?.() ?? new Date();
+  const forecastPackages = values.get("--forecast-package") ?? [];
+  const adjustmentPackages = values.get("--adjustment-package") ??
+    values.get("--evaluation-packages") ?? [];
+
+  // require matched verified package pairs for causal target binding
+  if (forecastPackages.length === 0 ||
+    forecastPackages.length !== adjustmentPackages.length) {
+    throw new Error("wind requalification requires matched forecast and adjustment packages");
+  }
+
+  const loadPackages = dependencies.loadPackages ?? loadVerifiedPerformancePackages;
+  const packages = await loadPackages({
+    adjustmentPackage: adjustmentPackages,
+    forecastPackage: forecastPackages,
+  }, dependencies);
+  const report = await createWindReport(
+    packages,
+    await sourceRevision(values),
+    now,
+  );
+  await writePrivateResult(oneOption(values, "--output"), report);
+  return 0;
+}
+
+// replay fixed rain evidence with amount parity before probability metrics
+async function runRainEvaluateCommand(
+  values: ReadonlyMap<string, readonly string[]>,
+  dependencies: ForecastAdjustmentPerformanceCliDependencies,
+): Promise<0> {
+  const now = dependencies.now?.() ?? new Date();
+  const forecastPackages = values.get("--forecast-package") ?? [];
+  const adjustmentPackages = values.get("--adjustment-package") ??
+    values.get("--evaluation-packages") ?? [];
+
+  // require both same-date package families for target scoring
+  if (forecastPackages.length === 0 ||
+    forecastPackages.length !== adjustmentPackages.length) {
+    throw new Error("rain evaluation requires matched forecast and adjustment packages");
+  }
+
+  const loadPackages = dependencies.loadPackages ?? loadVerifiedPerformancePackages;
+  const packages = await loadPackages({
+    adjustmentPackage: adjustmentPackages,
+    forecastPackage: forecastPackages,
+  }, dependencies);
+  const report = createRainReport(
+    packages,
+    await sourceRevision(values),
+    now,
+  );
+  await writePrivateResult(oneOption(values, "--output"), report);
+  return 0;
+}
+
+// expose the verified native temperature loader to the python fitter bridge
+async function runTemperatureDataCommand(
+  values: ReadonlyMap<string, readonly string[]>,
+  dependencies: ForecastAdjustmentPerformanceCliDependencies,
+): Promise<0> {
+  const data = await loadTemperaturePerformanceData({
+    adjustmentPackage: values.get("--adjustment-package") ?? [],
+    forecastPackage: values.get("--forecast-package") ?? [],
+  }, dependencies);
+  const serialized = canonicalJson(data);
+  (dependencies.writeOutput ?? process.stdout.write.bind(process.stdout))(serialized);
+  return 0;
+}
+
+// aggregate only already-sanitized family reports
+async function runScorecardCommand(
+  values: ReadonlyMap<string, readonly string[]>,
+  dependencies: ForecastAdjustmentPerformanceCliDependencies,
+): Promise<0> {
+  const now = dependencies.now?.() ?? new Date();
+  const scorecard = await createScorecard(values, now);
+  await writePrivateResult(oneOption(values, "--output"), scorecard);
+  return 0;
+}
+
+// validate one scorecard through the exact edge/installer contract
+async function runVerifyScorecardCommand(
+  values: ReadonlyMap<string, readonly string[]>,
+  dependencies: ForecastAdjustmentPerformanceCliDependencies,
+): Promise<0> {
+  const now = dependencies.now?.() ?? new Date();
+  const path = oneOption(values, "--input");
+  const bytes = await readFile(resolve(path));
+  const contract = await scorecardContract();
+  contract.parseForecastAdjustmentScorecard(bytes, { now: now.toISOString() });
+  (dependencies.writeOutput ?? process.stdout.write.bind(process.stdout))(
+    `${sha256(bytes)}\n`,
+  );
+  return 0;
+}
+
 // run one bounded file-only performance command
 export async function runForecastAdjustmentPerformanceCli(
   arguments_: readonly string[] = process.argv.slice(2),
   dependencies: ForecastAdjustmentPerformanceCliDependencies = {},
 ): Promise<0> {
   const parsed = parseOptions(arguments_);
-  const now = dependencies.now?.() ?? new Date();
 
-  // run the retained/live-v4 wind requalification without serving mutations
+  // dispatch wind requalification directly
   if (parsed.command === "wind-requalify") {
-    const forecastPackages = parsed.values.get("--forecast-package") ?? [];
-    const adjustmentPackages = parsed.values.get("--adjustment-package") ??
-      parsed.values.get("--evaluation-packages") ?? [];
-
-    // require matched verified package pairs for causal target binding
-    if (forecastPackages.length === 0 ||
-      forecastPackages.length !== adjustmentPackages.length) {
-      throw new Error("wind requalification requires matched forecast and adjustment packages");
-    }
-
-    const loadPackages = dependencies.loadPackages ?? loadVerifiedPerformancePackages;
-    const packages = await loadPackages({
-      adjustmentPackage: adjustmentPackages,
-      forecastPackage: forecastPackages,
-    }, dependencies);
-    const report = await createWindReport(
-      packages,
-      await sourceRevision(parsed.values),
-      now,
-    );
-    await writePrivateResult(oneOption(parsed.values, "--output"), report);
-    return 0;
+    return await runWindRequalifyCommand(parsed.values, dependencies);
   }
 
-  // replay fixed rain evidence with amount parity before probability metrics
+  // dispatch rain evaluation directly
   if (parsed.command === "rain-evaluate") {
-    const forecastPackages = parsed.values.get("--forecast-package") ?? [];
-    const adjustmentPackages = parsed.values.get("--adjustment-package") ??
-      parsed.values.get("--evaluation-packages") ?? [];
-
-    // require both same-date package families for target scoring
-    if (forecastPackages.length === 0 ||
-      forecastPackages.length !== adjustmentPackages.length) {
-      throw new Error("rain evaluation requires matched forecast and adjustment packages");
-    }
-
-    const loadPackages = dependencies.loadPackages ?? loadVerifiedPerformancePackages;
-    const packages = await loadPackages({
-      adjustmentPackage: adjustmentPackages,
-      forecastPackage: forecastPackages,
-    }, dependencies);
-    const report = createRainReport(
-      packages,
-      await sourceRevision(parsed.values),
-      now,
-    );
-    await writePrivateResult(oneOption(parsed.values, "--output"), report);
-    return 0;
+    return await runRainEvaluateCommand(parsed.values, dependencies);
   }
 
-  // expose the verified native temperature loader to the Python fitter bridge
+  // dispatch temperature data directly
   if (parsed.command === "temperature-data") {
-    const data = await loadTemperaturePerformanceData({
-      adjustmentPackage: parsed.values.get("--adjustment-package") ?? [],
-      forecastPackage: parsed.values.get("--forecast-package") ?? [],
-    }, dependencies);
-    const serialized = canonicalJson(data);
-    (dependencies.writeOutput ?? process.stdout.write.bind(process.stdout))(serialized);
-    return 0;
+    return await runTemperatureDataCommand(parsed.values, dependencies);
   }
 
-  // aggregate only already-sanitized family reports
+  // dispatch scorecard creation directly
   if (parsed.command === "scorecard") {
-    const scorecard = await createScorecard(parsed.values, now);
-    await writePrivateResult(oneOption(parsed.values, "--output"), scorecard);
-    return 0;
+    return await runScorecardCommand(parsed.values, dependencies);
   }
 
-  // validate one scorecard through the exact edge/installer contract
+  // dispatch scorecard verification directly
   if (parsed.command === "verify-scorecard") {
-    const path = oneOption(parsed.values, "--input");
-    const bytes = await readFile(resolve(path));
-    const contract = await scorecardContract();
-    contract.parseForecastAdjustmentScorecard(bytes, { now: now.toISOString() });
-    (dependencies.writeOutput ?? process.stdout.write.bind(process.stdout))(
-      `${sha256(bytes)}\n`,
-    );
-    return 0;
+    return await runVerifyScorecardCommand(parsed.values, dependencies);
   }
 
   throw new Error(`unsupported forecast adjustment performance command: ${parsed.command}`);

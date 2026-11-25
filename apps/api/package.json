@@ -9,13 +9,14 @@
     "dist"
   ],
   "scripts": {
-    "build": "npm run build --workspace @weather/domain && npm run build --workspace @weather/database && npm run build --workspace @weather/forecast-adjustment && tsc -p tsconfig.json",
+    "build": "node ../../scripts/generate-rust-contracts.mjs --check && npm run build --workspace @weather/domain && npm run build --workspace @weather/database && npm run build --workspace @weather/forecast-adjustment && tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "test": "npm run build && node --test test/*.test.mjs",
     "test:integration": "npm run build && node --test --test-concurrency=1 test/api.integration.mjs",
-    "typecheck": "npm run build --workspace @weather/domain && npm run build --workspace @weather/database && npm run build --workspace @weather/forecast-adjustment && tsc -p tsconfig.json --noEmit"
+    "typecheck": "node ../../scripts/generate-rust-contracts.mjs --check && npm run build --workspace @weather/domain && npm run build --workspace @weather/database && npm run build --workspace @weather/forecast-adjustment && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@weather/contracts": "0.0.0",
     "@weather/database": "0.0.0",
     "@weather/domain": "0.0.0",
     "@weather/forecast-adjustment": "0.0.0"

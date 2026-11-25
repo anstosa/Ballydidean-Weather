@@ -1,0 +1,4628 @@
+{
+  "version": 1,
+  "typescriptVersion": "6.0.3",
+  "typeImports": [
+    {
+      "consumer": "packages/contracts/src/forecast.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentDecision": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentMetric": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "specifier": "./temperature-mos-runtime.js",
+      "entry": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exports": {
+        "TemperatureMosPermanentRuntimeModel": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "TemperatureMosRuntimeModel": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "TemperatureMosRuntimeRawReason": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "TemperatureMosRuntimeRecentErrorState": "packages/forecast-adjustment/src/temperature-mos-runtime.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/forecast.ts",
+      "specifier": "@weather/forecast-adjustment",
+      "packageJson": "packages/forecast-adjustment/package.json",
+      "entry": "packages/forecast-adjustment/src/index.ts",
+      "leaves": [
+        "packages/forecast-adjustment/src/algorithm-v1.ts",
+        "packages/forecast-adjustment/src/apply.ts",
+        "packages/forecast-adjustment/src/bootstrap-v1.ts",
+        "packages/forecast-adjustment/src/calendar.ts",
+        "packages/forecast-adjustment/src/candidate.ts",
+        "packages/forecast-adjustment/src/evaluate.ts",
+        "packages/forecast-adjustment/src/evidence.ts",
+        "packages/forecast-adjustment/src/holdout-ledger.ts",
+        "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+        "packages/forecast-adjustment/src/maintenance-policy.ts",
+        "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+        "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+        "packages/forecast-adjustment/src/performance-scorecard.ts",
+        "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+        "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+        "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+        "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+        "packages/forecast-adjustment/src/runtime-bundle.ts",
+        "packages/forecast-adjustment/src/runtime-loader.ts",
+        "packages/forecast-adjustment/src/temperature-canary.ts",
+        "packages/forecast-adjustment/src/temperature-lead-research.ts",
+        "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "packages/forecast-adjustment/src/temperature-weather-research.ts",
+        "packages/forecast-adjustment/src/wind-canary.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentWindQualifiedMaintenanceDecision": "packages/forecast-adjustment/src/apply.ts",
+        "ForecastTemperatureCanaryDecisionV1": "packages/forecast-adjustment/src/temperature-canary.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/forecast.ts",
+      "specifier": "./weather-records.js",
+      "entry": "packages/contracts/src/weather-records.ts",
+      "exports": {
+        "ApiWeatherRecord": "packages/contracts/src/weather-records.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/apply.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "CanonicalWeatherMetrics": "packages/domain/src/weather-record.ts",
+        "ForecastAdjustmentMetric": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentRawForecastProvenance": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentReasonCode": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentRuntimeBundleV2": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "./temperature-canary.js",
+      "entry": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exports": {},
+      "proofExports": {
+        "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1": "packages/forecast-adjustment/src/temperature-canary.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/forecast.ts",
+      "specifier": "./sites.js",
+      "entry": "packages/contracts/src/sites.ts",
+      "exports": {
+        "ApiSite": "packages/contracts/src/sites.ts"
+      }
+    },
+    {
+      "consumer": "apps/api/src/rain-adjustment.ts",
+      "specifier": "@weather/forecast-adjustment",
+      "packageJson": "packages/forecast-adjustment/package.json",
+      "entry": "packages/forecast-adjustment/src/index.ts",
+      "leaves": [
+        "packages/forecast-adjustment/src/algorithm-v1.ts",
+        "packages/forecast-adjustment/src/apply.ts",
+        "packages/forecast-adjustment/src/bootstrap-v1.ts",
+        "packages/forecast-adjustment/src/calendar.ts",
+        "packages/forecast-adjustment/src/candidate.ts",
+        "packages/forecast-adjustment/src/evaluate.ts",
+        "packages/forecast-adjustment/src/evidence.ts",
+        "packages/forecast-adjustment/src/holdout-ledger.ts",
+        "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+        "packages/forecast-adjustment/src/maintenance-policy.ts",
+        "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+        "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+        "packages/forecast-adjustment/src/performance-scorecard.ts",
+        "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+        "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+        "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+        "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+        "packages/forecast-adjustment/src/runtime-bundle.ts",
+        "packages/forecast-adjustment/src/runtime-loader.ts",
+        "packages/forecast-adjustment/src/temperature-canary.ts",
+        "packages/forecast-adjustment/src/temperature-lead-research.ts",
+        "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "packages/forecast-adjustment/src/temperature-weather-research.ts",
+        "packages/forecast-adjustment/src/wind-canary.ts"
+      ],
+      "exports": {
+        "LoadedForecastAdjustmentRainRuntimeRegistryV1": "packages/forecast-adjustment/src/rain-runtime-registry.ts"
+      }
+    },
+    {
+      "consumer": "packages/domain/src/weather-record.ts",
+      "specifier": "./provenance.js",
+      "entry": "packages/domain/src/provenance.ts",
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/domain/src/ingestion.ts",
+      "specifier": "./provenance.js",
+      "entry": "packages/domain/src/provenance.ts",
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/domain/src/forecast-anchor-record.ts",
+      "specifier": "./weather-record.js",
+      "entry": "packages/domain/src/weather-record.ts",
+      "exports": {
+        "CanonicalWeatherMetrics": "packages/domain/src/weather-record.ts",
+        "WeatherRecordMetadata": "packages/domain/src/weather-record.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/repositories.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "BackfillChunkIdentity": "packages/domain/src/ingestion.ts",
+        "FixedLeadAnchorTrainingRow": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentMetric": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastObservationProviderFamily": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastObservationStationKey": "packages/domain/src/forecast-adjustment.ts",
+        "IngestionError": "packages/domain/src/ingestion.ts",
+        "IngestionMode": "packages/domain/src/ingestion.ts",
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "LegacyV4RetrievalSnapshotTrainingRow": "packages/domain/src/forecast-adjustment.ts",
+        "NormalizedForecastAnchorRecord": "packages/domain/src/forecast-anchor-record.ts",
+        "NormalizedWeatherRecord": "packages/domain/src/weather-record.ts",
+        "SourceKind": "packages/domain/src/provenance.ts",
+        "StationKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/domain/src/forecast-adjustment.ts",
+      "specifier": "./weather-record.js",
+      "entry": "packages/domain/src/weather-record.ts",
+      "exports": {
+        "CanonicalWeatherMetrics": "packages/domain/src/weather-record.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/wind-canary.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentCoefficient": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentForecastIdentity": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentMetricBand": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentTrainingEnvelope": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentTrainingProvenance": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentWindCanaryRuntimeBundleV1": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentWindCanaryTrainingIdentity": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/rain-collection.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "NormalizedWeatherRecord": "packages/domain/src/weather-record.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/rain-collection.ts",
+      "specifier": "./adjustment-maintenance.js",
+      "entry": "packages/database/src/adjustment-maintenance.ts",
+      "exports": {
+        "AdjustmentRevisionCommitReceipt": "packages/database/src/adjustment-maintenance.ts",
+        "AdjustmentRevisionGap": "packages/database/src/adjustment-maintenance.ts"
+      }
+    },
+    {
+      "consumer": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "specifier": "@weather/forecast-adjustment",
+      "packageJson": "packages/forecast-adjustment/package.json",
+      "entry": "packages/forecast-adjustment/src/index.ts",
+      "leaves": [
+        "packages/forecast-adjustment/src/algorithm-v1.ts",
+        "packages/forecast-adjustment/src/apply.ts",
+        "packages/forecast-adjustment/src/bootstrap-v1.ts",
+        "packages/forecast-adjustment/src/calendar.ts",
+        "packages/forecast-adjustment/src/candidate.ts",
+        "packages/forecast-adjustment/src/evaluate.ts",
+        "packages/forecast-adjustment/src/evidence.ts",
+        "packages/forecast-adjustment/src/holdout-ledger.ts",
+        "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+        "packages/forecast-adjustment/src/maintenance-policy.ts",
+        "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+        "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+        "packages/forecast-adjustment/src/performance-scorecard.ts",
+        "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+        "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+        "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+        "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+        "packages/forecast-adjustment/src/runtime-bundle.ts",
+        "packages/forecast-adjustment/src/runtime-loader.ts",
+        "packages/forecast-adjustment/src/temperature-canary.ts",
+        "packages/forecast-adjustment/src/temperature-lead-research.ts",
+        "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "packages/forecast-adjustment/src/temperature-weather-research.ts",
+        "packages/forecast-adjustment/src/wind-canary.ts"
+      ],
+      "exports": {
+        "AdjustmentRevisionProjectionKind": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+        "MaintenanceShadowPredictionMetadata": "packages/forecast-adjustment/src/maintenance-shadow-values.ts"
+      }
+    },
+    {
+      "consumer": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "specifier": "@weather/database",
+      "packageJson": "packages/database/package.json",
+      "entry": "packages/database/src/index.ts",
+      "leaves": [
+        "packages/database/src/adjustment-maintenance.ts",
+        "packages/database/src/config.ts",
+        "packages/database/src/ecowitt-config.ts",
+        "packages/database/src/migrate.ts",
+        "packages/database/src/pool.ts",
+        "packages/database/src/public-stations-config.ts",
+        "packages/database/src/rain-adjustment.ts",
+        "packages/database/src/rain-collection.ts",
+        "packages/database/src/repositories.ts",
+        "packages/database/src/tempest-config.ts",
+        "packages/database/src/tides-config.ts"
+      ],
+      "compiledSource": {
+        "tsconfig": "packages/database/tsconfig.json",
+        "base": "tsconfig.base.json"
+      },
+      "exports": {
+        "AdjustmentRevisionCommitReceipt": "packages/database/src/adjustment-maintenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "specifier": "./maintenance-shadow-values.js",
+      "entry": "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+      "exports": {
+        "MaintenanceShadowTemperatureRecentErrorState": "packages/forecast-adjustment/src/maintenance-shadow-values.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "NormalizedWeatherRecord": "packages/domain/src/weather-record.ts"
+      }
+    },
+    {
+      "consumer": "packages/providers/src/ecowitt.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/tide-backfill-cli.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "BackfillChunkIdentity": "packages/domain/src/ingestion.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/backfill-cli.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "BackfillChunkIdentity": "packages/domain/src/ingestion.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/tempest-backfill-cli.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "BackfillChunkIdentity": "packages/domain/src/ingestion.ts",
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/public-stations-backfill-cli.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "BackfillChunkIdentity": "packages/domain/src/ingestion.ts"
+      }
+    },
+    {
+      "consumer": "apps/web/src/widget-forecast-v2.ts",
+      "specifier": "./widget-forecast.js",
+      "entry": "apps/web/src/widget-forecast.ts",
+      "exports": {
+        "WidgetForecastField": "apps/web/src/widget-forecast.ts",
+        "WidgetForecastHour": "apps/web/src/widget-forecast.ts",
+        "WidgetForecastSnapshot": "apps/web/src/widget-forecast.ts"
+      }
+    },
+    {
+      "consumer": "apps/web/src/widget-forecast-v3.ts",
+      "specifier": "./widget-forecast.js",
+      "entry": "apps/web/src/widget-forecast.ts",
+      "exports": {
+        "WidgetForecastSnapshot": "apps/web/src/widget-forecast.ts"
+      }
+    },
+    {
+      "consumer": "apps/web/src/widget-forecast-v3.ts",
+      "specifier": "./widget-forecast-v2.js",
+      "entry": "apps/web/src/widget-forecast-v2.ts",
+      "exports": {
+        "WidgetForecastV2Snapshot": "apps/web/src/widget-forecast-v2.ts"
+      }
+    },
+    {
+      "consumer": "packages/providers/src/contract.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "NormalizedWeatherRecord": "packages/domain/src/weather-record.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/config.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceCapability": "packages/domain/src/provenance.ts",
+        "SourceKind": "packages/domain/src/provenance.ts",
+        "StationKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/ecowitt-config.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/tempest-config.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/public-stations-config.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceCapability": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/database/src/tides-config.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceCapability": "packages/domain/src/provenance.ts",
+        "StationKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/algorithm-v1.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentMetric": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/apply.ts",
+      "specifier": "./calendar.js",
+      "entry": "packages/forecast-adjustment/src/calendar.ts",
+      "exports": {
+        "RuntimeCalendarFingerprint": "packages/forecast-adjustment/src/calendar.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "./wind-canary.js",
+      "entry": "packages/forecast-adjustment/src/wind-canary.ts",
+      "exports": {
+        "ForecastAdjustmentWindCanaryRuntimeBundle": "packages/forecast-adjustment/src/wind-canary.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "./maintenance-shadow-comparator.js",
+      "entry": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+      "exports": {
+        "MaintenanceShadowServingAuthority": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/evaluate.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentMetricBand": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastObservationProviderFamily": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastObservationStationKey": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastAdjustmentCandidateV2": "packages/domain/src/forecast-adjustment.ts",
+        "ForecastAdjustmentForecastIdentity": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "specifier": "./temperature-mos-runtime.js",
+      "entry": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exports": {
+        "TemperatureMosPermanentRuntimeModel": "packages/forecast-adjustment/src/temperature-mos-runtime.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "./candidate.js",
+      "entry": "packages/forecast-adjustment/src/candidate.ts",
+      "exports": {},
+      "tupleIdentityWrapper": "deepFreeze"
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "specifier": "./maintenance-runtime-package.js",
+      "entry": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "exports": {
+        "ForecastAdjustmentTemperatureMaintenanceRuntimePackage": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+        "ForecastAdjustmentWindMaintenanceRuntimePackage": "packages/forecast-adjustment/src/maintenance-runtime-package.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "specifier": "./rain-hurdle-wind-artifact.js",
+      "entry": "packages/forecast-adjustment/src/rain-hurdle-wind-artifact.ts",
+      "exports": {},
+      "literalStringValue": "RAIN_HURDLE_WIND_ARTIFACT_SHA256"
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "specifier": "./maintenance-shadow-comparator.js",
+      "entry": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+      "exports": {
+        "MaintenanceShadowServingAuthority": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts"
+      }
+    },
+    {
+      "consumer": "apps/api/src/main.ts",
+      "specifier": "@weather/forecast-adjustment",
+      "packageJson": "packages/forecast-adjustment/package.json",
+      "entry": "packages/forecast-adjustment/src/index.ts",
+      "leaves": [
+        "packages/forecast-adjustment/src/algorithm-v1.ts",
+        "packages/forecast-adjustment/src/apply.ts",
+        "packages/forecast-adjustment/src/bootstrap-v1.ts",
+        "packages/forecast-adjustment/src/calendar.ts",
+        "packages/forecast-adjustment/src/candidate.ts",
+        "packages/forecast-adjustment/src/evaluate.ts",
+        "packages/forecast-adjustment/src/evidence.ts",
+        "packages/forecast-adjustment/src/holdout-ledger.ts",
+        "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+        "packages/forecast-adjustment/src/maintenance-policy.ts",
+        "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+        "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+        "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+        "packages/forecast-adjustment/src/performance-scorecard.ts",
+        "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+        "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+        "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+        "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+        "packages/forecast-adjustment/src/runtime-bundle.ts",
+        "packages/forecast-adjustment/src/runtime-loader.ts",
+        "packages/forecast-adjustment/src/temperature-canary.ts",
+        "packages/forecast-adjustment/src/temperature-lead-research.ts",
+        "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+        "packages/forecast-adjustment/src/temperature-weather-research.ts",
+        "packages/forecast-adjustment/src/wind-canary.ts"
+      ],
+      "exports": {
+        "LoadedForecastAdjustmentRainRuntimeRegistryV1": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+        "LoadedForecastAdjustmentRuntimeV1": "packages/forecast-adjustment/src/runtime-loader.ts",
+        "LoadedForecastAdjustmentTemperatureCanaryRuntime": "packages/forecast-adjustment/src/runtime-loader.ts",
+        "LoadedForecastAdjustmentWindCanaryRuntime": "packages/forecast-adjustment/src/runtime-loader.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/source-identity.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts",
+        "SourceKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/backfill-cli.ts",
+      "specifier": "./source-identity.js",
+      "entry": "apps/worker/src/source-identity.ts",
+      "exports": {
+        "RuntimeSourceIdentity": "apps/worker/src/source-identity.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/tide-backfill-cli.ts",
+      "specifier": "./source-identity.js",
+      "entry": "apps/worker/src/source-identity.ts",
+      "exports": {
+        "RuntimeSourceIdentity": "apps/worker/src/source-identity.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/public-stations-backfill-cli.ts",
+      "specifier": "./source-identity.js",
+      "entry": "apps/worker/src/source-identity.ts",
+      "exports": {
+        "RuntimeSourceIdentity": "apps/worker/src/source-identity.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/tide-backfill-cli.ts",
+      "specifier": "@weather/database",
+      "packageJson": "packages/database/package.json",
+      "entry": "packages/database/src/index.ts",
+      "leaves": [
+        "packages/database/src/adjustment-maintenance.ts",
+        "packages/database/src/config.ts",
+        "packages/database/src/ecowitt-config.ts",
+        "packages/database/src/migrate.ts",
+        "packages/database/src/pool.ts",
+        "packages/database/src/public-stations-config.ts",
+        "packages/database/src/rain-adjustment.ts",
+        "packages/database/src/rain-collection.ts",
+        "packages/database/src/repositories.ts",
+        "packages/database/src/tempest-config.ts",
+        "packages/database/src/tides-config.ts"
+      ],
+      "compiledSource": {
+        "tsconfig": "packages/database/tsconfig.json",
+        "base": "tsconfig.base.json"
+      },
+      "exports": {
+        "TideStationConfiguration": "packages/database/src/tides-config.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/public-stations-backfill-cli.ts",
+      "specifier": "@weather/database",
+      "packageJson": "packages/database/package.json",
+      "entry": "packages/database/src/index.ts",
+      "leaves": [
+        "packages/database/src/adjustment-maintenance.ts",
+        "packages/database/src/config.ts",
+        "packages/database/src/ecowitt-config.ts",
+        "packages/database/src/migrate.ts",
+        "packages/database/src/pool.ts",
+        "packages/database/src/public-stations-config.ts",
+        "packages/database/src/rain-adjustment.ts",
+        "packages/database/src/rain-collection.ts",
+        "packages/database/src/repositories.ts",
+        "packages/database/src/tempest-config.ts",
+        "packages/database/src/tides-config.ts"
+      ],
+      "compiledSource": {
+        "tsconfig": "packages/database/tsconfig.json",
+        "base": "tsconfig.base.json"
+      },
+      "exports": {
+        "PublicStationConfigurationStation": "packages/database/src/public-stations-config.ts",
+        "PublicStationSourceConfiguration": "packages/database/src/public-stations-config.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/tempest-backfill-cli.ts",
+      "specifier": "@weather/database",
+      "packageJson": "packages/database/package.json",
+      "entry": "packages/database/src/index.ts",
+      "leaves": [
+        "packages/database/src/adjustment-maintenance.ts",
+        "packages/database/src/config.ts",
+        "packages/database/src/ecowitt-config.ts",
+        "packages/database/src/migrate.ts",
+        "packages/database/src/pool.ts",
+        "packages/database/src/public-stations-config.ts",
+        "packages/database/src/rain-adjustment.ts",
+        "packages/database/src/rain-collection.ts",
+        "packages/database/src/repositories.ts",
+        "packages/database/src/tempest-config.ts",
+        "packages/database/src/tides-config.ts"
+      ],
+      "compiledSource": {
+        "tsconfig": "packages/database/tsconfig.json",
+        "base": "tsconfig.base.json"
+      },
+      "exports": {
+        "TempestStationConfiguration": "packages/database/src/tempest-config.ts"
+      }
+    },
+    {
+      "consumer": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "ForecastObservationStationKey": "packages/domain/src/forecast-adjustment.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/sites.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "SourceKind": "packages/domain/src/provenance.ts",
+        "StationKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "apps/api/src/index.ts",
+      "specifier": "@weather/contracts",
+      "packageJson": "packages/contracts/package.json",
+      "entry": "packages/contracts/src/index.ts",
+      "leaves": [
+        "packages/contracts/src/forecast-archive.ts",
+        "packages/contracts/src/forecast.ts",
+        "packages/contracts/src/precipitation-and-tides.ts",
+        "packages/contracts/src/sites.ts",
+        "packages/contracts/src/weather-records.ts"
+      ],
+      "exports": {
+        "ApiForecastAdjustmentRuntime": "packages/contracts/src/forecast.ts",
+        "ApiForecastTemperatureAdjustmentRuntime": "packages/contracts/src/forecast.ts",
+        "ApiSite": "packages/contracts/src/sites.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/precipitation-and-tides.ts",
+      "specifier": "./sites.js",
+      "entry": "packages/contracts/src/sites.ts",
+      "exports": {
+        "ApiSite": "packages/contracts/src/sites.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/weather-records.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "SourceKind": "packages/domain/src/provenance.ts"
+      }
+    },
+    {
+      "consumer": "packages/contracts/src/weather-records.ts",
+      "specifier": "./sites.js",
+      "entry": "packages/contracts/src/sites.ts",
+      "exports": {
+        "ApiSite": "packages/contracts/src/sites.ts"
+      }
+    },
+    {
+      "consumer": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "specifier": "@weather/domain",
+      "packageJson": "packages/domain/package.json",
+      "entry": "packages/domain/src/index.ts",
+      "leaves": [
+        "packages/domain/src/forecast-adjustment.ts",
+        "packages/domain/src/forecast-anchor-record.ts",
+        "packages/domain/src/ingestion.ts",
+        "packages/domain/src/provenance.ts",
+        "packages/domain/src/rain-collection.ts",
+        "packages/domain/src/weather-record.ts"
+      ],
+      "exports": {
+        "JsonValue": "packages/domain/src/provenance.ts"
+      }
+    }
+  ],
+  "roots": [
+    {
+      "source": "packages/domain/src/rain-collection.ts",
+      "exportName": "RainCaptureOutcome",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/rain-collection.ts",
+      "exportName": "RainCollectionStatus",
+      "fields": {
+        "claims": "safe-unsigned-integer",
+        "compressedBytes": "safe-unsigned-integer",
+        "failedRequests": "safe-unsigned-integer",
+        "lastClaimAt": "utc-iso",
+        "lastForecastReceiptAt": "utc-iso",
+        "lastReceiptAt": "utc-iso",
+        "lastStationReceiptAt": "utc-iso",
+        "pausedUntil": "utc-iso",
+        "pendingRequests": "safe-unsigned-integer",
+        "receipts": "safe-unsigned-integer",
+        "stationsSeen": "safe-unsigned-integer",
+        "timelyForecasts": "safe-unsigned-integer",
+        "unknownRequests": "safe-unsigned-integer",
+        "validForecasts": "safe-unsigned-integer",
+        "validStationWindows": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ForecastDays",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveProjection",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchivePageHeaderV1",
+      "fields": {
+        "pageIndex": "safe-unsigned-integer",
+        "payloadOffset": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ArchiveTransferPageEnvelopeV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ArchiveTransferIdleEnvelopeV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchivePageAcknowledgementV1",
+      "fields": {
+        "acknowledgedAt": "utc-iso",
+        "pageIndex": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveTransferAcknowledgementV1",
+      "fields": {
+        "acknowledgedAt": "utc-iso",
+        "payloadLength": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveFinalAcknowledgementV1",
+      "fields": {
+        "acknowledgedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveRequiredInputRoot",
+      "fields": {
+        "count": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveRequiredInputs",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveInputSealV1",
+      "fields": {
+        "acknowledgedProjectionCount": "safe-unsigned-integer",
+        "sealedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveFinalPage",
+      "fields": {
+        "pageIndex": "safe-unsigned-integer",
+        "payloadLength": "safe-unsigned-integer",
+        "payloadOffset": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveFinalManifestV1",
+      "fields": {
+        "acknowledgedProjectionCount": "safe-unsigned-integer",
+        "evidenceGapCount": "safe-unsigned-integer",
+        "finalizedAt": "utc-iso",
+        "pageCount": "safe-unsigned-integer",
+        "totalPayloadBytes": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveFinalManifestV2",
+      "fields": {
+        "acknowledgedProjectionCount": "safe-unsigned-integer",
+        "evidenceGapCount": "safe-unsigned-integer",
+        "finalizedAt": "utc-iso",
+        "pageCount": "safe-unsigned-integer",
+        "totalPayloadBytes": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ForecastArchiveFinalManifest",
+      "objectUnion": {
+        "ForecastArchiveFinalManifestV1": "V1",
+        "ForecastArchiveFinalManifestV2": "V2"
+      },
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ArchiveTransferFinalEnvelopeV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/forecast-archive.ts",
+      "exportName": "ArchiveTransferEnvelope",
+      "objectUnion": {
+        "ArchiveTransferFinalEnvelopeV1": "Final",
+        "ArchiveTransferPageEnvelopeV1": "Page",
+        "ArchiveTransferIdleEnvelopeV1": "Idle"
+      },
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiRainAdjustmentDecision",
+      "fields": {
+        "correctedPrecipitationMm": "finite-f64",
+        "rawBestMatchPrecipitationMm": "finite-f64",
+        "sourceForecast.modelLeadHours": "safe-unsigned-integer",
+        "sourceForecast.rawPrecipitationMm": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationQualityRule",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationStationKey",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationSourceLineage",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "exportName": "ForecastAdjustmentRainActiveArtifactV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "exportName": "ForecastAdjustmentRainRuntimeRegistryV1",
+      "discriminator": "rawReason",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/precipitation-and-tides.ts",
+      "exportName": "ApiDailyPrecipitation",
+      "fields": {
+        "accumulationMm": "finite-f64",
+        "validThrough": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/contracts/src/precipitation-and-tides.ts",
+      "exportName": "ApiTideRecord",
+      "fields": {
+        "validAt": "utc-iso",
+        "waterLevelM": "finite-f64"
+      }
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiTrendPoint",
+      "fields": {
+        "metrics.apparentTemperatureC": "finite-f64",
+        "metrics.pm25MicrogramsPerCubicMeter": "finite-f64",
+        "metrics.precipitationMm": "finite-f64",
+        "metrics.pressureHpa": "finite-f64",
+        "metrics.relativeHumidityPercent": "finite-f64",
+        "metrics.temperatureC": "finite-f64",
+        "metrics.temperatureMaximumC": "finite-f64",
+        "metrics.temperatureMinimumC": "finite-f64",
+        "metrics.windDirectionDegrees": "finite-f64",
+        "metrics.windGustMps": "finite-f64",
+        "metrics.windSpeedMps": "finite-f64",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiAirQualityHourlyContext",
+      "fields": {
+        "hourlyPm25": "finite-f64",
+        "through": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiPropertySensorSnapshot",
+      "fields": {
+        "channel": "safe-unsigned-integer",
+        "readings": "ordered-finite-f64-record"
+      }
+    },
+    {
+      "source": "packages/domain/src/provenance.ts",
+      "exportName": "SourceKind",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/provenance.ts",
+      "exportName": "StationKind",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/sites.ts",
+      "exportName": "ApiSource",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/sites.ts",
+      "exportName": "ApiStation",
+      "fields": {
+        "latitude": "finite-f64",
+        "longitude": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/contracts/src/sites.ts",
+      "exportName": "ApiSite",
+      "fields": {
+        "latitude": "finite-f64",
+        "longitude": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiWeatherRecord",
+      "fields": {
+        "freshness.ageSeconds": "safe-unsigned-integer",
+        "metadata.provider.elevationM": "finite-f64",
+        "metadata.quality.confidencePercent": "finite-f64",
+        "metrics.apparentTemperatureC": "finite-f64",
+        "metrics.blackGlobeTemperatureC": "finite-f64",
+        "metrics.cloudCoverPercent": "finite-f64",
+        "metrics.pm25MicrogramsPerCubicMeter": "finite-f64",
+        "metrics.precipitationMm": "finite-f64",
+        "metrics.precipitationRateMmPerHour": "finite-f64",
+        "metrics.pressureHpa": "finite-f64",
+        "metrics.relativeHumidityPercent": "finite-f64",
+        "metrics.soilElectricalConductivityMicrosiemensPerCm": "finite-f64",
+        "metrics.soilMoisturePercent": "finite-f64",
+        "metrics.solarRadiationWm2": "finite-f64",
+        "metrics.temperatureC": "finite-f64",
+        "metrics.uvIndex": "finite-f64",
+        "metrics.windDirectionDegrees": "finite-f64",
+        "metrics.windGustMps": "finite-f64",
+        "metrics.windSpeedMps": "finite-f64",
+        "metrics.wetBulbGlobeTemperatureC": "finite-f64",
+        "productRunAt": "utc-iso",
+        "receivedAt": "utc-iso",
+        "revisionCount": "safe-unsigned-integer",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiCurrentWeatherRecord",
+      "base": "ApiWeatherRecord",
+      "fields": {
+        "pressureChange3hHpa": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentMetric",
+      "catalog": {
+        "kind": "satisfies-string-tuple"
+      },
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryMetric",
+      "catalog": {
+        "kind": "satisfies-string-tuple"
+      },
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastLeadBandKey",
+      "catalog": {
+        "kind": "string-property",
+        "key": "key"
+      },
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentReasonCode",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentRawForecastProvenance",
+      "fields": {
+        "targetLeadHours": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "TemperatureCanarySourceForecast",
+      "fields": {
+        "modelLeadHours": "safe-unsigned-integer",
+        "rawRelativeHumidityPercent": "finite-f64",
+        "rawTemperatureC": "finite-f64",
+        "rawWindSpeedMps": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentFailRawDecision",
+      "fields": {
+        "adjustedMetrics": "empty-metric-record",
+        "appliedMetrics": "empty-json-array",
+        "contractVersion": "const-string-property"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentActiveDecision",
+      "fields": {
+        "adjustedMetrics": "finite-metric-record",
+        "contractVersion": "const-string-property",
+        "reasonCode": "exact-null"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryActiveDecision",
+      "fields": {
+        "adjustedMetrics": "finite-metric-record",
+        "contractVersion": "const-string-property",
+        "reasonCode": "exact-null"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentDecision",
+      "objectUnion": {
+        "ForecastAdjustmentActiveDecision": "Active",
+        "ForecastAdjustmentFailRawDecision": "FailRaw",
+        "ForecastAdjustmentWindCanaryActiveDecision": "WindCanaryActive"
+      },
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeRawReason",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "TemperatureCanaryDecisionReason",
+      "literalUnion": {
+        "sourceAlias": "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1",
+        "field": "reasonCode"
+      },
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastTemperatureCanaryDecisionV1",
+      "fields": {
+        "contractVersion": "const-string",
+        "correctedTemperatureC": "finite-f64",
+        "rawBestMatchTemperatureC": "finite-f64",
+        "sourceForecast": "flat-interface-extension",
+        "sourceForecast.operationalHorizonHours": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/apply.ts",
+      "exportName": "ForecastAdjustmentWindQualifiedMaintenanceDecision",
+      "fields": {
+        "adjustedMetrics": "finite-partial-metric-record",
+        "reasonCode": "exact-null"
+      },
+      "fieldProjections": {
+        "appliedMetrics": {
+          "kind": "const-catalog-array",
+          "root": "ForecastAdjustmentWindCanaryMetric"
+        },
+        "leadBand": {
+          "kind": "return-enum",
+          "root": "ForecastLeadBandKey"
+        }
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiForecastAdjustmentDecision",
+      "importedObjectUnion": true,
+      "objectUnion": {
+        "ForecastAdjustmentDecision": "Domain",
+        "ForecastAdjustmentWindQualifiedMaintenanceDecision": "MaintenanceQualified"
+      },
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiForecastWeatherRecord",
+      "base": "ApiWeatherRecord",
+      "importedBase": true,
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiForecastAdjustmentRuntime",
+      "fields": {
+        "loadedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiForecastTemperatureAdjustmentRuntime",
+      "fields": {
+        "loadedAt": "utc-iso",
+        "source.firstReceivedAt": "utc-iso",
+        "source.hourCount": "safe-unsigned-integer",
+        "source.latestRunInitializedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiRainAdjustmentRuntime",
+      "fields": {
+        "source.hourCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/forecast.ts",
+      "exportName": "ApiForecastResponse",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "BackfillChunkIdentity",
+      "fields": {
+        "intervalEndExclusive": "utc-iso",
+        "intervalStart": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "BackfillChunkOutcome",
+      "base": "BackfillChunkIdentity",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/provenance.ts",
+      "exportName": "JsonValue",
+      "recursiveJson": "JsonPrimitive",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/weather-record.ts",
+      "exportName": "CanonicalWeatherMetrics",
+      "fields": {
+        "apparentTemperatureC": "finite-f64",
+        "blackGlobeTemperatureC": "finite-f64",
+        "cloudCoverPercent": "finite-f64",
+        "pm25MicrogramsPerCubicMeter": "finite-f64",
+        "precipitationMm": "finite-f64",
+        "precipitationRateMmPerHour": "finite-f64",
+        "pressureHpa": "finite-f64",
+        "relativeHumidityPercent": "finite-f64",
+        "soilElectricalConductivityMicrosiemensPerCm": "finite-f64",
+        "soilMoisturePercent": "finite-f64",
+        "solarRadiationWm2": "finite-f64",
+        "temperatureC": "finite-f64",
+        "uvIndex": "finite-f64",
+        "waterLevelM": "finite-f64",
+        "windDirectionDegrees": "finite-f64",
+        "windGustMps": "finite-f64",
+        "windSpeedMps": "finite-f64",
+        "wetBulbGlobeTemperatureC": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/domain/src/weather-record.ts",
+      "exportName": "DeviceMetadata",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/weather-record.ts",
+      "exportName": "WeatherRecordMetadata",
+      "fields": {
+        "provider": "ordered-json-object",
+        "quality": "ordered-json-object"
+      }
+    },
+    {
+      "source": "packages/domain/src/weather-record.ts",
+      "exportName": "NormalizedWeatherRecord",
+      "fields": {
+        "productRunAt": "utc-iso",
+        "receivedAt": "utc-iso",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/domain/src/weather-record.ts",
+      "exportName": "NormalizedWeatherRecordInput",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "IngestionMode",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "IngestionState",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "IngestionErrorClassification",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "IngestionError",
+      "fields": {
+        "metadata": "ordered-json-object"
+      }
+    },
+    {
+      "source": "packages/domain/src/ingestion.ts",
+      "exportName": "IngestionRun",
+      "fields": {
+        "attempts": "safe-unsigned-integer",
+        "deadlineAt": "utc-iso",
+        "recordCount": "safe-unsigned-integer",
+        "requestedEndExclusive": "utc-iso",
+        "requestedStart": "utc-iso",
+        "startedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/domain/src/provenance.ts",
+      "exportName": "SourceCapability",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/provenance.ts",
+      "exportName": "SourceMaterialConfiguration",
+      "fields": {
+        "location.latitude": "finite-f64",
+        "location.longitude": "finite-f64",
+        "version": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-anchor-record.ts",
+      "exportName": "FixedForecastLeadHours",
+      "fields": {},
+      "catalog": {
+        "kind": "unsigned-safe-integer-tuple"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-anchor-record.ts",
+      "exportName": "NormalizedForecastAnchorRecord",
+      "fields": {
+        "contractVersion": "const-string",
+        "receivedAt": "utc-iso",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-anchor-record.ts",
+      "exportName": "NormalizedForecastAnchorRecordInput",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ScheduledCheckpointState",
+      "fields": {
+        "lastCommittedAt": "utc-iso",
+        "lastValidAt": "utc-iso",
+        "providerCursor": "ordered-json-object",
+        "version": "finite-f64",
+        "windowEndExclusive": "utc-iso",
+        "windowStart": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "StartIngestionRunInput",
+      "fields": {
+        "attempts": "safe-unsigned-integer",
+        "requestMetadata": "ordered-json-object"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "PersistedWeatherAdjustmentRevision",
+      "fields": {
+        "logicalReceivedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "CompleteBackfillIngestionInput",
+      "fields": {
+        "attempts": "safe-unsigned-integer",
+        "responseMetadata": "ordered-json-object"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "CompleteForecastAnchorBackfillIngestionInput",
+      "fields": {
+        "attempts": "safe-unsigned-integer",
+        "responseMetadata": "ordered-json-object"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "FailIngestionRunInput",
+      "fields": {
+        "attempts": "safe-unsigned-integer",
+        "responseMetadata": "ordered-json-object"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "CurrentQuery",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastProductSelection",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastQuery",
+      "fields": {
+        "hours": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastPressureContextQuery",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastTrainingQuery",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastTrainingCohort",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastReferenceKind",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "FixedLeadAnchorTrainingRow",
+      "fields": {
+        "contractVersion": "const-string-property",
+        "continuousLeadHours": "safe-unsigned-integer",
+        "targetLeadHours": "safe-unsigned-integer",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "LegacyV4RetrievalSnapshotTrainingRow",
+      "fields": {
+        "contractVersion": "const-string-property",
+        "continuousLeadHours": "finite-f64",
+        "referenceAt": "utc-iso",
+        "targetLeadHours": "safe-unsigned-integer",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "LegacyV4RetrievalSnapshotTrainingRowInput",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastTrainingRow",
+      "fields": {},
+      "objectUnion": {
+        "FixedLeadAnchorTrainingRow": "FixedLeadAnchor",
+        "LegacyV4RetrievalSnapshotTrainingRow": "LegacyV4RetrievalSnapshot"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastTrainingCohorts",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationProviderFamily",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationExcludedSourceLineage",
+      "fields": {
+        "acceptedIntervals": "empty-json-array"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastObservationStation",
+      "fields": {
+        "distanceMeters": "finite-f64",
+        "latitude": "finite-f64",
+        "longitude": "finite-f64",
+        "nearestRank": "safe-unsigned-integer",
+        "unnormalizedSpatialWeight": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastNetworkEventIdentity",
+      "fields": {
+        "contractVersion": "const-string-property",
+        "targetLeadHours": "safe-unsigned-integer",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentTrainingProvenance",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentMetricBand",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentForecastIdentity",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentCoefficient",
+      "fields": {
+        "coefficient": "finite-f64",
+        "effectiveEventCount": "finite-f64",
+        "level": "unsigned-safe-integer-enum",
+        "month": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentTrainingEnvelope",
+      "fields": {
+        "maximum": "finite-f64",
+        "minimum": "finite-f64"
+      },
+      "fieldProjections": {
+        "metric": {
+          "kind": "exclude-literal",
+          "root": "ForecastAdjustmentMetric"
+        }
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentMetricPolicy",
+      "fields": {
+        "correctionMaximum": "finite-f64",
+        "correctionMinimum": "finite-f64",
+        "finalMaximum": "finite-f64",
+        "finalMinimum": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentCandidateV2",
+      "fields": {
+        "contractVersion": "const-string-property"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryTrainingIdentity",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryCandidateV1",
+      "fields": {
+        "contractVersion": "const-string-property"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentRegistryActiveBundleV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentRegistryV1",
+      "fields": {
+        "contractVersion": "const-string-property"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRegistryActiveBundleV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRegistryV1",
+      "fields": {
+        "contractVersion": "const-string-property"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentPairedScore",
+      "fields": {
+        "adjustedLoss": "finite-f64",
+        "bootstrapLowerBound": "finite-f64",
+        "bootstrapUpperBound": "finite-f64",
+        "rawLoss": "finite-f64",
+        "skill": "finite-f64",
+        "eventCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastSeasonDaypartKey",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentCriticalSliceScore",
+      "fields": {
+        "[nearest_three].key": "const-string"
+      },
+      "base": "ForecastAdjustmentPairedScore",
+      "discriminator": "kind"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentMetricBandEvaluation",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/algorithm-v1.ts",
+      "exportName": "SanitizedTrainingMetrics",
+      "fields": {
+        "relativeHumidityPercent": "finite-f64",
+        "temperatureC": "finite-f64",
+        "windDirectionDegrees": "finite-f64",
+        "windGustMps": "finite-f64",
+        "windSpeedMps": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/evaluate.ts",
+      "exportName": "DevelopmentLosoStationScoreV1",
+      "fields": {
+        "adjustedLoss": "finite-f64",
+        "eventCount": "safe-unsigned-integer",
+        "pointSkill": "finite-f64",
+        "rawLoss": "finite-f64",
+        "remainingNetworkScoreEvents": "safe-unsigned-integer",
+        "scoreMatches": "safe-unsigned-integer",
+        "trainingMatches": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/evaluate.ts",
+      "exportName": "DevelopmentLosoFoldResultV1",
+      "fields": {
+        "bootstrapLowerBound": "finite-f64",
+        "fold": "unsigned-safe-integer-enum",
+        "nonnegativeStationFraction": "finite-f64",
+        "providerBalancedAdjustedLoss": "finite-f64",
+        "providerBalancedRawLoss": "finite-f64",
+        "providerBalancedSkill": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/evaluate.ts",
+      "exportName": "ForecastAdjustmentDevelopmentReportV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/evidence.ts",
+      "exportName": "ForecastAdjustmentInsufficientDataReportV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentEvaluationReportV2",
+      "fields": {
+        "contractVersion": "const-string-property"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentQualificationGateName",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentQualificationGate",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentEvidenceRedundancy",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentQualificationReceiptV2",
+      "fields": {
+        "contractVersion": "const-string-property"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentEvidenceTripleV2",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentRuntimeBundleV2",
+      "fields": {
+        "contractVersion": "const-string-property"
+      },
+      "base": "ForecastAdjustmentEvidenceTripleV2"
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryBridgeScore",
+      "fields": {
+        "adjustedLoss": "finite-f64",
+        "eventCount": "safe-unsigned-integer",
+        "rawLoss": "finite-f64",
+        "skill": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryBridgeEvaluation",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryTransferReportV1",
+      "fields": {
+        "contractVersion": "const-string-property"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryAuthorizationV1",
+      "fields": {
+        "contractVersion": "const-string-property"
+      }
+    },
+    {
+      "source": "packages/domain/src/forecast-adjustment.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRuntimeBundleV1",
+      "fields": {
+        "contractVersion": "const-string-property"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/wind-canary.ts",
+      "exportName": "ForecastAdjustmentWindCanaryAuthorizationV2",
+      "fields": {
+        "contractVersion": "const-string",
+        "expiresAt": "exact-null"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/wind-canary.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRuntimeBundleV2",
+      "fields": {
+        "contractVersion": "const-string"
+      },
+      "base": "ForecastAdjustmentWindCanaryRuntimeBundleV1",
+      "omitBaseFields": [
+        "authorization",
+        "contractVersion"
+      ]
+    },
+    {
+      "source": "packages/forecast-adjustment/src/wind-canary.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRuntimeBundle",
+      "fields": {},
+      "importedObjectUnion": true,
+      "objectUnion": {
+        "ForecastAdjustmentWindCanaryRuntimeBundleV1": "TimeLimited",
+        "ForecastAdjustmentWindCanaryRuntimeBundleV2": "Permanent"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/wind-canary.ts",
+      "exportName": "ForecastAdjustmentWindCanaryCandidateInputV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryRecentErrorState",
+      "fields": {
+        "b24C": "finite-f64",
+        "b72C": "finite-f64",
+        "mad72C": "finite-f64",
+        "localDates": "safe-unsigned-integer",
+        "n24": "safe-unsigned-integer",
+        "n72": "safe-unsigned-integer",
+        "targetRunInitializedAt": "utc-iso",
+        "windowEndValidAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryHour",
+      "fields": {
+        "modelLeadHours": "safe-unsigned-integer",
+        "rawTemperatureC": "finite-f64",
+        "rawRelativeHumidityPercent": "finite-f64",
+        "rawWindSpeedMps": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryRun",
+      "fields": {
+        "firstReceivedAt": "utc-iso",
+        "runInitializedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanarySidecar",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryStatus",
+      "fields": {
+        "firstReceivedAt": "utc-iso",
+        "latestRunInitializedAt": "utc-iso",
+        "hourCount": "safe-unsigned-integer"
+      },
+      "indexedLiteralSources": {
+        "EcmwfTemperatureCanaryRun": "packages/database/src/repositories.ts"
+      },
+      "fieldProjections": {
+        "stateStatus": {
+          "kind": "indexed-literals",
+          "root": "EcmwfTemperatureCanaryRun"
+        }
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryAuditRow",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "EcmwfTemperatureCanaryPriorHour",
+      "fields": {
+        "runInitializedAt": "utc-iso"
+      },
+      "base": "EcmwfTemperatureCanaryHour"
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "PersistEcmwfTemperatureCanaryRunInput",
+      "fields": {},
+      "indexedLiteralSources": {
+        "EcmwfTemperatureCanaryRun": "packages/database/src/repositories.ts"
+      },
+      "fieldProjections": {
+        "adapterVersion": {
+          "kind": "indexed-literals",
+          "root": "EcmwfTemperatureCanaryRun"
+        },
+        "hours": {
+          "kind": "omit-interface-array",
+          "root": "EcmwfTemperatureCanaryHour"
+        },
+        "modelCycle": {
+          "kind": "indexed-literals",
+          "root": "EcmwfTemperatureCanaryRun"
+        },
+        "stateStatus": {
+          "kind": "indexed-literals",
+          "root": "EcmwfTemperatureCanaryRun"
+        },
+        "upstreamModel": {
+          "kind": "indexed-literals",
+          "root": "EcmwfTemperatureCanaryRun"
+        }
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeForecast",
+      "fields": {
+        "cohort": "frozen-const-string-property",
+        "modelLeadHours": "safe-unsigned-integer",
+        "rawRelativeHumidityPercent": "finite-f64",
+        "rawTemperatureC": "finite-f64",
+        "rawWindSpeedMps": "finite-f64",
+        "runInitializedAt": "utc-iso",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeRecentErrorState",
+      "fields": {
+        "cohort": "frozen-const-string-property",
+        "b24C": "finite-f64",
+        "b72C": "finite-f64",
+        "mad72C": "finite-f64",
+        "localDates": "safe-unsigned-integer",
+        "n24": "safe-unsigned-integer",
+        "n72": "safe-unsigned-integer",
+        "maximumSourceRunInitializedAt": "utc-iso",
+        "maximumSourceValidAt": "utc-iso",
+        "targetRunInitializedAt": "utc-iso",
+        "windowEndValidAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeStrengthBand",
+      "fields": {
+        "alpha": "finite-f64",
+        "trainingCutoffUtc": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeModelMaterial",
+      "fields": {
+        "adaptiveCoefficients": "finite-f64",
+        "cohort": "frozen-const-string-property",
+        "directCoefficients": "finite-f64",
+        "learnedStrengthContractVersion": "const-string",
+        "scope": "frozen-const-string-property-union",
+        "trainingCutoffUtc": "utc-iso"
+      },
+      "localInterface": true,
+      "wireFieldNames": {
+        "strengthBands.1-6": "hours1To6",
+        "strengthBands.7-12": "hours7To12"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeModel",
+      "fields": {
+        "contractVersion": "const-string"
+      },
+      "base": "TemperatureMosRuntimeModelMaterial"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosPermanentRuntimeModel",
+      "fields": {
+        "contractVersion": "const-string",
+        "effectiveFrom": "utc-iso",
+        "latestTrainingValidAt": "utc-iso"
+      },
+      "base": "TemperatureMosRuntimeModelMaterial"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosServingModel",
+      "fields": {},
+      "objectUnion": {
+        "TemperatureMosRuntimeModel": "Monthly",
+        "TemperatureMosPermanentRuntimeModel": "Permanent"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeInput",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryAuthorizationV1",
+      "fields": {
+        "activatedAt": "utc-iso",
+        "authorizedAt": "utc-iso",
+        "expiresAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryAuthorizationV2",
+      "fields": {
+        "activatedAt": "utc-iso",
+        "authorizedAt": "utc-iso",
+        "contractVersion": "const-string",
+        "expiresAt": "exact-null"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1",
+      "fields": {
+        "contractVersion": "const-string",
+        "servedForecastIdentity.maximumReceiptAgeHours": "safe-unsigned-integer",
+        "servedForecastIdentity.sourceDelayHours": "unsigned-safe-integer-literal"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV2",
+      "fields": {
+        "contractVersion": "const-string"
+      },
+      "base": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1",
+      "omitBaseFields": [
+        "authorization",
+        "contractVersion",
+        "model"
+      ]
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryRuntimeBundle",
+      "fields": {},
+      "objectUnion": {
+        "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1": "TimeLimited",
+        "ForecastAdjustmentTemperatureCanaryRuntimeBundleV2": "Permanent"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureMaintenanceMaterial",
+      "fields": {
+        "maintenanceAuthority": "readonly-inline-object"
+      },
+      "fieldProjections": {
+        "servedForecastIdentity": {
+          "kind": "interface-field",
+          "root": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1"
+        },
+        "trainingForecastIdentity": {
+          "kind": "interface-field",
+          "root": "ForecastAdjustmentTemperatureCanaryRuntimeBundleV1"
+        }
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryRegistryV1",
+      "fields": {
+        "contractVersion": "const-string"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1",
+      "fields": {},
+      "discriminator": "state"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeAppliedResult",
+      "fields": {
+        "alpha": "finite-f64",
+        "incumbentHalfStrengthTemperatureC": "finite-f64",
+        "predictionTemperatureC": "finite-f64",
+        "rawTemperatureC": "finite-f64",
+        "reason": "exact-null",
+        "unscaledCorrectionC": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeRawResult",
+      "fields": {
+        "predictionTemperatureC": "runtime-f64",
+        "rawTemperatureC": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-mos-runtime.ts",
+      "exportName": "TemperatureMosRuntimeResult",
+      "fields": {},
+      "objectUnion": {
+        "TemperatureMosRuntimeAppliedResult": "Applied",
+        "TemperatureMosRuntimeRawResult": "Raw"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/temperature-canary.ts",
+      "exportName": "ApplyTemperatureCanaryInputV1",
+      "fields": {
+        "rawBestMatchTemperatureC": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "HistoryQuery",
+      "fields": {
+        "cursor": "readonly-inline-object",
+        "limit": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "TrendQuery",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "DailyPrecipitationQuery",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "TideQuery",
+      "fields": {
+        "limit": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/rain-adjustment.ts",
+      "exportName": "RainAdjustmentCapture",
+      "fields": {
+        "body": "uint8array-bytes",
+        "completedAt": "utc-iso",
+        "runInitializedAt": "utc-iso",
+        "stationId": "safe-unsigned-integer",
+        "windowEndExclusive": "utc-iso",
+        "windowStart": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/rain-adjustment.ts",
+      "exportName": "RainAdjustmentHour",
+      "fields": {
+        "correctedPrecipitationMm": "finite-f64",
+        "modelLeadHours": "safe-unsigned-integer",
+        "rawPrecipitationMm": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/rain-adjustment.ts",
+      "exportName": "RainAdjustmentRun",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/rain-adjustment.ts",
+      "exportName": "PersistedRainAdjustmentRevision",
+      "fields": {
+        "generatedAt": "utc-iso",
+        "runInitializedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetCapture",
+      "fields": {
+        "body": "uint8array-bytes",
+        "completedAt": "utc-iso",
+        "stationId": "safe-unsigned-integer",
+        "windowEndExclusive": "utc-iso",
+        "windowStart": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/domain/src/rain-collection.ts",
+      "exportName": "RainCaptureReceipt",
+      "fields": {
+        "body": "uint8array-bytes",
+        "completedAt": "utc-iso",
+        "httpStatus": "safe-unsigned-integer",
+        "metadata": "ordered-json-scalar-object",
+        "rowCount": "safe-unsigned-integer",
+        "startedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetRevisionRow",
+      "fields": {
+        "stationId": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetRevisionGroup",
+      "fields": {}
+    },
+    {
+      "source": "packages/domain/src/rain-collection.ts",
+      "exportName": "RainCaptureRequest",
+      "discriminator": "kind",
+      "readonlyTaggedUnion": true,
+      "fields": {
+        "[forecast].attempt": "unsigned-safe-integer-enum",
+        "[forecast].runInitializedAt": "utc-iso",
+        "[station].endExclusive": "utc-iso",
+        "[station].start": "utc-iso",
+        "[station].stationId": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRevisionCommitReceipt",
+      "fields": {
+        "archiveCommittedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRevisionRowReceipt",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRevisionGap",
+      "fields": {},
+      "fieldProjections": {
+        "projectionKind": {
+          "kind": "interface-field",
+          "root": "AdjustmentRevisionCommitReceipt"
+        }
+      }
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetSource",
+      "fields": {
+        "locationId": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetSourceCatalog",
+      "fields": {
+        "contractVersion": "const-string"
+      }
+    },
+    {
+      "source": "packages/database/src/rain-collection.ts",
+      "exportName": "RainFixedGaugeTargetRevisionResult",
+      "fields": {},
+      "discriminator": "state",
+      "readonlyTaggedUnion": true
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentWeatherRevisionPointer",
+      "fields": {
+        "productRunAt": "utc-iso",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentForecastAnchorRevisionPointer",
+      "fields": {
+        "leadHours": "safe-unsigned-integer",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRainGateRevisionPointer",
+      "fields": {
+        "runInitializedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentEcmwfTemperatureRevisionPointer",
+      "fields": {
+        "runInitializedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentWeatherRevisionAdmissionKey",
+      "fields": {},
+      "pick": {
+        "root": "AdjustmentWeatherRevisionPointer",
+        "fields": [
+          "productRunAt",
+          "sourceId",
+          "sourceKind",
+          "storedContentSha256",
+          "validAt"
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentForecastAnchorRevisionAdmissionKey",
+      "fields": {},
+      "pick": {
+        "root": "AdjustmentForecastAnchorRevisionPointer",
+        "fields": [
+          "leadHours",
+          "sourceId",
+          "storedContentSha256",
+          "validAt"
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRainGateRevisionAdmissionKey",
+      "fields": {},
+      "pick": {
+        "root": "AdjustmentRainGateRevisionPointer",
+        "fields": [
+          "inputSha256",
+          "modelSha256",
+          "runInitializedAt",
+          "storedContentSha256"
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentEcmwfTemperatureRevisionAdmissionKey",
+      "fields": {},
+      "pick": {
+        "root": "AdjustmentEcmwfTemperatureRevisionPointer",
+        "fields": [
+          "providerResponseSha256",
+          "runInitializedAt",
+          "siteId",
+          "storedContentSha256"
+        ]
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentShadowFamily",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentShadowPrediction",
+      "fields": {
+        "bodyByteCount": "safe-unsigned-integer",
+        "issuedAt": "utc-iso",
+        "maxValidAt": "utc-iso",
+        "minValidAt": "utc-iso",
+        "rowCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentRevisionServingSnapshot",
+      "fields": {
+        "cutoffAt": "utc-iso",
+        "entries": "readonly-inline-object-array",
+        "entries.logicalReceivedAt": "utc-iso",
+        "entryCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentShadowRegistrationReceipt",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentShadowRegistrationSlot",
+      "fields": {
+        "horizonEndAt": "utc-iso",
+        "terminalAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentShadowPredictionReceipt",
+      "fields": {
+        "committedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentHotPrediction",
+      "fields": {
+        "maxValidAt": "utc-iso",
+        "minValidAt": "utc-iso",
+        "rowCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentConfirmationAvailability",
+      "fields": {
+        "finalizedPredictionCount": "safe-unsigned-integer",
+        "finalizedThroughAt": "utc-iso",
+        "hotPredictionCount": "safe-unsigned-integer",
+        "intervalEndAt": "utc-iso",
+        "intervalStartAt": "utc-iso",
+        "metadataGeneration": "safe-unsigned-integer",
+        "missingExpectedDueKeys": "exact-null",
+        "targetCutoffAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/adjustment-maintenance.ts",
+      "exportName": "AdjustmentConfirmationChunkAuthorization",
+      "fields": {
+        "chunkCount": "unsigned-safe-integer-enum",
+        "chunkIndex": "safe-unsigned-integer",
+        "targetCutoffAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRevisionProjectionKind",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "ApiMaintenanceShadowFamily",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "MaintenanceShadowGapReason",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentRevisionGapReason",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentRevisionStageReceipt",
+      "fields": {
+        "durableAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainMaintenanceControlStateStageReceipt",
+      "fields": {
+        "durableAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainMaintenanceControlStateGapInput",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainFixedGaugeTargetGapInput",
+      "fields": {
+        "logicalHourAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainFixedGaugeTargetGapReceipt",
+      "fields": {
+        "gapAt": "utc-iso"
+      },
+      "base": "RainFixedGaugeTargetGapInput"
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainFixedGaugeTargetGapStatusInput",
+      "fields": {
+        "logicalHourAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentRevisionPublishReceipt",
+      "fields": {
+        "committedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentRevisionBatchPublishReceipt",
+      "fields": {
+        "committedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentRevisionGapInput",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenanceStageReceipt",
+      "fields": {
+        "durableAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenancePublishReceipt",
+      "fields": {
+        "committedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenanceGapInput",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+      "exportName": "MaintenanceShadowSourceIdentity",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+      "exportName": "MaintenanceShadowPredictionMetadata",
+      "fields": {
+        "bodyByteCount": "safe-unsigned-integer",
+        "issuedAt": "utc-iso",
+        "maxValidAt": "utc-iso",
+        "minValidAt": "utc-iso",
+        "rowCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenanceStageInput",
+      "fields": {
+        "body": "uint8array-bytes",
+        "comparator": "uint8array-bytes",
+        "sourceProjection": "uint8array-bytes"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenancePublishInput",
+      "fields": {
+        "body": "uint8array-bytes",
+        "comparator": "uint8array-bytes",
+        "sourceProjection": "uint8array-bytes",
+        "predictionCommittedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "AdjustmentMaintenanceCaptureRequest",
+      "fields": {
+        "issuedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "RainFixedGaugeTargetGapStatus",
+      "fields": {
+        "[present].gap": "readonly-inline-object",
+        "[present].gap.gapAt": "utc-iso",
+        "[present].gap.logicalHourAt": "utc-iso"
+      },
+      "discriminator": "state",
+      "readonlyTaggedUnion": true
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRevisionProjectionFamily",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-values.ts",
+      "exportName": "MaintenanceShadowTemperatureRecentErrorState",
+      "fields": {
+        "b24C": "finite-f64",
+        "b72C": "finite-f64",
+        "localDates": "safe-unsigned-integer",
+        "mad72C": "finite-f64",
+        "maximumSourceRunInitializedAt": "utc-iso",
+        "maximumSourceValidAt": "utc-iso",
+        "n24": "safe-unsigned-integer",
+        "n72": "safe-unsigned-integer",
+        "targetRunInitializedAt": "utc-iso",
+        "windowEndValidAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRevisionProjection",
+      "fields": {
+        "contractVersion": "const-string",
+        "logicalKey": "ordered-json-key-object",
+        "logicalReceivedAt": "utc-iso",
+        "rows": "ordered-json-scalar-object-array",
+        "source": "ordered-json-nullable-string-object"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRevisionBatchProjection",
+      "fields": {
+        "contractVersion": "const-string",
+        "logicalKey": "ordered-json-key-object",
+        "logicalReceivedAt": "utc-iso",
+        "rows": "ordered-json-scalar-object-array",
+        "source": "ordered-json-nullable-string-object"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentTemperatureNativeSourceProjection",
+      "fields": {
+        "contractVersion": "const-string",
+        "logicalReceivedAt": "utc-iso"
+      },
+      "fieldProjections": {
+        "logicalKey": {
+          "kind": "interface-field",
+          "root": "AdjustmentRevisionProjection"
+        },
+        "rows": {
+          "kind": "interface-field",
+          "root": "AdjustmentRevisionProjection"
+        },
+        "source": {
+          "kind": "interface-field",
+          "root": "AdjustmentRevisionProjection"
+        }
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRainGateFeatureProjection",
+      "fields": {
+        "contractVersion": "const-string",
+        "logicalKey": "readonly-inline-object",
+        "logicalKey.runInitializedAt": "utc-iso",
+        "logicalReceivedAt": "utc-iso",
+        "rows": "readonly-inline-object-array",
+        "rows.modelLeadHours": "safe-unsigned-integer",
+        "rows.validAt": "utc-iso",
+        "source": "ordered-json-nullable-string-object"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "RainMaintenancePersistenceCaptureMember",
+      "fields": {
+        "completedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "RainMaintenancePersistenceTargetRow",
+      "fields": {
+        "receivedAt": "utc-iso",
+        "stationId": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "RainMaintenancePersistenceTarget",
+      "fields": {
+        "contractVersion": "const-string",
+        "decisionAt": "utc-iso",
+        "rowCount": "unsigned-safe-integer-literal",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRainGateControlProjection",
+      "fields": {
+        "contractVersion": "const-string",
+        "logicalKey": "readonly-inline-object",
+        "logicalKey.runInitializedAt": "utc-iso",
+        "logicalReceivedAt": "utc-iso",
+        "rows": "readonly-inline-object-array",
+        "rows.incumbentProbability": "readonly-string-literal-record",
+        "rows.modelLeadHours": "safe-unsigned-integer",
+        "rows.nativeSourceProbability": "readonly-string-literal-record",
+        "rows.validAt": "utc-iso",
+        "source": "ordered-json-nullable-string-object"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-revision-projection.ts",
+      "exportName": "AdjustmentRevisionProjectionDocument",
+      "fields": {},
+      "objectUnion": {
+        "AdjustmentRevisionProjection": "Single",
+        "AdjustmentRevisionBatchProjection": "Batch",
+        "AdjustmentTemperatureNativeSourceProjection": "NativeTemperature",
+        "AdjustmentRainGateFeatureProjection": "RainFeature",
+        "AdjustmentRainGateControlProjection": "RainControl"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetClaim",
+      "fields": {
+        "completedAt": "utc-iso",
+        "stationId": "safe-unsigned-integer",
+        "windowEndExclusive": "utc-iso",
+        "windowStart": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetCaptureBody",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetCaptureMember",
+      "fields": {
+        "completedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetInterval",
+      "fields": {
+        "completedAt": "utc-iso",
+        "durationMinutes": "safe-unsigned-integer",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetRow",
+      "fields": {
+        "stationId": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetProjection",
+      "fields": {
+        "contractVersion": "const-string",
+        "logicalReceivedAt": "utc-iso",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetLogicalKey",
+      "fields": {
+        "contractVersion": "const-string",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-fixed-gauge-target.ts",
+      "exportName": "AdjustmentRainFixedGaugeTargetActual",
+      "fields": {
+        "firstEdgeCommittedAt": "utc-iso",
+        "gaugeCount": "safe-unsigned-integer",
+        "target": "finite-f64"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "TemperatureMaintenanceCandidateRow",
+      "fields": {
+        "candidateTemperatureC": "runtime-f64",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "WindMaintenanceCandidateRow",
+      "fields": {
+        "candidateGustMps": "runtime-f64",
+        "candidateSpeedMps": "runtime-f64",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "TemperatureMaintenanceIncumbentRow",
+      "fields": {
+        "incumbentTemperatureC": "runtime-f64",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "WindMaintenanceIncumbentRow",
+      "fields": {
+        "incumbentGustMps": "runtime-f64",
+        "incumbentSpeedMps": "runtime-f64",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/api/src/adjustment-maintenance-shadow.ts",
+      "exportName": "CaptureApiMaintenanceShadowResult",
+      "fields": {},
+      "discriminator": "status",
+      "readonlyTaggedUnion": true
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "HealthSnapshot",
+      "fields": {
+        "workerLastLoopAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/worker/src/health.ts",
+      "exportName": "WorkerHealth",
+      "fields": {
+        "lastLoopAt": "utc-iso",
+        "lastSuccessAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/migrate.ts",
+      "exportName": "MigrationReadiness",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/worker.ts",
+      "exportName": "SourceRunResult",
+      "fields": {
+        "durationMs": "runtime-f64",
+        "recordCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/worker/src/worker.ts",
+      "exportName": "WorkerIterationResult",
+      "fields": {
+        "completedAt": "utc-iso",
+        "lastSuccessAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/worker/src/worker.ts",
+      "exportName": "EcmwfTemperatureCanaryCollectionResult",
+      "fields": {
+        "failedRuns": "safe-unsigned-integer",
+        "persistedRuns": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/worker/src/rain-collection.ts",
+      "exportName": "RainCollectionResult",
+      "fields": {
+        "attempted": "safe-unsigned-integer",
+        "failed": "safe-unsigned-integer",
+        "valid": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/worker/src/errors.ts",
+      "exportName": "WorkerDiagnosticEvent",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/errors.ts",
+      "exportName": "WorkerDiagnostic",
+      "fields": {
+        "count": "safe-unsigned-integer",
+        "duration_ms": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/providers/src/open-meteo.ts",
+      "exportName": "OpenMeteoLocation",
+      "fields": {
+        "latitude": "finite-f64",
+        "longitude": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/providers/src/open-meteo.ts",
+      "exportName": "OpenMeteoArchiveRequest",
+      "base": "OpenMeteoLocation",
+      "fields": {}
+    },
+    {
+      "source": "packages/providers/src/open-meteo-previous-runs.ts",
+      "exportName": "OpenMeteoPreviousRunsLocation",
+      "fields": {
+        "latitude": "finite-f64",
+        "longitude": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/providers/src/open-meteo-previous-runs.ts",
+      "exportName": "OpenMeteoPreviousRunsRequest",
+      "fields": {}
+    },
+    {
+      "source": "packages/providers/src/open-meteo-single-runs.ts",
+      "exportName": "OpenMeteoEcmwfSingleRunRequest",
+      "fields": {
+        "latitude": "finite-f64",
+        "longitude": "finite-f64",
+        "runInitializedAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/providers/src/open-meteo-single-runs.ts",
+      "exportName": "OpenMeteoEcmwfSingleRunHour",
+      "fields": {
+        "modelLeadHours": "safe-unsigned-integer",
+        "rawRelativeHumidityPercent": "finite-f64",
+        "rawTemperatureC": "finite-f64",
+        "rawWindSpeedMps": "finite-f64",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/providers/src/open-meteo-single-runs.ts",
+      "exportName": "OpenMeteoEcmwfSingleRunBatch",
+      "fields": {
+        "adapterVersion": "const-string",
+        "attempts": "safe-unsigned-integer",
+        "receivedAt": "utc-iso",
+        "runInitializedAt": "utc-iso",
+        "upstreamModel": "const-string"
+      }
+    },
+    {
+      "source": "packages/providers/src/contract.ts",
+      "exportName": "ProviderCapability",
+      "fields": {}
+    },
+    {
+      "source": "packages/providers/src/contract.ts",
+      "exportName": "ProviderAttribution",
+      "fields": {}
+    },
+    {
+      "source": "packages/providers/src/ecowitt.ts",
+      "exportName": "EcowittLiveRequest",
+      "fields": {
+        "previousCursor": "ordered-json-object"
+      }
+    },
+    {
+      "source": "packages/providers/src/ecowitt.ts",
+      "exportName": "EcowittSensorReadings",
+      "fields": {
+        "batteryExternalPower": "safe-unsigned-integer",
+        "batteryLevel": "safe-unsigned-integer",
+        "batteryLow": "safe-unsigned-integer",
+        "blackGlobeTemperatureC": "finite-f64",
+        "dailyPrecipitationMm": "finite-f64",
+        "pm25MicrogramsPerCubicMeter": "finite-f64",
+        "precipitationRateMmPerHour": "finite-f64",
+        "pressureHpa": "finite-f64",
+        "relativeHumidityPercent": "finite-f64",
+        "soilElectricalConductivityMicrosiemensPerCm": "finite-f64",
+        "soilMoisturePercent": "finite-f64",
+        "solarRadiationWm2": "finite-f64",
+        "temperatureC": "finite-f64",
+        "uvIndex": "finite-f64",
+        "wetBulbGlobeTemperatureC": "finite-f64",
+        "windDirectionDegrees": "finite-f64",
+        "windGustMps": "finite-f64",
+        "windSpeedMps": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/providers/src/ecowitt.ts",
+      "exportName": "EcowittSensorSnapshot",
+      "fields": {
+        "channel": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/providers/src/tempest.ts",
+      "exportName": "ResolvedTempestStation",
+      "fields": {
+        "deviceId": "safe-unsigned-integer",
+        "latitude": "finite-f64",
+        "locationId": "safe-unsigned-integer",
+        "longitude": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/providers/src/noaa-tides.ts",
+      "exportName": "NoaaTideRangeBase",
+      "localInterface": true,
+      "fields": {}
+    },
+    {
+      "source": "packages/providers/src/noaa-tides.ts",
+      "exportName": "NoaaTideObservationRequest",
+      "base": "NoaaTideRangeBase",
+      "fields": {}
+    },
+    {
+      "source": "packages/providers/src/noaa-tides.ts",
+      "exportName": "NoaaTidePredictionRequest",
+      "base": "NoaaTideRangeBase",
+      "fields": {}
+    },
+    {
+      "source": "packages/providers/src/noaa-tides.ts",
+      "exportName": "NoaaTideRangeRequest",
+      "fields": {},
+      "objectUnion": {
+        "NoaaTideObservationRequest": "Observation",
+        "NoaaTidePredictionRequest": "Prediction"
+      }
+    },
+    {
+      "source": "apps/worker/src/tide-backfill-cli.ts",
+      "exportName": "TideBackfillArguments",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/tide-backfill-cli.ts",
+      "exportName": "PlannedTideChunk",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/tide-backfill-cli.ts",
+      "exportName": "TideBackfillReport",
+      "fields": {
+        "exitCode": "unsigned-safe-integer-enum"
+      }
+    },
+    {
+      "source": "apps/worker/src/tide-backfill-cli.ts",
+      "exportName": "TideBackfillSourceReport",
+      "fields": {
+        "completedChunks": "safe-unsigned-integer",
+        "exitCode": "unsigned-safe-integer-enum",
+        "failedChunk": "readonly-inline-object",
+        "plannedChunks": "safe-unsigned-integer",
+        "records": "safe-unsigned-integer",
+        "skippedChunks": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/worker/src/backfill-cli.ts",
+      "exportName": "BackfillArguments",
+      "fields": {
+        "chunkDays": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/worker/src/backfill-cli.ts",
+      "exportName": "PlannedBackfillChunk",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/backfill-cli.ts",
+      "exportName": "BackfillChunkReport",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/backfill-cli.ts",
+      "exportName": "BackfillReport",
+      "fields": {
+        "exitCode": "unsigned-safe-integer-enum"
+      }
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "TempestBackfillArguments",
+      "fields": {
+        "chunkDays": "safe-unsigned-integer",
+        "stationIds": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "PlannedTempestChunk",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "TempestBackfillChunkReport",
+      "fields": {
+        "recordCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "TempestStationBackfillReport",
+      "fields": {
+        "exitCode": "unsigned-safe-integer-enum",
+        "locationId": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "TempestBulkBackfillReport",
+      "fields": {
+        "exitCode": "unsigned-safe-integer-enum"
+      }
+    },
+    {
+      "source": "apps/worker/src/public-stations-backfill-cli.ts",
+      "exportName": "PublicStationBackfillArguments",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/public-stations-backfill-cli.ts",
+      "exportName": "PlannedPublicStationChunk",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/public-stations-backfill-cli.ts",
+      "exportName": "PublicStationBackfillSourceReport",
+      "fields": {
+        "completedChunks": "safe-unsigned-integer",
+        "exitCode": "unsigned-safe-integer-enum",
+        "failedChunk": "readonly-inline-object",
+        "plannedChunks": "safe-unsigned-integer",
+        "records": "safe-unsigned-integer",
+        "skippedChunks": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/worker/src/public-stations-backfill-cli.ts",
+      "exportName": "PublicStationBackfillReport",
+      "fields": {
+        "exitCode": "unsigned-safe-integer-enum"
+      }
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastMode",
+      "fields": {}
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastReason",
+      "fields": {}
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastStatus",
+      "fields": {},
+      "catalog": {
+        "kind": "extend-local-string-enum",
+        "base": "WidgetForecastMode"
+      }
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastSource",
+      "fields": {
+        "receivedAt": "utc-iso",
+        "runAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastField",
+      "fields": {
+        "raw": "finite-f64",
+        "selected": "finite-f64",
+        "selectedUntil": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastHour",
+      "fields": {
+        "end": "utc-iso",
+        "start": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/web/src/widget-forecast.ts",
+      "exportName": "WidgetForecastSnapshot",
+      "fields": {
+        "calendar.cutoff": "utc-iso",
+        "calendar.dayEnd": "utc-iso",
+        "calendar.dayStart": "utc-iso",
+        "calendar.sunset": "utc-iso",
+        "generatedAt": "utc-iso",
+        "receivedAt": "utc-iso",
+        "schemaVersion": "const-string",
+        "site.latitude": "const-scalar-property",
+        "site.longitude": "const-scalar-property",
+        "site.name": "const-scalar-property",
+        "site.slug": "const-scalar-property",
+        "site.timezone": "const-scalar-property"
+      }
+    },
+    {
+      "source": "apps/web/src/widget-forecast-v2.ts",
+      "exportName": "WidgetForecastV2Hour",
+      "base": "WidgetForecastHour",
+      "importedBase": true,
+      "fields": {}
+    },
+    {
+      "source": "apps/web/src/widget-forecast-v2.ts",
+      "exportName": "WidgetForecastV2Snapshot",
+      "base": "WidgetForecastSnapshot",
+      "omitBaseFields": [
+        "hours",
+        "schemaVersion"
+      ],
+      "fields": {
+        "schemaVersion": "const-string"
+      }
+    },
+    {
+      "source": "apps/web/src/widget-forecast-v3.ts",
+      "exportName": "WidgetForecastV3Snapshot",
+      "base": "WidgetForecastV2Snapshot",
+      "omitBaseFields": [
+        "calendar",
+        "schemaVersion"
+      ],
+      "omitInheritedBaseFields": [
+        "calendar"
+      ],
+      "fields": {
+        "calendar.overnightEnd": "utc-iso",
+        "schemaVersion": "const-string"
+      },
+      "fieldProjections": {
+        "calendar": {
+          "kind": "indexed-interface-field-extension",
+          "root": "WidgetForecastSnapshot"
+        }
+      }
+    },
+    {
+      "source": "packages/providers/src/contract.ts",
+      "exportName": "ProviderBatch",
+      "defaultedListParameter": {
+        "name": "RecordType",
+        "defaultRoot": "NormalizedWeatherRecord",
+        "field": "records"
+      },
+      "fields": {
+        "attempts": "safe-unsigned-integer",
+        "providerCursor": "ordered-json-object",
+        "responseMetadata": "ordered-json-object"
+      }
+    },
+    {
+      "source": "packages/database/src/migrate.ts",
+      "exportName": "MigrationResult",
+      "fields": {
+        "serverVersionNum": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "WeatherRecordRow",
+      "pgRowNamedFields": true,
+      "fields": {
+        "apparentTemperatureC": "runtime-f64",
+        "blackGlobeTemperatureC": "runtime-f64",
+        "cloudCoverPercent": "runtime-f64",
+        "firstReceivedAt": "js-date-or-string",
+        "lastReceivedAt": "js-date-or-string",
+        "pm25MicrogramsPerCubicMeter": "runtime-f64",
+        "precipitationMm": "runtime-f64",
+        "precipitationRateMmPerHour": "runtime-f64",
+        "pressureHpa": "runtime-f64",
+        "productRunAt": "js-date-or-string",
+        "providerMetadata": "ordered-json-object",
+        "qualityMetadata": "ordered-json-object",
+        "relativeHumidityPercent": "runtime-f64",
+        "revisionCount": "safe-unsigned-integer",
+        "soilElectricalConductivityMicrosiemensPerCm": "runtime-f64",
+        "soilMoisturePercent": "runtime-f64",
+        "solarRadiationWm2": "runtime-f64",
+        "temperatureC": "runtime-f64",
+        "uvIndex": "runtime-f64",
+        "validAt": "js-date-or-string",
+        "waterLevelM": "runtime-f64",
+        "windDirectionDegrees": "runtime-f64",
+        "windGustMps": "runtime-f64",
+        "windSpeedMps": "runtime-f64",
+        "wetBulbGlobeTemperatureC": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "CurrentWeatherRecordRow",
+      "base": "WeatherRecordRow",
+      "fields": {
+        "pm25HourlyBySensor": "ordered-runtime-f64-nullable-array-record",
+        "pm25HourlyConcentrations": "runtime-f64-nullable-array",
+        "pm25HourlyThrough": "js-date-or-string",
+        "pressureChange3hHpa": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "DueSource",
+      "pgRowNamedFields": true,
+      "fields": {
+        "cadenceSeconds": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ActiveSiteRow",
+      "pgRowNamedFields": true,
+      "fields": {
+        "latitude": "finite-f64",
+        "longitude": "finite-f64",
+        "stationLatitude": "finite-f64",
+        "stationLongitude": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "DailyPrecipitationRow",
+      "pgRowNamedFields": true,
+      "fields": {
+        "accumulationMm": "runtime-f64",
+        "validThrough": "js-date-or-string"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "TideRecordRow",
+      "pgRowNamedFields": true,
+      "fields": {
+        "validAt": "js-date-or-string",
+        "waterLevelM": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "LatestWorkerHeartbeat",
+      "pgRowNamedFields": true,
+      "fields": {
+        "lastLoopAt": "js-date-or-string"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastObservationInputRow",
+      "pgRowNamedFields": true,
+      "fields": {
+        "apparentTemperatureC": "runtime-f64",
+        "cloudCoverPercent": "runtime-f64",
+        "lastReceivedAt": "js-date-or-string",
+        "pm25MicrogramsPerCubicMeter": "runtime-f64",
+        "precipitationRateMmPerHour": "runtime-f64",
+        "pressureHpa": "runtime-f64",
+        "relativeHumidityPercent": "runtime-f64",
+        "solarRadiationWm2": "runtime-f64",
+        "temperatureC": "runtime-f64",
+        "uvIndex": "runtime-f64",
+        "validAt": "js-date-or-string",
+        "windDirectionDegrees": "runtime-f64",
+        "windGustMps": "runtime-f64",
+        "windSpeedMps": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastObservationInput",
+      "fields": {
+        "projectionFrom": "js-date-or-string",
+        "queryFrom": "js-date-or-string",
+        "through": "js-date-or-string"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "TrendPointRow",
+      "pgRowNamedFields": true,
+      "fields": {
+        "apparentTemperatureC": "runtime-f64",
+        "pm25MicrogramsPerCubicMeter": "runtime-f64",
+        "precipitationMm": "runtime-f64",
+        "pressureHpa": "runtime-f64",
+        "relativeHumidityPercent": "runtime-f64",
+        "temperatureC": "runtime-f64",
+        "temperatureMaximumC": "runtime-f64",
+        "temperatureMinimumC": "runtime-f64",
+        "validAt": "js-date",
+        "windDirectionDegrees": "runtime-f64",
+        "windGustMps": "runtime-f64",
+        "windSpeedMps": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastObservationHourlyMetrics",
+      "readonlyNullableMetricRecord": "ForecastAdjustmentMetric",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastObservationHourlyStationRow",
+      "fields": {
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "PersistedEcmwfTemperatureRevision",
+      "fields": {
+        "logicalReceivedAt": "utc-iso",
+        "runInitializedAt": "utc-iso",
+        "siteLatitude": "finite-f64",
+        "siteLongitude": "finite-f64"
+      },
+      "fieldProjections": {
+        "adapterVersion": {
+          "kind": "interface-field",
+          "root": "EcmwfTemperatureCanaryRun"
+        },
+        "modelCycle": {
+          "kind": "interface-field",
+          "root": "EcmwfTemperatureCanaryRun"
+        },
+        "upstreamModel": {
+          "kind": "interface-field",
+          "root": "EcmwfTemperatureCanaryRun"
+        }
+      }
+    },
+    {
+      "source": "packages/database/src/config.ts",
+      "exportName": "SiteConfigurationSource",
+      "fields": {
+        "cadenceSeconds": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/config.ts",
+      "exportName": "SiteConfiguration",
+      "fields": {
+        "site.latitude": "finite-f64",
+        "site.longitude": "finite-f64",
+        "station.latitude": "finite-f64",
+        "station.longitude": "finite-f64",
+        "version": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/ecowitt-config.ts",
+      "exportName": "EcowittStationConfiguration",
+      "fields": {
+        "cadenceSeconds": "safe-unsigned-integer",
+        "latitude": "finite-f64",
+        "longitude": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/ecowitt-config.ts",
+      "exportName": "EcowittConfiguration",
+      "fields": {
+        "version": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/tempest-config.ts",
+      "exportName": "TempestStationConfiguration",
+      "fields": {
+        "cadenceSeconds": "safe-unsigned-integer",
+        "deviceId": "safe-unsigned-integer",
+        "latitude": "finite-f64",
+        "locationId": "safe-unsigned-integer",
+        "longitude": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/tempest-config.ts",
+      "exportName": "TempestConfiguration",
+      "fields": {
+        "version": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/public-stations-config.ts",
+      "exportName": "PublicStationAdapter",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/public-stations-config.ts",
+      "exportName": "PublicStationProviderConfiguration",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/public-stations-config.ts",
+      "exportName": "PublicStationSourceConfiguration",
+      "fields": {
+        "adapterConfig": "ordered-json-object",
+        "cadenceSeconds": "safe-unsigned-integer",
+        "maximumChunkDays": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/public-stations-config.ts",
+      "exportName": "PublicStationConfigurationStation",
+      "fields": {
+        "latitude": "finite-f64",
+        "longitude": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/public-stations-config.ts",
+      "exportName": "PublicStationConfiguration",
+      "fields": {
+        "version": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/tides-config.ts",
+      "exportName": "TideProviderConfiguration",
+      "fields": {}
+    },
+    {
+      "source": "packages/database/src/tides-config.ts",
+      "exportName": "TideSourceConfiguration",
+      "fields": {
+        "adapterConfig": "ordered-json-object",
+        "cadenceSeconds": "safe-unsigned-integer",
+        "maximumChunkDays": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/database/src/tides-config.ts",
+      "exportName": "TideStationConfiguration",
+      "fields": {
+        "latitude": "finite-f64",
+        "longitude": "finite-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/tides-config.ts",
+      "exportName": "TideConfiguration",
+      "fields": {
+        "version": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/calendar.ts",
+      "exportName": "LocalMeteorologicalSeason",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/calendar.ts",
+      "exportName": "LocalDaypart",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/calendar.ts",
+      "exportName": "RuntimeCalendarFingerprint",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/calendar.ts",
+      "exportName": "LocalCalendarFeatures",
+      "fields": {
+        "hour": "safe-unsigned-integer",
+        "month": "safe-unsigned-integer",
+        "timezone": "const-string",
+        "validAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/algorithm-v1.ts",
+      "exportName": "CoreAdjustmentApplicationInput",
+      "fields": {
+        "coefficient": "runtime-f64",
+        "envelope.maximum": "runtime-f64",
+        "envelope.minimum": "runtime-f64",
+        "rawForecastValue": "runtime-f64",
+        "rawWindSpeedMps": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/algorithm-v1.ts",
+      "exportName": "CoreAdjustmentApplicationResult",
+      "fields": {
+        "adjustedValue": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/apply.ts",
+      "exportName": "ApplyForecastAdjustmentInputV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/apply.ts",
+      "exportName": "ForecastAdjustmentWindMaintenanceDecision",
+      "fields": {
+        "adjustedMetrics": "finite-partial-metric-record",
+        "reasonCode": "exact-null"
+      },
+      "fieldProjections": {
+        "appliedMetrics": {
+          "kind": "const-catalog-array",
+          "root": "ForecastAdjustmentWindCanaryMetric"
+        },
+        "leadBand": {
+          "kind": "return-enum",
+          "root": "ForecastLeadBandKey"
+        }
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+      "exportName": "MaintenanceShadowComparatorAuthorityKind",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-comparator.ts",
+      "exportName": "MaintenanceShadowServingAuthority",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "LoadedForecastAdjustmentRuntimeV1",
+      "fields": {},
+      "discriminator": "state",
+      "disabledReasonExtract": "ForecastAdjustmentReasonCode"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "LoadedForecastAdjustmentWindCanaryRuntimeV1",
+      "fields": {},
+      "discriminator": "state",
+      "disabledReasonExtract": "ForecastAdjustmentReasonCode"
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "ForecastAdjustmentTemperatureCanaryRegistryV2",
+      "fields": {
+        "activeBundle": "exact-null"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "exportName": "ForecastAdjustmentTemperatureMaintenanceRuntimePackage",
+      "fields": {
+        "contractVersion": "const-string",
+        "source": "frozen-const-literal-object"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "exportName": "ForecastAdjustmentWindMaintenanceRuntimePackage",
+      "fields": {
+        "contractVersion": "const-string"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-runtime-package.ts",
+      "exportName": "ForecastAdjustmentMaintenanceRuntimePackage",
+      "fields": {},
+      "objectUnion": {
+        "ForecastAdjustmentTemperatureMaintenanceRuntimePackage": "Temperature",
+        "ForecastAdjustmentWindMaintenanceRuntimePackage": "Wind"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "ForecastAdjustmentWindCanaryRegistryV2",
+      "fields": {
+        "activeBundle": "exact-null",
+        "enabledMetricBands": "frozen-wind-metric-band-tuple"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "LoadedForecastAdjustmentWindCanaryRuntime",
+      "fields": {
+        "bundle.maintenanceAuthority": "readonly-inline-object"
+      },
+      "maintenanceLoaderExtension": {
+        "legacy": "LoadedForecastAdjustmentWindCanaryRuntimeV1",
+        "package": "ForecastAdjustmentWindMaintenanceRuntimePackage",
+        "bundleField": "candidate"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/runtime-loader.ts",
+      "exportName": "LoadedForecastAdjustmentTemperatureCanaryRuntime",
+      "fields": {
+        "bundle.maintenanceAuthority": "readonly-inline-object",
+        "bundle.servedForecastIdentity.maximumReceiptAgeHours": "unsigned-safe-integer-literal",
+        "bundle.servedForecastIdentity.sourceDelayHours": "unsigned-safe-integer-literal"
+      },
+      "maintenanceLoaderExtension": {
+        "legacy": "LoadedForecastAdjustmentTemperatureCanaryRuntimeV1",
+        "package": "ForecastAdjustmentTemperatureMaintenanceRuntimePackage",
+        "bundleField": "model"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-runtime-registry.ts",
+      "exportName": "LoadedForecastAdjustmentRainRuntimeRegistryV1",
+      "fields": {},
+      "discriminator": "state",
+      "activeImportedConstString": "artifactSha256"
+    },
+    {
+      "source": "apps/api/src/main.ts",
+      "exportName": "LoadedApiForecastAdjustmentRuntime",
+      "fields": {},
+      "localAlias": true,
+      "objectUnion": {
+        "LoadedForecastAdjustmentRuntimeV1": "Standard",
+        "LoadedForecastAdjustmentWindCanaryRuntime": "Wind"
+      }
+    },
+    {
+      "source": "apps/api/src/main.ts",
+      "exportName": "ForecastAdjustmentStartupSnapshot",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/main.ts",
+      "exportName": "ForecastTemperatureAdjustmentStartupSnapshot",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/main.ts",
+      "exportName": "ForecastRainAdjustmentStartupSnapshot",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/rain-adjustment.ts",
+      "exportName": "ApiRainAdjustmentStartupSnapshot",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindForecastHour",
+      "fields": {
+        "leadHours": "runtime-f64",
+        "precipitationMm": "runtime-f64",
+        "temperatureC": "runtime-f64",
+        "relativeHumidityPercent": "runtime-f64",
+        "cloudCoverPercent": "runtime-f64",
+        "pressureHpa": "runtime-f64",
+        "windSpeedMps": "runtime-f64",
+        "windDirectionDegrees": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindRunProfile",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindStationHour",
+      "fields": {
+        "stationId": "runtime-f64",
+        "precipitationMm": "runtime-f64",
+        "temperatureC": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindPredictionInput",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindPredictionHour",
+      "fields": {
+        "modelLeadHours": "runtime-f64",
+        "rawPrecipitationMm": "runtime-f64",
+        "correctedPrecipitationMm": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindPredictionResult",
+      "fields": {
+        "modelMonth": "numeric-pair-template"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindFeaturePerformance",
+      "fields": {
+        "correctedPrecipitationMm": "runtime-f64",
+        "occurrenceProbabilityAtLeast0_1": "runtime-f64",
+        "occurrenceProbabilityAtLeast1_0": "runtime-f64",
+        "occurrenceProbabilityAtLeast2_5": "runtime-f64",
+        "positiveAmountMm": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindPerformanceHour",
+      "base": "RainWindPredictionHour",
+      "fields": {
+        "occurrenceProbabilities.atLeast0_1": "runtime-f64",
+        "occurrenceProbabilities.atLeast1_0": "runtime-f64",
+        "occurrenceProbabilities.atLeast2_5": "runtime-f64",
+        "positiveAmountMm": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainWindPerformanceResult",
+      "base": "RainWindPredictionResult",
+      "omitBaseFields": [
+        "hours"
+      ],
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindFeatureRow",
+      "fields": {
+        "features": "float32array-values",
+        "modelLeadHours": "runtime-f64",
+        "rawPrecipitationMm": "runtime-f64",
+        "rawTargetHourTemperatureC": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindFeatureProjection",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindProjectionId",
+      "fields": {},
+      "catalog": {
+        "kind": "direct-const-string-tuple"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindPortableArtifactV1",
+      "fields": {
+        "contractVersion": "const-string",
+        "modelMonth": "numeric-pair-template",
+        "rules.threshold": "runtime-f64",
+        "rules.cutoff": "runtime-f64",
+        "categoryScales": "runtime-f64-array",
+        "heads": "rain-hurdle-head-record"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindPortableArtifactV2",
+      "base": "RainHurdleWindPortableArtifactV1",
+      "omitBaseFields": [
+        "contractVersion"
+      ],
+      "addedAfterOmit": [
+        "projectionId"
+      ],
+      "fields": {
+        "contractVersion": "const-string"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-hurdle-wind.ts",
+      "exportName": "RainHurdleWindPortableArtifact",
+      "fields": {},
+      "objectUnion": {
+        "RainHurdleWindPortableArtifactV1": "V1",
+        "RainHurdleWindPortableArtifactV2": "V2"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+      "exportName": "RainMaintenanceControlSupport",
+      "fields": {
+        "calibrationDates": "safe-unsigned-integer",
+        "calibrationHours": "safe-unsigned-integer",
+        "calibrationRows": "safe-unsigned-integer",
+        "calibrationWetDates": "safe-unsigned-integer",
+        "calibrationWetHours": "safe-unsigned-integer",
+        "legacyCalibrationRows": "safe-unsigned-integer",
+        "legacyTrainingRows": "safe-unsigned-integer",
+        "legacyTrainingWetRows": "safe-unsigned-integer",
+        "trainingDates": "safe-unsigned-integer",
+        "trainingHours": "safe-unsigned-integer",
+        "trainingRows": "safe-unsigned-integer",
+        "trainingWetDates": "safe-unsigned-integer",
+        "trainingWetHours": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/rain-maintenance-controls.ts",
+      "exportName": "RainMaintenanceControlState",
+      "fields": {
+        "calibrationEndAt": "utc-iso",
+        "calibrationStartAt": "utc-iso",
+        "contractVersion": "const-string",
+        "generatedAt": "utc-iso",
+        "legacyCalibrationStartAt": "utc-iso",
+        "trainingMaximumValidAt": "utc-iso"
+      }
+    },
+    {
+      "source": "apps/worker/src/source-identity.ts",
+      "exportName": "RuntimeSourceIdentity",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/backfill-cli.ts",
+      "exportName": "BackfillSource",
+      "base": "RuntimeSourceIdentity",
+      "importedBase": true,
+      "identicalImportedStringFields": [
+        "timezone"
+      ],
+      "fields": {
+        "latitude": "runtime-f64",
+        "longitude": "runtime-f64"
+      }
+    },
+    {
+      "source": "apps/worker/src/tide-backfill-cli.ts",
+      "exportName": "TideBackfillSource",
+      "base": "RuntimeSourceIdentity",
+      "importedBase": true,
+      "identicalImportedStringFields": [
+        "sourceConfigFingerprint"
+      ],
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/public-stations-backfill-cli.ts",
+      "exportName": "PublicStationBackfillSource",
+      "base": "RuntimeSourceIdentity",
+      "importedBase": true,
+      "identicalImportedStringFields": [
+        "sourceConfigFingerprint"
+      ],
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/tempest-backfill-cli.ts",
+      "exportName": "TempestBackfillSource",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/run-deadline.ts",
+      "exportName": "IngestionDeadlines",
+      "fields": {
+        "providerDeadlineAt": "utc-iso",
+        "runDeadlineAt": "utc-iso"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastAnchorStorageRow",
+      "pgRowNamedFields": true,
+      "pgQueryOwners": [
+        "listForecastTrainingCohorts"
+      ],
+      "fields": {
+        "apparentTemperatureC": "runtime-f64",
+        "cloudCoverPercent": "runtime-f64",
+        "leadHours": "runtime-f64",
+        "pressureHpa": "runtime-f64",
+        "precipitationMm": "runtime-f64",
+        "providerMetadata": "ordered-json-object",
+        "qualityMetadata": "ordered-json-object",
+        "receivedAt": "js-date-or-string",
+        "relativeHumidityPercent": "runtime-f64",
+        "temperatureC": "runtime-f64",
+        "validAt": "js-date-or-string",
+        "windDirectionDegrees": "runtime-f64",
+        "windGustMps": "runtime-f64",
+        "windSpeedMps": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "LegacyV4ForecastStorageRow",
+      "pgRowNamedFields": true,
+      "pgQueryOwners": [
+        "listForecastTrainingCohorts"
+      ],
+      "fields": {
+        "apparentTemperatureC": "runtime-f64",
+        "blackGlobeTemperatureC": "runtime-f64",
+        "cloudCoverPercent": "runtime-f64",
+        "pm25MicrogramsPerCubicMeter": "runtime-f64",
+        "precipitationMm": "runtime-f64",
+        "precipitationRateMmPerHour": "runtime-f64",
+        "pressureHpa": "runtime-f64",
+        "referenceAt": "js-date-or-string",
+        "relativeHumidityPercent": "runtime-f64",
+        "soilElectricalConductivityMicrosiemensPerCm": "runtime-f64",
+        "soilMoisturePercent": "runtime-f64",
+        "solarRadiationWm2": "runtime-f64",
+        "temperatureC": "runtime-f64",
+        "uvIndex": "runtime-f64",
+        "validAt": "js-date-or-string",
+        "waterLevelM": "runtime-f64",
+        "wetBulbGlobeTemperatureC": "runtime-f64",
+        "windDirectionDegrees": "runtime-f64",
+        "windGustMps": "runtime-f64",
+        "windSpeedMps": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/database/src/repositories.ts",
+      "exportName": "ForecastObservationStorageRow",
+      "pgRowNamedFields": true,
+      "pgQueryOwners": [
+        "listForecastObservationHourlyStations",
+        "listCausalForecastObservationHourlyStations"
+      ],
+      "fields": {
+        "qualityMetadata": "ordered-json-object",
+        "relativeHumidityPercent": "runtime-f64",
+        "temperatureC": "runtime-f64",
+        "validAt": "js-date-or-string",
+        "windDirectionDegrees": "runtime-f64",
+        "windGustMps": "runtime-f64",
+        "windSpeedMps": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentEvidenceClass",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentSupportState",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentComparisonState",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentQualificationState",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentServingState",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentPerformancePair",
+      "fields": {
+        "adjustedPrediction": "runtime-f64",
+        "horizonHours": "runtime-f64",
+        "rawPrediction": "runtime-f64",
+        "target": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentWeightedPair",
+      "base": "ForecastAdjustmentPerformancePair",
+      "fields": {
+        "weight": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentMetricSummary",
+      "fields": {
+        "bias": "runtime-f64",
+        "mae": "runtime-f64",
+        "p95AbsoluteError": "runtime-f64",
+        "rmse": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentPairedMetricSummary",
+      "fields": {
+        "skill": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentBootstrapSummary",
+      "fields": {
+        "lowerSkill": "runtime-f64",
+        "replicates": "grouped-unsigned-safe-integer-literal",
+        "upperSkill": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentPerformanceEvaluation",
+      "fields": {
+        "dateCount": "safe-unsigned-integer",
+        "eventCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentStationTargetValue",
+      "fields": {
+        "value": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainGaugeValue",
+      "fields": {
+        "precipitationMm": "runtime-f64",
+        "stationId": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainGaugeTarget",
+      "fields": {
+        "precipitationMm": "runtime-f64",
+        "stationCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainGaugeInterval",
+      "fields": {
+        "precipitationMm": "runtime-f64",
+        "reportIntervalMinutes": "runtime-f64",
+        "stationId": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainHourlyTarget",
+      "base": "ForecastAdjustmentRainGaugeTarget",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainProbability",
+      "fields": {
+        "atLeast0_1": "runtime-f64",
+        "atLeast1_0": "runtime-f64",
+        "atLeast2_5": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainPerformancePair",
+      "base": "ForecastAdjustmentPerformancePair",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentReliabilityBin",
+      "fields": {
+        "count": "safe-unsigned-integer",
+        "meanProbability": "runtime-f64",
+        "observedFrequency": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainThresholdSummary",
+      "fields": {
+        "adjustedBrier": "runtime-f64",
+        "csi": "runtime-f64",
+        "falseAlarms": "safe-unsigned-integer",
+        "far": "runtime-f64",
+        "hits": "safe-unsigned-integer",
+        "misses": "safe-unsigned-integer",
+        "pod": "runtime-f64",
+        "rawBrier": "exact-null",
+        "thresholdMmPerHour": "unsigned-decimal-enum"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainAccumulationSummary",
+      "fields": {
+        "adjustedMae": "runtime-f64",
+        "completeWindows": "safe-unsigned-integer",
+        "hours": "unsigned-safe-integer-enum",
+        "rawMae": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentRainDiagnostics",
+      "fields": {
+        "annualBalancedVolumeRatio": "runtime-f64",
+        "heavyAdjustedMae": "runtime-f64",
+        "heavyRawMae": "runtime-f64",
+        "probabilityOrderViolationCount": "safe-unsigned-integer",
+        "wetAdjustedMae": "runtime-f64",
+        "wetRawMae": "runtime-f64",
+        "winterBalancedVolumeRatio": "runtime-f64"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+      "exportName": "InstalledMaintenanceShadowReceiptV1",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+      "exportName": "InstalledMaintenanceShadowReceiptV2",
+      "base": "InstalledMaintenanceShadowReceiptV1",
+      "omitBaseFields": [
+        "contractVersion"
+      ],
+      "ownFieldOrderAfterOmit": [
+        "actionKind",
+        "contractVersion",
+        "fullMemberRootSha256",
+        "lifecycleHeadSha256",
+        "policyDecision",
+        "policyReportSha256"
+      ],
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+      "exportName": "InstalledMaintenanceShadowReceipt",
+      "fields": {},
+      "objectUnion": {
+        "InstalledMaintenanceShadowReceiptV1": "V1",
+        "InstalledMaintenanceShadowReceiptV2": "V2"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-shadow-catalog.ts",
+      "exportName": "InstalledRainMaintenanceControlReference",
+      "fields": {
+        "controlStateBytes": "uint8array-bytes",
+        "ordinalArtifactBytes": "uint8array-bytes"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/maintenance-capture-epoch.ts",
+      "exportName": "AdjustmentRevisionCaptureEpochWitness",
+      "fields": {
+        "contractVersion": "const-string"
+      }
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentExclusionReason",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentDiagnosticReason",
+      "fields": {}
+    },
+    {
+      "source": "packages/forecast-adjustment/src/performance-scorecard.ts",
+      "exportName": "ForecastAdjustmentPreparedPairs",
+      "fields": {
+        "coalescedDuplicateCount": "safe-unsigned-integer",
+        "diagnostics": "readonly-unsigned-counter-record",
+        "exclusions": "readonly-unsigned-counter-record",
+        "fallbackCount": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/sites.ts",
+      "exportName": "ApiSitesResponse",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiHealthResponse",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiRainCollectionResponse",
+      "fields": {
+        "data.claims": "safe-unsigned-integer",
+        "data.compressedBytes": "safe-unsigned-integer",
+        "data.expectedStations": "safe-unsigned-integer",
+        "data.expiresAt": "utc-iso",
+        "data.failedRequests": "safe-unsigned-integer",
+        "data.lastClaimAt": "utc-iso",
+        "data.lastForecastReceiptAt": "utc-iso",
+        "data.lastReceiptAt": "utc-iso",
+        "data.lastStationReceiptAt": "utc-iso",
+        "data.pausedUntil": "utc-iso",
+        "data.pendingRequests": "safe-unsigned-integer",
+        "data.receipts": "safe-unsigned-integer",
+        "data.startsAt": "utc-iso",
+        "data.stationsSeen": "safe-unsigned-integer",
+        "data.timelyForecasts": "safe-unsigned-integer",
+        "data.unknownRequests": "safe-unsigned-integer",
+        "data.validForecasts": "safe-unsigned-integer",
+        "data.validStationWindows": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiCurrentWeatherResponse",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/precipitation-and-tides.ts",
+      "exportName": "ApiDailyPrecipitationResponse",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiTrendsResponse",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/precipitation-and-tides.ts",
+      "exportName": "ApiTidesResponse",
+      "fields": {}
+    },
+    {
+      "source": "packages/contracts/src/weather-records.ts",
+      "exportName": "ApiHistoryResponse",
+      "fields": {
+        "page.limit": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiErrorResponse",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "TemperatureCanaryOperation",
+      "fields": {}
+    },
+    {
+      "source": "apps/api/src/index.ts",
+      "exportName": "ApiDiagnostic",
+      "fields": {
+        "status": "safe-unsigned-integer"
+      }
+    },
+    {
+      "source": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "exportName": "ForecastAdjustmentPerformancePackageInputs",
+      "fields": {}
+    },
+    {
+      "source": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "exportName": "TemperaturePerformanceScoredPairMetadata",
+      "fields": {
+        "horizonHours": "runtime-f64"
+      }
+    },
+    {
+      "source": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "exportName": "TemperaturePerformanceDataRow",
+      "fields": {
+        "actualTemperatureC": "runtime-f64",
+        "bestMatchRawTemperatureC": "runtime-f64",
+        "modelLeadHours": "runtime-f64",
+        "operationalHorizonHours": "runtime-f64",
+        "rawRelativeHumidityPercent": "runtime-f64",
+        "rawTemperatureC": "runtime-f64",
+        "rawWindSpeedMps": "runtime-f64",
+        "recordedRuntimeResult.predictionTemperatureC": "runtime-f64"
+      }
+    },
+    {
+      "source": "apps/worker/src/forecast-adjustment-performance-cli.ts",
+      "exportName": "TemperaturePerformanceDataWire",
+      "fields": {
+        "actualServingFallbacks": "ordered-json-object-array"
+      }
+    }
+  ]
+}

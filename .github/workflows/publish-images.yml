@@ -16,7 +16,9 @@ jobs:
       contents: read
       actions: read
     outputs:
+      generation: ${{ steps.release.outputs.generation }}
       release: ${{ steps.release.outputs.release }}
+      sha: ${{ steps.release.outputs.sha }}
     steps:
       - name: Check out exact release tag
         uses: actions/checkout@v4
@@ -46,6 +48,31 @@ jobs:
             echo "checked out commit does not match immutable tag" >&2
             exit 1
           fi
+          generation=node-v1
+          generation_file=.github/runtime-generation
+          # select Rust only from one exact declaration tracked by the immutable release commit
+          if git cat-file -e "${tag_sha}:${generation_file}" 2>/dev/null; then
+            # reject aliases and non-files before trusting checked declaration bytes
+            if [[ ! -f "${generation_file}" || -L "${generation_file}" ]]; then
+              echo "runtime generation declaration is not a regular tracked file" >&2
+              exit 1
+            fi
+            generation=$(git show "${tag_sha}:${generation_file}")
+            # bind the checked working bytes and exact one-line grammar to the tag commit
+            if [[ "$(cat "${generation_file}")" != "${generation}" || "$(wc -l < "${generation_file}")" -ne 1 ]]; then
+              echo "runtime generation declaration differs from immutable commit" >&2
+              exit 1
+            fi
+            case "${generation}" in
+              node-v1|rust-v1) ;;
+              *) echo "runtime generation declaration is invalid" >&2; exit 1 ;;
+            esac
+          # reject an ambient declaration that was not selected by the immutable commit
+          elif [[ -e "${generation_file}" || -L "${generation_file}" ]]; then
+            echo "runtime generation declaration is not tracked by immutable commit" >&2
+            exit 1
+          fi
+          printf 'generation=%s\n' "${generation}" >> "${GITHUB_OUTPUT}"
           printf 'release=%s\n' "${release}" >> "${GITHUB_OUTPUT}"
           printf 'sha=%s\n' "${tag_sha}" >> "${GITHUB_OUTPUT}"
       - name: Wait for successful exact-SHA branch Check
@@ -62,6 +89,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-release.outputs.sha }}
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -98,6 +127,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-release.outputs.sha }}
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -110,24 +141,56 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build inspectable native ARM64 images
+      - id: runtime
+        name: Select exact immutable runtime targets
+        env:
+          RUNTIME_GENERATION: ${{ needs.validate-release.outputs.generation }}
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx build --platform linux/arm64 --target server \
+          # keep the predecessor targets unless the checked commit explicitly selects Rust
+          case "${RUNTIME_GENERATION}" in
+            node-v1)
+              server_target=server
+              web_target=web
+              ;;
+            rust-v1)
+              server_target=native-server
+              web_target=native-web
+              ;;
+            *)
+              echo "selected runtime generation is invalid" >&2
+              exit 1
+              ;;
+          esac
+          printf 'server_target=%s\n' "${server_target}" >> "${GITHUB_OUTPUT}"
+          printf 'web_target=%s\n' "${web_target}" >> "${GITHUB_OUTPUT}"
+      - name: Build inspectable selected ARM64 images
+        env:
+          SOURCE_COMMIT: ${{ needs.validate-release.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # retain the established build argument while binding it to the resolved commit SHA
+          GITHUB_SHA=${SOURCE_COMMIT}
+          docker buildx build --platform linux/arm64 --target "${{ steps.runtime.outputs.server_target }}" \
+            --build-arg "WEATHER_SOURCE_REVISION=${SOURCE_COMMIT}" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag weather-server:inspect --load .
-          docker buildx build --platform linux/arm64 --target web \
+          docker buildx build --platform linux/arm64 --target "${{ steps.runtime.outputs.web_target }}" \
+            --build-arg "WEATHER_SOURCE_REVISION=${SOURCE_COMMIT}" \
             --build-arg "WEATHER_WEB_REVISION=${GITHUB_SHA}" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag weather-web:inspect --load .
       - name: Extract exact build-stage comparison files
+        if: needs.validate-release.outputs.generation == 'node-v1'
         shell: bash
         run: |
           set -euo pipefail
           docker buildx build --platform linux/arm64 --target image-check-files \
             --output "type=local,dest=${RUNNER_TEMP}/weather-image-check-files" .
       - name: Verify exact production image boundary
+        if: needs.validate-release.outputs.generation == 'node-v1'
         env:
           WEATHER_RUN_DEPLOY_INTEGRATION: '1'
           WEATHER_TEST_SERVER_IMAGE: weather-server:inspect
@@ -135,15 +198,128 @@ jobs:
           WEATHER_TEST_BUILD_PACKAGE_ROOT: ${{ runner.temp }}/weather-image-check-files/forecast-adjustment
           WEATHER_TEST_BUILD_WEB_CONTRACT: ${{ runner.temp }}/weather-image-check-files/web/adjustment-maintenance-contract.mjs
         run: node --test deploy/test/forecast-adjustment-image.integration.test.mjs
-      - name: Publish validated native ARM64 images
-        env:
-          RELEASE: ${{ needs.validate-release.outputs.release }}
+      - name: Extract independent native runtime material
+        if: needs.validate-release.outputs.generation == 'rust-v1'
         shell: bash
         run: |
           set -euo pipefail
+          material_root=$(mktemp -d "${RUNNER_TEMP}/weather-native-build-material.XXXXXX")
+          printf '%s\n' "${material_root}" > "${RUNNER_TEMP}/weather-native-build-material-root"
+          # export comparison bytes from the build graph, never from either runtime image
+          docker buildx build --platform linux/arm64 --target native-runtime-material-build \
+            --provenance=false --output "type=local,dest=${material_root}" .
+      - name: Inspect native ARM64 image configuration and material
+        if: needs.validate-release.outputs.generation == 'rust-v1'
+        env:
+          SOURCE_COMMIT: ${{ needs.validate-release.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          material_root=$(cat "${RUNNER_TEMP}/weather-native-build-material-root")
+          inspection_root=$(mktemp -d "${RUNNER_TEMP}/weather-native-image-inspection.XXXXXX")
+          server_root="${inspection_root}/server"
+          web_root="${inspection_root}/web"
+          mkdir -p "${server_root}" "${web_root}"
+          server_container=
+          web_container=
+          # remove partial container state and disposable extracted material on every exit
+          cleanup() {
+            test -z "${server_container}" || docker rm --force "${server_container}" >/dev/null
+            test -z "${web_container}" || docker rm --force "${web_container}" >/dev/null
+            rm -rf -- "${inspection_root}" "${material_root}"
+          }
+          trap cleanup EXIT
+          docker image inspect weather-server:inspect > "${inspection_root}/server-image.json"
+          docker image inspect weather-web:inspect > "${inspection_root}/web-image.json"
+          node --input-type=module - \
+            "${inspection_root}/server-image.json" \
+            "${inspection_root}/web-image.json" "${SOURCE_COMMIT}" <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+
+          // verify one loaded image's platform and non-Node startup boundary
+          function verifyImage(path, command, environment, sourceCommit) {
+            const [image] = JSON.parse(readFileSync(path, "utf8"));
+            assert.equal(image.Architecture, "arm64");
+            assert.equal(image.Os, "linux");
+            assert.equal(image.Config.User, "10002:10002");
+            assert.equal(image.Config.WorkingDir, "/opt/weather");
+            assert.equal(image.Config.Entrypoint, null);
+            assert.deepEqual(image.Config.Cmd, command);
+            assert.deepEqual(image.Config.Env, environment);
+            assert.deepEqual(image.Config.Labels, {
+              "org.opencontainers.image.revision": sourceCommit,
+              "org.opencontainers.image.source": `https://github.com/${process.env.GITHUB_REPOSITORY}`,
+              "org.weather.runtime.generation": "rust-v1",
+            });
+            assert.equal(image.Config.Healthcheck, undefined);
+            assert.equal(image.Config.ExposedPorts, null);
+            assert.equal(image.Config.Volumes, null);
+          }
+
+          const pathEnvironment = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+          const sourceCommit = process.argv[4];
+          verifyImage(
+            process.argv[2],
+            ["/opt/weather/bin/weather-api"],
+            [pathEnvironment, "NODE_ENV=production"],
+            sourceCommit,
+          );
+          verifyImage(
+            process.argv[3],
+            ["/opt/weather/bin/weather-web"],
+            [
+              pathEnvironment,
+              "NODE_ENV=production",
+              "WEATHER_SITE_CONFIG_PATH=/opt/weather/edge-config/ballydidean.json",
+              `WEATHER_WEB_REVISION=${sourceCommit}`,
+            ],
+            sourceCommit,
+          );
+          NODE
+          server_container=$(docker create weather-server:inspect)
+          web_container=$(docker create weather-web:inspect)
+          docker cp "${server_container}:/opt/weather/." "${server_root}/"
+          docker cp "${web_container}:/opt/weather/." "${web_root}/"
+          node deploy/scripts/build-native-runtime-image-material.mjs \
+            "${SOURCE_COMMIT}" "${GITHUB_WORKSPACE}" "${material_root}" \
+            > "${inspection_root}/expected.json"
+          node deploy/scripts/rust-runtime-image-material.mjs --inspect \
+            "${inspection_root}/expected.json" "${server_root}" "${web_root}" \
+            > "${RUNNER_TEMP}/native-runtime-material.json"
+          node --input-type=module - "${RUNNER_TEMP}/native-runtime-material.json" "${SOURCE_COMMIT}" <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+
+          const inspection = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          assert.equal(inspection.artifactClass, "offline-extracted-image-material-inspection");
+          assert.deepEqual(inspection.platform, { architecture: "arm64", os: "linux" });
+          assert.equal(inspection.source.commit, process.argv[3]);
+          assert.equal(inspection.images.length, 2);
+          assert.equal(inspection.images[0].name, "server");
+          assert.equal(inspection.images[1].name, "web");
+          assert.equal(inspection.inspection.extractedFileBytes, true);
+          assert.equal(inspection.inspection.provesElfArchitecture, true);
+          NODE
+      - name: Publish validated selected ARM64 images
+        env:
+          RELEASE: ${{ needs.validate-release.outputs.release }}
+          SOURCE_COMMIT: ${{ needs.validate-release.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # retain the established build argument while binding it to the resolved commit SHA
+          GITHUB_SHA=${SOURCE_COMMIT}
           # the same builder reuses the inspected compilation layers
           for target in server web; do
-            docker buildx build --platform linux/arm64 --target "${target}" \
+            # map both public repositories through the one admitted generation
+            if [[ "${target}" == server ]]; then
+              build_target="${{ steps.runtime.outputs.server_target }}"
+            else
+              build_target="${{ steps.runtime.outputs.web_target }}"
+            fi
+            docker buildx build --platform linux/arm64 --target "${build_target}" \
+              --build-arg "WEATHER_SOURCE_REVISION=${SOURCE_COMMIT}" \
               --build-arg "WEATHER_WEB_REVISION=${GITHUB_SHA}" \
               --provenance=true --push \
               --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
@@ -168,7 +344,74 @@ jobs:
             fi
             variable=$(printf '%s' "${target}" | tr '[:lower:]' '[:upper:]')
             printf 'WEATHER_%s_IMAGE=%s\n' "${variable}" "${reference}" > "${target}-image-digest.env"
+            printf '%s\n' "${remote_config}" > "${target}-image-config-id"
           done
+      - name: Bind published native image proof
+        if: needs.validate-release.outputs.generation == 'rust-v1'
+        env:
+          RELEASE: ${{ needs.validate-release.outputs.release }}
+          SOURCE_COMMIT: ${{ needs.validate-release.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module - \
+            "${RUNNER_TEMP}/native-runtime-material.json" \
+            server-image-digest.env server-image-config-id \
+            web-image-digest.env web-image-config-id \
+            "${RELEASE}" "${SOURCE_COMMIT}" \
+            > native-runtime-publication-proof.json <<'NODE'
+          import assert from "node:assert/strict";
+          import { createHash } from "node:crypto";
+          import { readFileSync } from "node:fs";
+          import { canonicalJsonBytes } from "./scripts/prepare-native-schema-preserving-publication.mjs";
+
+          const materialBytes = readFileSync(process.argv[2]);
+          const material = JSON.parse(materialBytes);
+          const release = process.argv[7];
+          const sourceCommit = process.argv[8];
+          assert.equal(material.source.commit, sourceCommit);
+          const publishedImages = [
+            ["server", process.argv[3], process.argv[4], material.images[0]],
+            ["web", process.argv[5], process.argv[6], material.images[1]],
+          ].map(([name, referencePath, configPath, image]) => {
+            const reference = readFileSync(referencePath, "utf8").trim().split("=")[1];
+            const configId = readFileSync(configPath, "utf8").trim();
+            assert.equal(image.name, name);
+            assert.match(reference, new RegExp(`^ghcr\\.io/anstosa/weather-${name}@sha256:[a-f0-9]{64}$`, "u"));
+            assert.match(configId, /^sha256:[a-f0-9]{64}$/u);
+            return { configId, materialManifestSha256: image.materialManifestSha256, name, reference };
+          });
+          const proof = {
+            contractVersion: "weather-native-image-publication-proof/v1",
+            generation: "rust-v1",
+            imageMaterial: material,
+            imageMaterialSha256: createHash("sha256").update(canonicalJsonBytes(material)).digest("hex"),
+            publishedImages,
+            release,
+            sourceCommit,
+          };
+          process.stdout.write(`${JSON.stringify(proof, null, 2)}\n`);
+          NODE
+          sha256sum native-runtime-publication-proof.json > native-runtime-publication-proof.sha256
+      - name: Build native Blueberry host evidence package
+        if: needs.validate-release.outputs.generation == 'rust-v1'
+        env:
+          SOURCE_COMMIT: ${{ needs.validate-release.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_build=$(mktemp -d "${RUNNER_TEMP}/weather-native-host-build.XXXXXX")
+          trap 'rm -rf -- "${host_build}"' EXIT
+          docker buildx build --platform linux/arm64 --target native-host-evidence-material \
+            --provenance=false --output "type=local,dest=${host_build}" .
+          bash deploy/scripts/package-native-evidence-operator.sh \
+            "${host_build}/weather-evidence" "${RUNNER_TEMP}/weather-native-evidence-operator" "${SOURCE_COMMIT}"
+      - name: Retain native Blueberry host evidence package
+        if: needs.validate-release.outputs.generation == 'rust-v1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-evidence-operator
+          path: ${{ runner.temp }}/weather-native-evidence-operator/
       - name: Retain server digest reference
         uses: actions/upload-artifact@v4
         with:
@@ -179,3 +422,11 @@ jobs:
         with:
           name: web-image-digest
           path: web-image-digest.env
+      - name: Retain native publication proof
+        if: needs.validate-release.outputs.generation == 'rust-v1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-runtime-publication-proof
+          path: |
+            native-runtime-publication-proof.json
+            native-runtime-publication-proof.sha256

@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, extname, join, relative, resolve } from "node:path";
+import ts from "typescript";
 
 const root = process.cwd();
 const ignoredDirectories = new Set([
@@ -35,6 +36,7 @@ const expectedProjectDependencies = new Map([
   [
     "@weather/api",
     new Set([
+      "@weather/contracts",
       "@weather/database",
       "@weather/domain",
       "@weather/forecast-adjustment",
@@ -51,11 +53,16 @@ const expectedProjectDependencies = new Map([
     ]),
   ],
   ["@weather/database", new Set(["@weather/domain"])],
+  ["@weather/contracts", new Set(["@weather/domain", "@weather/forecast-adjustment"])],
   ["@weather/domain", new Set()],
   ["@weather/forecast-adjustment", new Set(["@weather/domain"])],
   ["@weather/providers", new Set(["@weather/domain"])],
 ]);
 const importRules = [
+  {
+    allowed: new Set(["@weather/domain", "@weather/forecast-adjustment"]),
+    pathPrefix: "packages/contracts/src/",
+  },
   {
     allowed: new Set(),
     pathPrefix: "packages/domain/src/",
@@ -83,6 +90,7 @@ const importRules = [
   },
   {
     allowed: new Set([
+      "@weather/contracts",
       "@weather/database",
       "@weather/domain",
       "@weather/forecast-adjustment",
@@ -92,6 +100,16 @@ const importRules = [
   {
     allowed: new Set(),
     pathPrefix: "apps/web/src/",
+  },
+];
+const typeOnlyImportRules = [
+  {
+    packages: new Set(["@weather/domain", "@weather/forecast-adjustment"]),
+    pathPrefix: "packages/contracts/src/",
+  },
+  {
+    packages: new Set(["@weather/contracts"]),
+    pathPrefix: "apps/api/src/",
   },
 ];
 const failures = [];
@@ -137,6 +155,105 @@ function findImportRule(displayPath) {
   }
 
   return undefined;
+}
+
+// find the type-only import boundary
+function findTypeOnlyImportRule(displayPath) {
+  // inspect type-only workspace rules
+  for (const rule of typeOnlyImportRules) {
+    // match the source tree
+    if (displayPath.startsWith(rule.pathPrefix)) {
+      return rule;
+    }
+  }
+
+  return undefined;
+}
+
+// read a static module specifier
+function staticModuleSpecifier(node) {
+  // accept only exact string module names
+  if (node !== undefined && ts.isStringLiteralLike(node)) {
+    return node.text;
+  }
+
+  return undefined;
+}
+
+// enforce type-only package boundaries
+function checkTypeOnlyProjectImports(displayPath, content) {
+  const rule = findTypeOnlyImportRule(displayPath);
+
+  // skip files outside a type-only boundary
+  if (rule === undefined || extname(displayPath) !== ".ts") {
+    return;
+  }
+
+  const sourceFile = ts.createSourceFile(
+    displayPath,
+    content,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TS,
+  );
+
+  // inspect every module-bearing syntax node
+  function inspect(node) {
+    // require clause-level type-only imports
+    if (ts.isImportDeclaration(node)) {
+      const specifier = staticModuleSpecifier(node.moduleSpecifier);
+
+      // reject any value-bearing import from a type-only package
+      if (
+        specifier !== undefined &&
+        rule.packages.has(specifier) &&
+        node.importClause?.isTypeOnly !== true
+      ) {
+        failures.push(`${displayPath}: project import ${specifier} must use import type`);
+      }
+    }
+
+    // require explicit type-only re-exports
+    if (ts.isExportDeclaration(node)) {
+      const specifier = staticModuleSpecifier(node.moduleSpecifier);
+
+      // reject value-bearing re-exports from a type-only package
+      if (
+        specifier !== undefined &&
+        rule.packages.has(specifier) &&
+        node.isTypeOnly !== true
+      ) {
+        failures.push(`${displayPath}: project export ${specifier} must use export type`);
+      }
+    }
+
+    // reject import-equals runtime loading
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      const specifier = staticModuleSpecifier(node.moduleReference.expression);
+
+      // reject commonjs import aliases
+      if (specifier !== undefined && rule.packages.has(specifier)) {
+        failures.push(`${displayPath}: project import ${specifier} must use import type`);
+      }
+    }
+
+    // reject runtime loading forms at the type-only boundary
+    if (ts.isCallExpression(node)) {
+      const specifier = staticModuleSpecifier(node.arguments[0]);
+      const isRuntimeLoad =
+        node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === "require");
+
+      // reject dynamic imports and commonjs loads
+      if (isRuntimeLoad && specifier !== undefined && rule.packages.has(specifier)) {
+        failures.push(`${displayPath}: project import ${specifier} must be static and type-only`);
+      }
+    }
+
+    ts.forEachChild(node, inspect);
+  }
+
+  inspect(sourceFile);
 }
 
 // enforce source imports
@@ -233,6 +350,7 @@ for (const file of files) {
   }
 
   checkProjectImports(displayPath, content);
+  checkTypeOnlyProjectImports(displayPath, content);
   await checkProjectDependencies(displayPath, content);
 }
 

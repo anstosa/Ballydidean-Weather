@@ -1,0 +1,55 @@
+[package]
+name = "weather-runtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+node-zlib-candidate = []
+
+[dependencies]
+base64.workspace = true
+bytes.workspace = true
+libc.workspace = true
+flate2.workspace = true
+getrandom.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+scrypt.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+url.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tokio.workspace = true
+http-body-util.workspace = true
+hyper-rustls.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+tokio-postgres.workspace = true
+tokio-postgres-rustls.workspace = true
+uuid.workspace = true
+regex.workspace = true
+weather-api = { path = "../weather-api" }
+weather-contracts = { path = "../weather-contracts" }
+weather-database = { path = "../weather-database" }
+weather-domain = { path = "../weather-domain" }
+weather-edge = { path = "../weather-edge" }
+weather-providers = { path = "../weather-providers" }
+weather-worker = { path = "../weather-worker" }
+
+[[bin]]
+name = "weather-web"
+path = "src/bin/weather-web.rs"
+required-features = ["node-zlib-candidate"]
+
+[[bin]]
+name = "weather-worker"
+path = "src/bin/weather-worker.rs"
+required-features = ["node-zlib-candidate"]
+
+# keep the existing package graph while retaining a distinct migration app entrypoint
+[[bin]]
+name = "weather-migrate"
+path = "../../apps/weather-migrate/src/main.rs"

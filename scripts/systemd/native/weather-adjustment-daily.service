@@ -1,0 +1,26 @@
+[Unit]
+Description=Weather native adjustment daily maintenance controller
+After=network-online.target user@1000.service
+Wants=network-online.target
+Requires=user@1000.service
+ConditionPathIsDirectory=/run/user/1000
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+Environment=HOME=/home/ubuntu
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=SSH_AUTH_SOCK=/run/user/1000/openssh_agent
+UMask=0077
+WorkingDirectory=/home/ubuntu/.weather/adjustment-maintenance/runner/current
+ExecStart=/home/ubuntu/.weather/adjustment-maintenance/runner/current/bin/weather-maintenance-capture --daily
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/.weather/adjustment-maintenance /home/ubuntu/weather

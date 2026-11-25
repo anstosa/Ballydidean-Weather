@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import * as databasePerformance from "./database-page-performance.mjs";
 import {
   CONFIG_CONTRACT_VERSION,
   ENDPOINT_INVENTORY,
@@ -1541,6 +1542,36 @@ test("evaluate CLI judges existing evidence without collecting or overwriting", 
     await assert.rejects(
       () => runCli(["evaluate", "--config", configPath, "--output", outputPath]),
       /EEXIST/u,
+    );
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+// delete unpublished full-backend-v1 authority without adapters
+test("unpublished full-backend-v1 exports are absent", () => {
+  assert.equal("FULL_BACKEND_BASELINE_CONTRACT_VERSION" in databasePerformance, false);
+  assert.equal("validateFullBackendBaselineEvidence" in databasePerformance, false);
+  assert.equal("summarizeFullBackendEvidence" in databasePerformance, false);
+});
+
+// reject a full-backend-v1 document through the published page evaluator
+test("page evaluator rejects full-backend-v1 instead of adapting it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "weather-reject-full-backend-v1-"));
+  const configPath = join(directory, "full-backend-v1.json");
+  const outputPath = join(directory, "output");
+
+  try {
+    await chmod(directory, 0o700);
+    await writeFile(configPath, `${JSON.stringify({
+      attempts: [],
+      contractVersion: "weather-full-backend-baseline/v1",
+      metrics: [],
+      resources: [],
+    })}\n`, { mode: 0o600 });
+    await assert.rejects(
+      () => runCli(["evaluate", "--config", configPath, "--output", outputPath]),
+      /config contract must be weather-page-performance-config\/v1/u,
     );
   } finally {
     await rm(directory, { force: true, recursive: true });

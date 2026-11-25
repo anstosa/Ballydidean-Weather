@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Weather native adjustment daily maintenance
+
+[Timer]
+OnCalendar=*-*-* 03:20:00 America/Los_Angeles
+RandomizedDelaySec=15m
+Persistent=true
+Unit=weather-adjustment-daily.service
+
+[Install]
+WantedBy=timers.target

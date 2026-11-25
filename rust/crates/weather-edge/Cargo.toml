@@ -1,0 +1,9 @@
+[package]
+name = "weather-edge"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+weather-contracts = { path = "../weather-contracts" }
+weather-domain = { path = "../weather-domain" }

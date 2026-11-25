@@ -36,7 +36,6 @@ import {
   type ApplyForecastAdjustmentInputV1,
   type ApplyTemperatureCanaryInputV1,
   type ForecastTemperatureCanaryDecisionV1,
-  type ForecastAdjustmentWindQualifiedMaintenanceDecision,
   type LoadedForecastAdjustmentRuntimeV1,
   type LoadedForecastAdjustmentTemperatureCanaryRuntime,
   type LoadedForecastAdjustmentWindCanaryRuntime,
@@ -48,32 +47,81 @@ import {
   validateStableKey,
   validateUtcInstant,
   type CanonicalWeatherMetrics,
-  type ForecastAdjustmentDecision,
   type ForecastAdjustmentMetric,
   type JsonValue,
-  type SourceKind,
   type StationKind,
   type RainCollectionStatus,
 } from "@weather/domain";
+import type {
+  ApiAirQualityHourlyContext,
+  ApiCurrentWeatherRecord,
+  ApiCurrentWeatherResponse,
+  ApiDailyPrecipitation,
+  ApiDailyPrecipitationResponse,
+  ApiForecastAdjustmentDecision,
+  ApiForecastAdjustmentRuntime,
+  ApiForecastResponse,
+  ApiForecastTemperatureAdjustmentRuntime,
+  ApiForecastWeatherRecord,
+  ApiHistoryResponse,
+  ApiPropertySensorSnapshot,
+  ApiRainAdjustmentDecision,
+  ApiRainAdjustmentRuntime,
+  ApiSite,
+  ApiSitesResponse,
+  ApiSource,
+  ApiStation,
+  ApiTideRecord,
+  ApiTidesResponse,
+  ApiWeatherRecord,
+  ForecastDays,
+} from "@weather/contracts";
 import { projectRainCollectionStatus } from "./rain-collection.js";
 import type { RainAdjustmentRun } from "@weather/database";
 import {
   rainAdjustmentDecision,
   rainAdjustmentRuntime,
   validRainAdjustmentRun,
-  type ApiRainAdjustmentDecision,
   type ApiRainAdjustmentStartupSnapshot,
 } from "./rain-adjustment.js";
 
 export * from "./adjustment-maintenance-shadow.js";
+export type {
+  ApiAirQualityHourlyContext,
+  ApiCurrentWeatherRecord,
+  ApiCurrentWeatherResponse,
+  ApiDailyPrecipitation,
+  ApiDailyPrecipitationResponse,
+  ApiForecastAdjustmentDecision,
+  ApiForecastAdjustmentRuntime,
+  ApiForecastResponse,
+  ApiForecastTemperatureAdjustmentRuntime,
+  ApiForecastWeatherRecord,
+  ApiHistoryResponse,
+  ApiPropertySensorSnapshot,
+  ApiRainAdjustmentDecision,
+  ApiRainAdjustmentRuntime,
+  ApiSite,
+  ApiSitesResponse,
+  ApiSource,
+  ApiStation,
+  ApiTideRecord,
+  ApiTidesResponse,
+  ApiWeatherRecord,
+  ForecastDays,
+} from "@weather/contracts";
 
 type DatabasePool = Parameters<typeof listActiveSites>[0];
 type LoadedApiForecastAdjustmentRuntime =
   | LoadedForecastAdjustmentRuntimeV1
   | LoadedForecastAdjustmentWindCanaryRuntime;
-type ApiForecastAdjustmentDecision =
-  | ForecastAdjustmentDecision
-  | ForecastAdjustmentWindQualifiedMaintenanceDecision;
+// distinguish weather-data decisions at compile time
+declare const dataAtBrand: unique symbol;
+type DataAt = string & { readonly [dataAtBrand]: "data-at" };
+
+// distinguish real safety decisions at compile time
+declare const safetyAtBrand: unique symbol;
+type SafetyAt = string & { readonly [safetyAtBrand]: "safety-at" };
 
 export interface HealthSnapshot {
   readonly database: "ready" | "unavailable";
@@ -136,182 +184,68 @@ export interface WeatherReadStore {
   ): Promise<readonly TrendPointRow[]>;
 }
 
-export interface ApiSource {
-  readonly attribution: {
-    readonly label: string;
-    readonly url: string;
-  };
-  readonly id: string;
-  readonly key: string;
-  readonly kind: SourceKind;
-  readonly providerKey: string;
-  readonly providerName: string;
-  readonly provenanceLabel: string;
-}
-
-export interface ApiStation {
-  readonly kind: StationKind;
-  readonly latitude: number;
-  readonly longitude: number;
-  readonly name: string;
-  readonly slug: string;
-  readonly sources: readonly ApiSource[];
-}
-
-export interface ApiSite {
-  readonly latitude: number;
-  readonly longitude: number;
-  readonly name: string;
-  readonly slug: string;
-  readonly stations: readonly ApiStation[];
-  readonly timezone: string;
-}
-
-export interface ApiWeatherRecord {
-  readonly freshness: {
-    readonly ageSeconds: number;
-    readonly label: string;
-    readonly status: "delayed" | "fresh" | "stale";
-  };
-  readonly id: string;
-  readonly metadata: {
-    readonly device: {
-      readonly model: string | null;
-      readonly serial: string | null;
-      readonly vendor: string | null;
-    } | null;
-    readonly provider: {
-      readonly dataset: string | null;
-      readonly elevationM: number | null;
-      readonly gridCell: string | null;
-      readonly propertySensors: readonly ApiPropertySensorSnapshot[] | null;
-    } | null;
-    readonly quality: {
-      readonly confidencePercent: number | null;
-      readonly flags: readonly string[] | null;
-      readonly interpolation: string | null;
-      readonly status: string | null;
-    } | null;
-    readonly upstream: {
-      readonly model: string | null;
-      readonly timezone: string;
+// describe the reported health rather than the underlying snapshot
+export interface ApiHealthResponse {
+  readonly data: {
+    readonly adjustmentRuntime: ApiForecastAdjustmentRuntime;
+    readonly temperatureAdjustmentRuntime: ApiForecastTemperatureAdjustmentRuntime;
+    readonly database: "ready" | "unavailable";
+    readonly live: true;
+    readonly migration: {
+      readonly status: "current" | "outdated" | "unavailable";
+      readonly version: string | null;
+    };
+    readonly ready: boolean;
+    readonly version: string;
+    readonly worker: {
+      readonly freshness: "fresh" | "stale" | "unknown";
     };
   };
-  readonly metrics: {
-    readonly apparentTemperatureC: number | null;
-    readonly blackGlobeTemperatureC: number | null;
-    readonly cloudCoverPercent: number | null;
-    readonly pm25MicrogramsPerCubicMeter: number | null;
-    readonly precipitationMm: number | null;
-    readonly precipitationRateMmPerHour: number | null;
-    readonly pressureHpa: number | null;
-    readonly relativeHumidityPercent: number | null;
-    readonly soilElectricalConductivityMicrosiemensPerCm: number | null;
-    readonly soilMoisturePercent: number | null;
-    readonly solarRadiationWm2: number | null;
-    readonly temperatureC: number | null;
-    readonly uvIndex: number | null;
-    readonly windDirectionDegrees: number | null;
-    readonly windGustMps: number | null;
-    readonly windSpeedMps: number | null;
-    readonly wetBulbGlobeTemperatureC: number | null;
+}
+
+// describe the published collection aggregates
+export interface ApiRainCollectionResponse {
+  readonly data: {
+    readonly contractVersion: "rain-prospective-capture/v1";
+    readonly modelEnabled: boolean;
+    readonly qualificationEnabled: false;
+    readonly stationAccessAuthorized: boolean;
+    readonly expectedStations: number;
+    readonly startsAt: string;
+    readonly expiresAt: string;
+    readonly claims: number;
+    readonly receipts: number;
+    readonly validForecasts: number;
+    readonly timelyForecasts: number;
+    readonly validStationWindows: number;
+    readonly stationsSeen: number;
+    readonly failedRequests: number;
+    readonly pendingRequests: number;
+    readonly unknownRequests: number;
+    readonly compressedBytes: number;
+    readonly lastClaimAt: string | null;
+    readonly lastReceiptAt: string | null;
+    readonly lastForecastReceiptAt: string | null;
+    readonly lastStationReceiptAt: string | null;
+    readonly pausedUntil: string | null;
   };
-  readonly productRunAt: string | null;
-  readonly provenance: {
-    readonly attribution: {
-      readonly label: string;
-      readonly url: string;
-    };
-    readonly label: string;
-    readonly providerKey: string;
-    readonly sourceId: string;
-    readonly sourceKey: string;
-    readonly sourceKind: SourceKind;
-    readonly stationSlug: string;
+  readonly generatedAt: string;
+  readonly version: string;
+}
+
+// describe the site trend buckets
+export interface ApiTrendsResponse {
+  readonly data: readonly ApiTrendPoint[];
+  readonly generatedAt: string;
+  readonly site: ApiSite;
+}
+
+// describe the shared public error body
+export interface ApiErrorResponse {
+  readonly error: {
+    readonly code: string;
+    readonly message: string;
   };
-  readonly receivedAt: string;
-  readonly revisionCount: number;
-  readonly validAt: string;
-}
-
-// add source-local tendency only to current records
-export interface ApiCurrentWeatherRecord extends ApiWeatherRecord {
-  readonly airQuality: ApiAirQualityHourlyContext | null;
-  readonly pressureChange3hHpa: number | null;
-}
-
-// extend only forecast rows with fail-raw adjustment decisions
-export interface ApiForecastWeatherRecord extends ApiWeatherRecord {
-  readonly rainAdjustment: ApiRainAdjustmentDecision;
-  readonly adjustment: ApiForecastAdjustmentDecision;
-  readonly temperatureAdjustment: ForecastTemperatureCanaryDecisionV1;
-}
-
-// expose only bounded startup selection metadata
-export interface ApiForecastAdjustmentRuntime {
-  readonly actionSha256?: string;
-  readonly activationMode: "maintenance_qualified" | "qualified" | "wind_canary" | null;
-  readonly activeBundle: string | null;
-  readonly authorizationSha256: string | null;
-  readonly candidateArtifactSha256: string | null;
-  readonly enabledMetrics: readonly ForecastAdjustmentMetric[];
-  readonly evaluationReportSha256: string | null;
-  readonly expiresAt: string | null;
-  readonly fullMemberRootSha256?: string;
-  readonly loadedAt: string;
-  readonly qualificationReceiptSha256: string | null;
-  readonly reasonCode: LoadedApiForecastAdjustmentRuntime["reasonCode"];
-  readonly state: LoadedApiForecastAdjustmentRuntime["state"];
-  readonly policyReportSha256?: string;
-  readonly transferReportSha256: string | null;
-}
-
-// expose bounded independent temperature-canary state
-export interface ApiForecastTemperatureAdjustmentRuntime {
-  readonly actionSha256: string | null;
-  readonly activationMode: "maintenance_qualified" | "temperature_canary" | null;
-  readonly activeBundle: string | null;
-  readonly authorizationSha256: string | null;
-  readonly expiresAt: string | null;
-  readonly fullMemberRootSha256: string | null;
-  readonly loadedAt: string;
-  readonly policyReportSha256: string | null;
-  readonly reasonCode: LoadedForecastAdjustmentTemperatureCanaryRuntime["reasonCode"];
-  readonly source: null | {
-    readonly adaptiveReady: boolean;
-    readonly firstReceivedAt: string;
-    readonly hourCount: number;
-    readonly latestRunInitializedAt: string;
-    readonly stateReason: string | null;
-    readonly stateStatus: EcmwfTemperatureCanaryStatus["stateStatus"];
-  };
-  readonly state: LoadedForecastAdjustmentTemperatureCanaryRuntime["state"];
-}
-
-export interface ApiPropertySensorSnapshot {
-  readonly airQuality?: ApiAirQualityHourlyContext | null;
-  readonly channel: number | null;
-  readonly key: string;
-  readonly model: string;
-  readonly readings: Readonly<Record<string, number>>;
-}
-
-export interface ApiAirQualityHourlyContext {
-  readonly hourlyPm25: readonly (number | null)[];
-  readonly through: string;
-}
-
-export interface ApiTideRecord {
-  readonly eventType: "high" | "low" | null;
-  readonly kind: "observation" | "prediction";
-  readonly source: {
-    readonly attribution: { readonly label: string; readonly url: string };
-    readonly providerKey: string;
-    readonly stationName: string;
-    readonly stationSlug: string;
-  };
-  readonly validAt: string;
-  readonly waterLevelM: number;
 }
 
 export interface ApiTrendPoint {
@@ -331,16 +265,9 @@ export interface ApiTrendPoint {
   readonly validAt: string;
 }
 
-export interface ApiDailyPrecipitation {
-  readonly accumulationMm: number;
-  readonly source: {
-    readonly sourceId: string;
-    readonly stationSlug: string;
-  };
-  readonly validThrough: string;
-}
-
 export interface ApiOptions {
+  // supply one inert nominal data instant
+  readonly dataAt?: string;
   readonly forecastAdjustment?: {
     readonly apply?: (
       runtime: LoadedApiForecastAdjustmentRuntime,
@@ -363,8 +290,6 @@ export interface ApiOptions {
   readonly version?: string;
 }
 
-export type ForecastDays = 1 | 5 | 10;
-
 export interface ApiDiagnostic {
   readonly errorCode: string | null;
   readonly errorName: string;
@@ -375,7 +300,7 @@ export interface ApiDiagnostic {
 }
 
 // identify bounded optional failure boundaries
-type TemperatureCanaryOperation = "sidecar_read" | "status_read" | "inference";
+export type TemperatureCanaryOperation = "sidecar_read" | "status_read" | "inference";
 
 // collect failures without changing public serving
 type TemperatureCanaryFailureReporter = (
@@ -600,6 +525,8 @@ export function createWeatherApi(
 ): (request: Request) => Promise<Response> {
   const logDiagnostic = options.logDiagnostic;
   const now = options.now ?? currentDate;
+  // snapshot the inert library seam before requests
+  const nominalDataAt = options.dataAt as DataAt | undefined;
   const version = options.version ?? "development";
   const forecastAdjustment = options.forecastAdjustment ?? {
     loadedAt: now().toISOString(),
@@ -633,16 +560,19 @@ export function createWeatherApi(
     try {
       const url = new URL(request.url);
       const route = matchRoute(url.pathname);
-      const generatedAt = now().toISOString();
+      // retain one real request clock read
+      const safetyAt = now().toISOString() as SafetyAt;
+      // default production data to the same instant
+      const dataAt = (nominalDataAt ?? safetyAt) as DataAt;
       const adjustmentRuntime = projectForecastAdjustmentRuntime(
         forecastAdjustment.runtime,
         forecastAdjustment.loadedAt,
-        generatedAt,
+        safetyAt,
       );
       const temperatureAdjustmentRuntime = projectForecastTemperatureAdjustmentRuntime(
         temperatureAdjustment.runtime,
         temperatureAdjustment.loadedAt,
-        generatedAt,
+        safetyAt,
         null,
       );
 
@@ -658,7 +588,8 @@ export function createWeatherApi(
           store,
           route,
           url,
-          generatedAt,
+          dataAt,
+          safetyAt,
           version,
           forecastAdjustment.runtime,
           adjustmentRuntime,
@@ -743,7 +674,7 @@ function disabledForecastTemperatureAdjustmentRuntime(): LoadedForecastAdjustmen
 function projectForecastAdjustmentRuntime(
   runtime: LoadedApiForecastAdjustmentRuntime,
   loadedAtInput: string,
-  evaluatedAtInput: string,
+  evaluatedAtInput: SafetyAt,
 ): ApiForecastAdjustmentRuntime {
   const loadedAt = validateUtcInstant(loadedAtInput, "forecastAdjustment.loadedAt");
   const evaluatedAt = validateUtcInstant(
@@ -837,7 +768,7 @@ function projectForecastAdjustmentRuntime(
 function projectForecastTemperatureAdjustmentRuntime(
   runtime: LoadedForecastAdjustmentTemperatureCanaryRuntime,
   loadedAtInput: string,
-  evaluatedAtInput: string,
+  evaluatedAtInput: SafetyAt,
   source: EcmwfTemperatureCanaryStatus | null,
 ): ApiForecastTemperatureAdjustmentRuntime {
   const loadedAt = validateUtcInstant(
@@ -1185,7 +1116,8 @@ async function handleReadRoute(
   store: WeatherReadStore,
   route: Route,
   url: URL,
-  generatedAt: string,
+  dataAt: DataAt,
+  safetyAt: SafetyAt,
   version: string,
   forecastAdjustmentRuntime: LoadedApiForecastAdjustmentRuntime,
   adjustmentRuntime: ApiForecastAdjustmentRuntime,
@@ -1206,7 +1138,7 @@ async function handleReadRoute(
   // keep the private fixed input outside site discovery and public routing
   if (route.kind === "forecastObservationInput") {
     rejectUnexpectedParameters(url.searchParams, new Set());
-    const input = await store.getForecastObservationInput?.(generatedAt) ?? null;
+    const input = await store.getForecastObservationInput?.(dataAt) ?? null;
 
     // fail closed when the fixed site or compact reader is unavailable
     if (input === null || input.siteSlug !== "ballydidean" ||
@@ -1218,23 +1150,23 @@ async function handleReadRoute(
     const queryFrom = toIsoInstant(input.queryFrom);
     const through = toIsoInstant(input.through);
     const expectedProjection = siteForecastDayWindow(
-      generatedAt,
+      dataAt,
       input.timezone,
     ).asOf;
     const expectedQuery = new Date(Math.min(
       Date.parse(expectedProjection) - 3 * 3_600_000,
-      Date.parse(generatedAt) - 24 * 3_600_000 - 20 * 60_000,
+      Date.parse(dataAt) - 24 * 3_600_000 - 20 * 60_000,
     )).toISOString();
 
     // bind the repository result to this request's one fixed geometry
-    if (through !== generatedAt || projectionFrom !== expectedProjection ||
+    if (through !== dataAt || projectionFrom !== expectedProjection ||
       queryFrom !== expectedQuery) {
       throw new Error("Forecast observation input geometry is invalid");
     }
 
     const body = JSON.stringify({
       contractVersion: "forecast-observation-input/v1",
-      generatedAt,
+      generatedAt: dataAt,
       projectionFrom,
       queryFrom,
       records: input.records.map(
@@ -1285,19 +1217,19 @@ async function handleReadRoute(
       ? await readTemperatureCanaryStatusSafely(
           store,
           "ballydidean",
-          generatedAt,
+          safetyAt,
           reportTemperatureFailure,
         )
       : null;
     return await healthResponse(
       store,
-      generatedAt,
+      safetyAt,
       version,
       adjustmentRuntime,
       projectForecastTemperatureAdjustmentRuntime(
         temperatureAdjustmentRuntime,
         projectedTemperatureAdjustmentRuntime.loadedAt,
-        generatedAt,
+        safetyAt,
         status,
       ),
     );
@@ -1306,7 +1238,7 @@ async function handleReadRoute(
   // serve active site metadata
   if (route.kind === "sites") {
     rejectUnexpectedParameters(url.searchParams, new Set());
-    return jsonResponse({ data: groupSites(await store.listSites()) });
+    return jsonResponse({ data: groupSites(await store.listSites()) } satisfies ApiSitesResponse);
   }
 
   const sites = groupSites(await store.listSites());
@@ -1322,7 +1254,8 @@ async function handleReadRoute(
     const rainRun = await readRainAdjustmentSafely(
       store,
       route.siteSlug,
-      generatedAt,
+      dataAt,
+      safetyAt,
       reportRainFailure,
       rainAdjustment,
     );
@@ -1330,12 +1263,12 @@ async function handleReadRoute(
       data: { ...projectRainCollectionStatus(await store.getRainCollectionStatus()),
         modelEnabled: rainAdjustmentRuntime(
           rainRun,
-          generatedAt,
+          safetyAt,
           rainAdjustment,
         ).state === "active" },
-      generatedAt,
+      generatedAt: dataAt,
       version,
-    });
+    } satisfies ApiRainCollectionResponse);
   }
 
   // serve selected current rows
@@ -1345,19 +1278,19 @@ async function handleReadRoute(
       // parse only the current query boundary
       () => parseCurrentQuery(url.searchParams, site),
     );
-    const rows = await store.getCurrent(route.siteSlug, { ...query, asOf: generatedAt });
-    const records = mapCurrentWeatherRecords(rows, indexSources(site), generatedAt);
-    return jsonResponse({ data: records, generatedAt, site });
+    const rows = await store.getCurrent(route.siteSlug, { ...query, asOf: dataAt });
+    const records = mapCurrentWeatherRecords(rows, indexSources(site), dataAt);
+    return jsonResponse({ data: records, generatedAt: dataAt, site } satisfies ApiCurrentWeatherResponse);
   }
 
   // serve today's nearest physical rain accumulation
   if (route.kind === "dailyPrecipitation") {
     rejectUnexpectedParameters(url.searchParams, new Set());
-    const window = siteForecastDayWindow(generatedAt, site.timezone);
+    const window = siteForecastDayWindow(dataAt, site.timezone);
     const row = await store.getDailyPrecipitation(
       route.siteSlug,
       window.asOf,
-      generatedAt,
+      dataAt,
     );
     const data: ApiDailyPrecipitation | null = row === null
       ? null
@@ -1369,7 +1302,7 @@ async function handleReadRoute(
         },
         validThrough: toIsoInstant(row.validThrough),
       };
-    return jsonResponse({ data, generatedAt, site });
+    return jsonResponse({ data, generatedAt: dataAt, site } satisfies ApiDailyPrecipitationResponse);
   }
 
   // serve the latest normalized forecast product
@@ -1379,7 +1312,7 @@ async function handleReadRoute(
       // parse only the reviewed daily or overnight horizon
       () => parseForecastRequestWindow(
         url.searchParams,
-        generatedAt,
+        dataAt,
         site.timezone,
       ),
     );
@@ -1411,7 +1344,7 @@ async function handleReadRoute(
             readTemperatureCanarySidecarSafely(
               store,
               route.siteSlug,
-              generatedAt,
+              dataAt,
               forecastWindow.asOf,
               to,
               reportTemperatureFailure,
@@ -1419,7 +1352,7 @@ async function handleReadRoute(
             readTemperatureCanaryStatusSafely(
               store,
               route.siteSlug,
-              generatedAt,
+              safetyAt,
               reportTemperatureFailure,
             ),
           ])
@@ -1427,14 +1360,16 @@ async function handleReadRoute(
     const rainRun = await readRainAdjustmentSafely(
       store,
       route.siteSlug,
-      generatedAt,
+      dataAt,
+      safetyAt,
       reportRainFailure,
       rainAdjustment,
     );
     const records = mapForecastWeatherRecords(
       rows,
       indexSources(site),
-      generatedAt,
+      dataAt,
+      safetyAt,
       forecastAdjustmentRuntime,
       applyAdjustment,
       temperatureAdjustmentRuntime,
@@ -1462,25 +1397,25 @@ async function handleReadRoute(
       airQualityContext,
       rainAdjustmentRuntime: rainAdjustmentRuntime(
         rainRun,
-        generatedAt,
+        safetyAt,
         rainAdjustment,
       ),
       data,
       days: forecastWindow.days,
-      generatedAt,
+      generatedAt: dataAt,
       pressureContext: mapForecastPressureContextSafely(
         pressureContextRows,
         indexSources(site),
-        generatedAt,
+        dataAt,
       ),
       site,
       temperatureAdjustmentRuntime: projectForecastTemperatureAdjustmentRuntime(
         temperatureAdjustmentRuntime,
         projectedTemperatureAdjustmentRuntime.loadedAt,
-        generatedAt,
+        safetyAt,
         temperatureStatus,
       ),
-    });
+    } satisfies ApiForecastResponse);
   }
 
   // serve daily calendar-year trend buckets
@@ -1490,17 +1425,17 @@ async function handleReadRoute(
       // retain bounded compatibility with cached range clients
       () => parseLegacyTrendRange(url.searchParams),
     );
-    const window = calendarTrendWindow(generatedAt, site.timezone);
+    const window = calendarTrendWindow(dataAt, site.timezone);
     const rows = await store.listTrends(
       route.siteSlug,
       window.from,
-      generatedAt,
+      dataAt,
     );
     return jsonResponse({
       data: mapTrendPoints(rows),
-      generatedAt,
+      generatedAt: dataAt,
       site,
-    });
+    } satisfies ApiTrendsResponse);
   }
 
   // serve recent observations and the local tide forecast
@@ -1508,14 +1443,14 @@ async function handleReadRoute(
     rejectUnexpectedParameters(url.searchParams, new Set(["from", "to"]));
     const range = parsePublicQuery(
       // parse only the bounded tide range
-      () => parseTideRange(url.searchParams, generatedAt),
+      () => parseTideRange(url.searchParams, dataAt),
     );
     const rows = await store.listTides(route.siteSlug, range.from, range.to);
     return jsonResponse({
       data: mapTideRecords(rows),
-      generatedAt,
+      generatedAt: dataAt,
       site,
-    });
+    } satisfies ApiTidesResponse);
   }
 
   const parsed = parsePublicQuery(
@@ -1525,7 +1460,7 @@ async function handleReadRoute(
   const rows = await store.listHistory(parsed.query);
   const hasMore = rows.length > parsed.requestedLimit;
   const visibleRows = hasMore ? rows.slice(0, parsed.requestedLimit) : rows;
-  const records = mapWeatherRecords(visibleRows, indexSources(site), generatedAt);
+  const records = mapWeatherRecords(visibleRows, indexSources(site), dataAt);
   const last = records.at(-1);
   const nextCursor =
     hasMore && last !== undefined
@@ -1533,16 +1468,16 @@ async function handleReadRoute(
       : null;
   return jsonResponse({
     data: records,
-    generatedAt,
+    generatedAt: dataAt,
     page: { limit: parsed.requestedLimit, nextCursor },
     site,
-  });
+  } satisfies ApiHistoryResponse);
 }
 
 // render one safe health response
 async function healthResponse(
   store: WeatherReadStore,
-  generatedAt: string,
+  safetyAt: SafetyAt,
   version: string,
   adjustmentRuntime: ApiForecastAdjustmentRuntime,
   temperatureAdjustmentRuntime: ApiForecastTemperatureAdjustmentRuntime,
@@ -1557,7 +1492,7 @@ async function healthResponse(
 
   const ready =
     health.database === "ready" && health.migration.status === "current";
-  const body = {
+  const body: ApiHealthResponse = {
     data: {
       adjustmentRuntime,
       temperatureAdjustmentRuntime,
@@ -1569,7 +1504,7 @@ async function healthResponse(
       worker: {
         freshness: describeWorkerFreshness(
           health.workerLastLoopAt,
-          generatedAt,
+          safetyAt,
         ),
       },
     },
@@ -1589,7 +1524,7 @@ function unavailableHealth(): HealthSnapshot {
 // classify coarse worker loop freshness
 function describeWorkerFreshness(
   lastLoopAt: string | null,
-  generatedAt: string,
+  safetyAt: SafetyAt,
 ): "fresh" | "stale" | "unknown" {
   // preserve absent heartbeat state
   if (lastLoopAt === null) {
@@ -1597,7 +1532,7 @@ function describeWorkerFreshness(
   }
 
   const ageSeconds = Math.floor(
-    (Date.parse(generatedAt) - Date.parse(lastLoopAt)) / 1_000,
+    (Date.parse(safetyAt) - Date.parse(lastLoopAt)) / 1_000,
   );
 
   // fail closed on invalid or future heartbeats
@@ -1848,7 +1783,7 @@ function indexSources(site: ApiSite): ReadonlyMap<string, SourceDetails> {
 function mapWeatherRecords(
   rows: readonly WeatherRecordRow[],
   sources: ReadonlyMap<string, SourceDetails>,
-  generatedAt: string,
+  dataAt: DataAt,
 ): readonly ApiWeatherRecord[] {
   const records: ApiWeatherRecord[] = [];
 
@@ -1863,7 +1798,7 @@ function mapWeatherRecords(
 
     const validAt = toIsoInstant(row.validAt);
     records.push({
-      freshness: describeFreshness(validAt, generatedAt),
+      freshness: describeFreshness(validAt, dataAt),
       id: row.id,
       metadata: projectMetadata(row),
       metrics: {
@@ -1910,9 +1845,9 @@ function mapWeatherRecords(
 function mapCurrentWeatherRecords(
   rows: readonly CurrentWeatherRecordRow[],
   sources: ReadonlyMap<string, SourceDetails>,
-  generatedAt: string,
+  dataAt: DataAt,
 ): readonly ApiCurrentWeatherRecord[] {
-  const records = mapWeatherRecords(rows, sources, generatedAt);
+  const records = mapWeatherRecords(rows, sources, dataAt);
 
   return records.map(
     // preserve source-aligned repository order
@@ -1938,7 +1873,8 @@ function mapCurrentWeatherRecords(
 function mapForecastWeatherRecords(
   rows: readonly WeatherRecordRow[],
   sources: ReadonlyMap<string, SourceDetails>,
-  generatedAt: string,
+  dataAt: DataAt,
+  safetyAt: SafetyAt,
   runtime: LoadedApiForecastAdjustmentRuntime,
   applyAdjustment: (
     runtime: LoadedApiForecastAdjustmentRuntime,
@@ -1954,7 +1890,7 @@ function mapForecastWeatherRecords(
   rainRun: RainAdjustmentRun | null,
   rainAdjustment: ApiRainAdjustmentStartupSnapshot | undefined,
 ): readonly ApiForecastWeatherRecord[] {
-  const rawRecords = mapWeatherRecords(rows, sources, generatedAt);
+  const rawRecords = mapWeatherRecords(rows, sources, dataAt);
   const temperatureHours = new Map(
     (temperatureSidecar?.hours ?? []).map((hour) => [hour.validAt, hour]),
   );
@@ -1964,19 +1900,20 @@ function mapForecastWeatherRecords(
     ...record,
     rainAdjustment: rainAdjustmentDecision(
       rows[index]!.upstreamModel === "best_match" ? rainRun : null,
-      record.validAt, record.metrics.precipitationMm, generatedAt,
+      record.validAt, record.metrics.precipitationMm, safetyAt,
       rainAdjustment,
     ),
     adjustment: applyForecastAdjustmentSafely(
       runtime,
       rows[index]!,
-      generatedAt,
+      safetyAt,
       applyAdjustment,
     ),
+    // keep coupled temperature authorization and age safety-real
     temperatureAdjustment: applyForecastTemperatureAdjustmentSafely(
       temperatureRuntime,
       rows[index]!,
-      generatedAt,
+      safetyAt,
       temperatureSidecar,
       temperatureHours.get(record.validAt) ?? null,
       applyTemperatureAdjustment,
@@ -1989,10 +1926,10 @@ function mapForecastWeatherRecords(
 function mapForecastPressureContextSafely(
   rows: readonly WeatherRecordRow[],
   sources: ReadonlyMap<string, SourceDetails>,
-  generatedAt: string,
+  dataAt: DataAt,
 ): readonly ApiWeatherRecord[] {
   try {
-    return mapWeatherRecords(rows, sources, generatedAt);
+    return mapWeatherRecords(rows, sources, dataAt);
   } catch {
     return [];
   }
@@ -2020,7 +1957,8 @@ async function readForecastPressureContextSafely(
 async function readRainAdjustmentSafely(
   store: WeatherReadStore,
   siteSlug: string,
-  asOf: string,
+  dataAt: DataAt,
+  safetyAt: SafetyAt,
   reportFailure: () => void,
   rainAdjustment: ApiRainAdjustmentStartupSnapshot | undefined,
 ): Promise<RainAdjustmentRun | null> {
@@ -2029,9 +1967,9 @@ async function readRainAdjustmentSafely(
     return null;
   }
   try {
-    const run = await store.getRainAdjustmentRun?.(siteSlug, asOf) ?? null;
-    // report corrupt or unbound projections separately from normal missing data
-    if (run !== null && !validRainAdjustmentRun(run, asOf)) {
+    const run = await store.getRainAdjustmentRun?.(siteSlug, dataAt) ?? null;
+    // report invalid or expired projections separately from missing data
+    if (run !== null && !validRainAdjustmentRun(run, safetyAt)) {
       reportFailure();
       return null;
     }
@@ -2046,7 +1984,7 @@ async function readRainAdjustmentSafely(
 function applyForecastTemperatureAdjustmentSafely(
   runtime: LoadedForecastAdjustmentTemperatureCanaryRuntime,
   row: WeatherRecordRow,
-  evaluatedAt: string,
+  evaluatedAt: SafetyAt,
   sidecar: EcmwfTemperatureCanarySidecar | null,
   hour: EcmwfTemperatureCanarySidecar["hours"][number] | null,
   applyTemperatureAdjustment: (
@@ -2107,7 +2045,7 @@ function applyForecastTemperatureAdjustmentSafely(
 async function readTemperatureCanarySidecarSafely(
   store: WeatherReadStore,
   siteSlug: string,
-  asOf: string,
+  asOf: DataAt,
   from: string,
   to: string,
   reportTemperatureFailure: TemperatureCanaryFailureReporter,
@@ -2129,7 +2067,7 @@ async function readTemperatureCanarySidecarSafely(
 async function readTemperatureCanaryStatusSafely(
   store: WeatherReadStore,
   siteSlug: string,
-  asOf: string,
+  asOf: SafetyAt,
   reportTemperatureFailure: TemperatureCanaryFailureReporter,
 ): Promise<EcmwfTemperatureCanaryStatus | null> {
   // preserve compatibility with stores that predate monitoring
@@ -2149,7 +2087,7 @@ async function readTemperatureCanaryStatusSafely(
 function applyForecastAdjustmentSafely(
   runtime: LoadedApiForecastAdjustmentRuntime,
   row: WeatherRecordRow,
-  evaluatedAt: string,
+  evaluatedAt: SafetyAt,
   applyAdjustment: (
     runtime: LoadedApiForecastAdjustmentRuntime,
     input: ApplyForecastAdjustmentInputV1,
@@ -2169,7 +2107,7 @@ function applyForecastAdjustmentSafely(
 // derive the immutable v4 retrieval identity from one selected row
 function forecastAdjustmentInput(
   row: WeatherRecordRow,
-  evaluatedAt: string,
+  evaluatedAt: SafetyAt,
 ): ApplyForecastAdjustmentInputV1 {
   // retain missing reference identity for fail-raw handling
   const referenceAt = row.productRunAt === null
@@ -2284,7 +2222,7 @@ function parseForecastDays(parameters: URLSearchParams): ForecastDays {
 // resolve one strict daily or widget-overnight forecast query
 function parseForecastRequestWindow(
   parameters: URLSearchParams,
-  generatedAt: string,
+  dataAt: DataAt,
   timezone: string,
 ): Readonly<{
   asOf: string;
@@ -2302,7 +2240,7 @@ function parseForecastRequestWindow(
   // preserve every existing parameter-free and days-based query
   if (requestedWindow === undefined) {
     const days = parseForecastDays(parameters);
-    return { ...siteForecastDayWindow(generatedAt, timezone, days), days };
+    return { ...siteForecastDayWindow(dataAt, timezone, days), days };
   }
 
   // reject unknown or ambiguous window selection
@@ -2311,7 +2249,7 @@ function parseForecastRequestWindow(
   }
 
   return {
-    ...siteOvernightForecastWindow(generatedAt, timezone),
+    ...siteOvernightForecastWindow(dataAt, timezone),
     days: 1,
     productSelection: "anchor-containing",
   };
@@ -2320,15 +2258,15 @@ function parseForecastRequestWindow(
 // parse one bounded tide API range
 function parseTideRange(
   parameters: URLSearchParams,
-  generatedAt: string,
+  dataAt: DataAt,
 ): Readonly<{ from: string; to: string }> {
   const fromValue = getOptionalParameter(parameters, "from");
   const toValue = getOptionalParameter(parameters, "to");
   const from = fromValue === undefined
-    ? new Date(Date.parse(generatedAt) - 24 * 3_600_000).toISOString()
+    ? new Date(Date.parse(dataAt) - 24 * 3_600_000).toISOString()
     : validateUtcInstant(fromValue, "from");
   const to = toValue === undefined
-    ? new Date(Date.parse(generatedAt) + 10 * 86_400_000).toISOString()
+    ? new Date(Date.parse(dataAt) + 10 * 86_400_000).toISOString()
     : validateUtcInstant(toValue, "to");
 
   // require an ordered range no longer than 31 days
@@ -2591,11 +2529,11 @@ function toIsoInstant(value: Date | string): string {
 // describe recency without implying one source type
 function describeFreshness(
   validAt: string,
-  generatedAt: string,
+  dataAt: DataAt,
 ): ApiWeatherRecord["freshness"] {
   const ageSeconds = Math.max(
     0,
-    Math.floor((Date.parse(generatedAt) - Date.parse(validAt)) / 1_000),
+    Math.floor((Date.parse(dataAt) - Date.parse(validAt)) / 1_000),
   );
 
   // mark values within two source cadences as fresh
@@ -2855,13 +2793,13 @@ function errorResponse(error: unknown): Response {
   // preserve intentional HTTP errors
   if (error instanceof HttpError) {
     return jsonResponse(
-      { error: { code: error.code, message: error.message } },
+      { error: { code: error.code, message: error.message } } satisfies ApiErrorResponse,
       error.status,
     );
   }
 
   return jsonResponse(
-    { error: { code: "internal_error", message: "Unexpected server error" } },
+    { error: { code: "internal_error", message: "Unexpected server error" } } satisfies ApiErrorResponse,
     500,
   );
 }
