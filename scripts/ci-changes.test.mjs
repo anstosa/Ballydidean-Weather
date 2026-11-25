@@ -322,7 +322,10 @@ test("Check workflow binds selected native jobs to the exact commit", async () =
   assert.match(rust, /cargo test --locked --offline --target aarch64-unknown-linux-gnu -p weather-runtime --bin weather-http-health/u);
   assert.match(rust, /run_native_suite weather-runtime native_worker_catalogs/u);
   assert.match(rust, /run_native_suite weather-runtime native_rain_capture_values/u);
-  assert.match(rust, /run_native_lib_suite weather-runtime native_postgres/u);
+  assert.match(
+    rust,
+    /run_native_lib_suite weather-runtime native_postgres -- --skip native_postgres_real_roundtrip_test::native_pool_roundtrips_typed_values_against_postgres_16\n/u,
+  );
   assert.match(rust, /run_native_lib_suite weather-runtime native_outbound_http_test/u);
   assert.match(rust, /run_native_lib_suite weather-runtime native_open_meteo_transport_test/u);
   assert.match(rust, /run_native_suite weather-runtime native_wire_primitives/u);

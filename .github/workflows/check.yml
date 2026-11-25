@@ -264,7 +264,7 @@ jobs:
           # run native runtime unit suites against the exact same locked target
           run_native_lib_suite() {
             local log="$CARGO_TARGET_DIR/test-result.log"
-            cargo test --locked --offline --target aarch64-unknown-linux-gnu -p "$1" --lib "$2" |
+            cargo test --locked --offline --target aarch64-unknown-linux-gnu -p "$1" --lib "$2" "${@:3}" |
               tee "$log"
             grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"
           }
@@ -291,7 +291,8 @@ jobs:
           run_native_lib_suite weather-runtime native_open_meteo_values
           run_native_lib_suite weather-runtime native_public_backfill_time
           run_native_lib_suite weather-runtime native_scheduled_values
-          run_native_lib_suite weather-runtime native_postgres
+          # exclude only the opt-in PostgreSQL 16 fixture from the standalone unit suite
+          run_native_lib_suite weather-runtime native_postgres -- --skip native_postgres_real_roundtrip_test::native_pool_roundtrips_typed_values_against_postgres_16
           run_native_lib_suite weather-runtime native_outbound_http_test
           run_native_lib_suite weather-runtime native_open_meteo_transport_test
           run_native_lib_suite weather-runtime native_open_meteo_scheduled_transport
