@@ -536,7 +536,13 @@ test("server image bakes only reviewed forecast adjustment config", () => {
   const serverStage = dockerfile
     .split("FROM runtime AS server\n")[1]
     .split("\nFROM runtime AS web\n")[0];
-  const webStage = dockerfile.split("\nFROM runtime AS web\n")[1];
+  // isolate each final image rather than treating later native stages as node web files
+  const webStage = dockerfile.split("\nFROM runtime AS web\n")[1]
+    .split(/\nFROM /u)[0];
+  const nativeServerStage = dockerfile.split("\nFROM native-runtime AS native-server\n")[1]
+    .split(/\nFROM /u)[0];
+  const nativeWebStage = dockerfile.split("\nFROM native-runtime AS native-web\n")[1]
+    .split(/\nFROM /u)[0];
   const registry = read("config/forecast-adjustments/ballydidean.json");
   assert.equal(
     registry,
@@ -591,6 +597,9 @@ test("server image bakes only reviewed forecast adjustment config", () => {
     /\.weather-data|\.weather-models|model-evidence|training_export_password/u,
   );
   assert.doesNotMatch(webStage, /config\/forecast-adjustments|sha256-[a-f0-9]{64}\.json/u);
+  // preserve the same server-only model material in the native generation
+  assert.match(nativeServerStage, /config\/forecast-adjustments config\/forecast-adjustments/u);
+  assert.doesNotMatch(nativeWebStage, /config\/forecast-adjustments|sha256-[a-f0-9]{64}\.json/u);
   assert.match(
     webStage,
     /RUN unlink node_modules\/@weather\/forecast-adjustment/u,
@@ -3053,7 +3062,14 @@ test("check workflow builds once and retains conservative conditional coverage",
   assert.match(workflow, /CI_CHECK_MODE: baseline/u);
   assert.match(workflow, /CI_BASE_VERIFIED:/u);
   assert.match(workflow, /run: node scripts\/ci-changes\.mjs/u);
-  assert.equal((workflow.match(/run: npm run build/gu) ?? []).length, 1);
+  // compile once per independent x86 and native arm64 validation job
+  const qualityJob = workflow.split("\n  quality-gates:\n")[1]
+    .split("\n  native-rust-arm64:\n")[0];
+  const armJob = workflow.split("\n  native-rust-arm64:\n")[1]
+    .split("\n  native-android:\n")[0];
+  assert.equal((qualityJob.match(/run: npm run build/gu) ?? []).length, 1);
+  assert.equal((armJob.match(/run: npm run build/gu) ?? []).length, 1);
+  assert.equal((workflow.match(/run: npm run build/gu) ?? []).length, 2);
   assert.match(workflow, /run: npm run lint/u);
   assert.match(workflow, /npm run test:compiled/u);
   assert.match(workflow, /npm run test:fast:compiled/u);
@@ -3076,6 +3092,11 @@ test("all deployment shell entrypoints have stable names", () => {
     "common.sh",
     "forecast-training-export.sh",
     "install-adjustment-scorecard.sh",
+    "native-dashboard-release-control.sh",
+    "native-evidence-remote-dispatch.sh",
+    "native-generation-remote-ops.sh",
+    "native-release-control-remote-dispatch.sh",
+    "package-native-evidence-operator.sh",
     "preflight-capacity.sh",
     "public-stations-backfill.sh",
     "publish-adjustment-scorecard.sh",
