@@ -100,6 +100,17 @@ pub struct NativeMaintenanceJournalStoreStatus {
     pub records: u64,
 }
 
+/// Hold the kernel lock through exactly one journal transaction.
+struct NativeMaintenanceJournalLock(File);
+
+impl Drop for NativeMaintenanceJournalLock {
+    /// Release the lock even if a concurrent child briefly inherited the file description.
+    fn drop(&mut self) {
+        // safety: the guard still owns the valid descriptor during the explicit unlock
+        let _ = unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
 /// Fixed-root owner for exclusive verified append and bounded head reconciliation.
 #[derive(Debug)]
 pub struct NativeMaintenanceJournalStore {
@@ -257,7 +268,9 @@ impl NativeMaintenanceJournalStore {
     }
 
     /// Acquire one nonblocking kernel lock on the validated literal journal lock inode.
-    fn acquire_lock(&self) -> Result<File, NativeMaintenanceJournalStoreError> {
+    fn acquire_lock(
+        &self,
+    ) -> Result<NativeMaintenanceJournalLock, NativeMaintenanceJournalStoreError> {
         use NativeMaintenanceJournalStoreError as Error;
 
         let path = self.root.join("journal.lock");
@@ -287,7 +300,7 @@ impl NativeMaintenanceJournalStore {
             }
             return Err(Error::Lock);
         }
-        Ok(held)
+        Ok(NativeMaintenanceJournalLock(held))
     }
 
     /// Append and fsync exact record lines before rotating any head projection.
@@ -599,4 +612,37 @@ fn nullable_owned_string_field(key: &str, value: Option<&str>) -> (Vec<u16>, Jso
 fn current_uid() -> u32 {
     // libc exposes the immutable process credential without host mutation
     unsafe { libc::getuid() }
+}
+
+#[cfg(test)]
+mod lock_lifetime_tests {
+    use super::*;
+    use std::os::unix::fs::DirBuilderExt;
+
+    /// Releasing a transaction must not depend on every inherited descriptor closing.
+    #[test]
+    fn journal_transaction_unlocks_with_duplicate_description() {
+        let root = std::env::temp_dir().join(format!(
+            "weather-native-journal-lock-lifetime-{}-{}",
+            std::process::id(),
+            TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+        let store = NativeMaintenanceJournalStore {
+            root: root.clone(),
+            uid: current_uid(),
+        };
+        let lock = store.acquire_lock().unwrap();
+        // model a transient file description inherited by another process
+        let duplicate = lock.0.try_clone().unwrap();
+        assert!(matches!(
+            store.acquire_lock(),
+            Err(NativeMaintenanceJournalStoreError::LockOccupied)
+        ));
+        drop(lock);
+        let next = store.acquire_lock().unwrap();
+        drop(next);
+        drop(duplicate);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
