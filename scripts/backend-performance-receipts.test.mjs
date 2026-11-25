@@ -2566,13 +2566,15 @@ test("canonical append rejects caller capture and clock injection", async () => 
   }
 });
 
-// fail closed while actual Gate6 Main custody packages are absent
-test("canonical append reports missing fixed Main custody without live work", async () => {
+// report unavailable Main custody on hosted runners with absent or inaccessible homes
+test("canonical append reports unavailable fixed Main custody without live work", async () => {
   await assert.rejects(
     () => receipts.appendLiveStatusReceipt(),
+    // retain the fixed authority error and root for both filesystem availability outcomes
     (error) => error?.code === "receipt.authority" &&
+      error?.message === "fixed Main custody root is unavailable" &&
       error?.path === "/home/ubuntu/.weather/backend-performance-evidence/v2" &&
-      error?.cause?.code === "ENOENT",
+      ["ENOENT", "EACCES"].includes(error?.cause?.code),
   );
 });
 
