@@ -386,6 +386,10 @@ test("Check workflow inspects native ARM64 candidate images against independent 
   assert.match(rust, /docker image inspect weather-native-web:check/u);
   assert.match(rust, /assert\.equal\(image\.Architecture, "arm64"\)/u);
   assert.match(rust, /assert\.equal\(image\.Os, "linux"\)/u);
+  // keep null and omitted Docker optional fields equivalent without admitting concrete values
+  for (const field of ["Entrypoint", "Healthcheck", "ExposedPorts", "Volumes"]) {
+    assert.ok(rust.includes(`assert.equal(image.Config.${field} ?? null, null);`));
+  }
   assert.match(rust, /assert\.deepEqual\(image\.Config\.Cmd, command\)/u);
   assert.match(rust, /assert\.deepEqual\(image\.Config\.Env, environment\)/u);
   assert.match(rust, /"org\.opencontainers\.image\.revision": process\.env\.GITHUB_SHA/u);

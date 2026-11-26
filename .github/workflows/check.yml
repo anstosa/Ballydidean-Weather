@@ -513,16 +513,17 @@ jobs:
             assert.equal(image.Os, "linux");
             assert.equal(image.Config.User, "10002:10002");
             assert.equal(image.Config.WorkingDir, "/opt/weather");
-            assert.equal(image.Config.Entrypoint, null);
+            // Docker versions serialize an unset optional field as null or omit it
+            assert.equal(image.Config.Entrypoint ?? null, null);
             assert.deepEqual(image.Config.Cmd, command);
             assert.deepEqual(image.Config.Env, environment);
             assert.deepEqual(image.Config.Labels, {
               "org.opencontainers.image.revision": process.env.GITHUB_SHA,
               "org.weather.runtime.generation": "rust-v1",
             });
-            assert.equal(image.Config.Healthcheck, undefined);
-            assert.equal(image.Config.ExposedPorts, null);
-            assert.equal(image.Config.Volumes, null);
+            assert.equal(image.Config.Healthcheck ?? null, null);
+            assert.equal(image.Config.ExposedPorts ?? null, null);
+            assert.equal(image.Config.Volumes ?? null, null);
           }
 
           const pathEnvironment = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
