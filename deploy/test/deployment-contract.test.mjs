@@ -536,6 +536,11 @@ test("server image bakes only reviewed forecast adjustment config", () => {
   const serverStage = dockerfile
     .split("FROM runtime AS server\n")[1]
     .split("\nFROM runtime AS web\n")[0];
+  // source runtime OS data without adding runtime packages or copying the Node executable
+  const nativeRuntimeStage = dockerfile.split("\nFROM debian:bookworm-slim AS native-runtime\n")[1]
+    .split(/\nFROM /u)[0];
+  assert.match(nativeRuntimeStage, /COPY --from=native-build \/etc\/ssl\/certs\/ca-certificates\.crt \/etc\/ssl\/certs\/ca-certificates\.crt/u);
+  assert.match(nativeRuntimeStage, /COPY --from=dependencies \/usr\/share\/zoneinfo \/usr\/share\/zoneinfo/u);
   // isolate each final image rather than treating later native stages as node web files
   const webStage = dockerfile.split("\nFROM runtime AS web\n")[1]
     .split(/\nFROM /u)[0];

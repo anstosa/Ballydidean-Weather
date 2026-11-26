@@ -118,7 +118,8 @@ COPY --from=native-build /opt/weather/rust/target/release/weather-evidence /weat
 FROM debian:bookworm-slim AS native-runtime
 WORKDIR /opt/weather
 ENV NODE_ENV=production
-COPY --from=dependencies /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# copy the Debian trust bundle from the full compiler image, not the Node slim image
+COPY --from=native-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=dependencies /usr/share/zoneinfo /usr/share/zoneinfo
 RUN groupadd --gid 10002 weather \
   && useradd --uid 10002 --gid 10002 --no-create-home --shell /usr/sbin/nologin weather

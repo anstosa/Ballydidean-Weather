@@ -3164,7 +3164,7 @@
       "installedPaths": [
         "image://native-server"
       ],
-      "sourceDigest": "29a03e726fa26ef3f6bd7ff26b1de6b2a3657c679b8d76fe40aac8c8740d75cd",
+      "sourceDigest": "a7f6258540dc23c8e77eea5e5f595db7424e2c21fe21d2a1e129b0b0f44fb468",
       "parents": [],
       "classification": "application",
       "runtime": "rust",
@@ -3173,7 +3173,7 @@
       ],
       "command": "[\"/opt/weather/bin/weather-api\"]",
       "probe": null,
-      "entryDigest": "05442dac3586dbfd08415bad5732f21fbb7096ae375e6d766284081b02dfb3f3",
+      "entryDigest": "510d2b0beb42fa81c48bd1d4efc0222ad181c476b36bf5cc8b706ddd887222c6",
       "owner": "release-operations",
       "parityTest": "npm run test:deploy",
       "accountingScope": "release-control:static-source",
@@ -3211,7 +3211,7 @@
       "installedPaths": [
         "image://native-web"
       ],
-      "sourceDigest": "29a03e726fa26ef3f6bd7ff26b1de6b2a3657c679b8d76fe40aac8c8740d75cd",
+      "sourceDigest": "a7f6258540dc23c8e77eea5e5f595db7424e2c21fe21d2a1e129b0b0f44fb468",
       "parents": [],
       "classification": "application",
       "runtime": "rust",
@@ -3220,7 +3220,7 @@
       ],
       "command": "[\"/opt/weather/bin/weather-web\"]",
       "probe": null,
-      "entryDigest": "68b157d87891c55029561d93894eeb73b10de5ffb483a7fa2e630930ff77cb62",
+      "entryDigest": "53e44926e9132e5d3437aff6e46aa2fa545cf1b81f11ba0f32a166331798583c",
       "owner": "release-operations",
       "parityTest": "npm run test:deploy",
       "accountingScope": "release-control:static-source",
@@ -3258,7 +3258,7 @@
       "installedPaths": [
         "image://server"
       ],
-      "sourceDigest": "29a03e726fa26ef3f6bd7ff26b1de6b2a3657c679b8d76fe40aac8c8740d75cd",
+      "sourceDigest": "a7f6258540dc23c8e77eea5e5f595db7424e2c21fe21d2a1e129b0b0f44fb468",
       "parents": [],
       "classification": "application",
       "runtime": "node",
@@ -3267,7 +3267,7 @@
       ],
       "command": "[\"node\", \"apps/api/dist/main.js\"]",
       "probe": null,
-      "entryDigest": "6cdb68a1b02905139f7acf304f141b5d2925ad1af3e5f94671ef1d481b796d74",
+      "entryDigest": "1d990feed5507b5aae0b90691cdc17198c7662e834c992702fea484d5be5117c",
       "owner": "release-operations",
       "parityTest": "npm run test:rust:oracle",
       "accountingScope": "release-control:static-source",
@@ -3305,7 +3305,7 @@
       "installedPaths": [
         "image://web"
       ],
-      "sourceDigest": "29a03e726fa26ef3f6bd7ff26b1de6b2a3657c679b8d76fe40aac8c8740d75cd",
+      "sourceDigest": "a7f6258540dc23c8e77eea5e5f595db7424e2c21fe21d2a1e129b0b0f44fb468",
       "parents": [],
       "classification": "application",
       "runtime": "node",
@@ -3314,7 +3314,7 @@
       ],
       "command": "[\"node\", \"deploy/scripts/web-server.mjs\"]",
       "probe": null,
-      "entryDigest": "156184420b2e6ab3607d60e6516ba52e6fbd8043959df377d7b55694400ebe97",
+      "entryDigest": "8b5b9ea64d97565cf8bf860543d8ddaea727c342a150a4021e13bf0e6ae355d6",
       "owner": "web",
       "parityTest": "npm run test:rust:oracle",
       "accountingScope": "release-control:static-source",
