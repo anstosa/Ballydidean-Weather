@@ -564,10 +564,14 @@ mod tests {
             JsonValue::Number(1e20),
             JsonValue::Number(1e21),
             JsonValue::Number(-1e21),
+            JsonValue::Number(f64::from_bits(0x3ff0_0008_0000_0000)),
         ]);
         assert_eq!(
             NativeJson::encode_ordered(&value).as_deref(),
-            Some(b"[1,0,2.5,0.000001,1e-7,100000000000000000000,1e+21,-1e+21]\n".as_slice())
+            Some(
+                b"[1,0,2.5,0.000001,1e-7,100000000000000000000,1e+21,-1e+21,1.0000076293945312]\n"
+                    .as_slice()
+            )
         );
     }
 

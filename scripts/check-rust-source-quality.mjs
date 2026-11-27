@@ -180,5 +180,20 @@ export function runRustSourceQuality(environment = process.env) {
 
 // run only when invoked as the source-quality executable
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runRustSourceQuality();
+  const args = process.argv.slice(2);
+
+  // start the expensive checks only for the intended no-argument invocation
+  if (args.length === 0) {
+    runRustSourceQuality();
+  // describe the command without starting cargo or creating a target
+  } else if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
+    process.stdout.write(
+      "Usage: node scripts/check-rust-source-quality.mjs\n" +
+      "Runs locked offline Rust formatting, build and Clippy checks.\n",
+    );
+  // fail closed on every unrecognized option
+  } else {
+    process.stderr.write("source-quality: unexpected argument; use --help\n");
+    process.exitCode = 2;
+  }
 }

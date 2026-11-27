@@ -1,16 +1,16 @@
 //! Loopback functional coverage for the retained native outbound client.
 
 use std::convert::Infallible;
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::net::TcpListener as StdTcpListener;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use flate2::Compression;
-use flate2::write::GzEncoder;
+use flate2::write::{GzEncoder, ZlibEncoder};
 use http_body_util::Full;
 use hyper::body::Bytes;
-use hyper::header::{ACCEPT_ENCODING, CONTENT_ENCODING, HeaderMap, HeaderValue};
+use hyper::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, HeaderMap, HeaderValue};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Response, StatusCode};
@@ -85,6 +85,103 @@ fn outbound_http_decodes_bounded_gzip_response() {
     assert_eq!(response.status, 200);
     assert_eq!(response.body, expected);
     assert_eq!(response.streamed_body_bytes, expected.len() as u64);
+    drop(client);
+    server.join().expect("join loopback server");
+}
+
+/// decode both advertised codings in their wire application order.
+#[test]
+fn outbound_http_decodes_stacked_advertised_codings() {
+    let expected = br#"{"ok":"stacked"}"#;
+    let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
+    gzip.write_all(expected).expect("compress inner fixture");
+    let inner = gzip.finish().expect("finish inner fixture");
+    let mut deflate = ZlibEncoder::new(Vec::new(), Compression::default());
+    deflate.write_all(&inner).expect("compress outer fixture");
+    let encoded = deflate.finish().expect("finish outer fixture");
+    let mut combined = HeaderMap::new();
+    combined.insert(CONTENT_ENCODING, HeaderValue::from_static("gzip, deflate"));
+    let mut repeated = HeaderMap::new();
+    repeated.append(CONTENT_ENCODING, HeaderValue::from_static("GZIP"));
+    repeated.append(CONTENT_ENCODING, HeaderValue::from_static("deflate"));
+
+    // preserve both ordinary HTTP field representations
+    for headers in [combined, repeated] {
+        let (url, server) = serve_once(StatusCode::OK, headers, encoded.clone());
+        let client = NativeOutboundHttp::new().expect("start native client");
+        let response = client
+            .execute(
+                NativeOutboundHttpRequest::new(Method::GET, url).expect("admit request"),
+                Duration::from_secs(2),
+                1_024,
+            )
+            .expect("decode both installed codings");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, expected);
+        assert_eq!(response.streamed_body_bytes, expected.len() as u64);
+        drop(client);
+        server.join().expect("join loopback server");
+    }
+}
+
+/// fetch null-body responses bypass representation limits and content decoding.
+#[test]
+fn outbound_http_preserves_not_modified_representation_headers_without_a_body() {
+    let listener = StdTcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let address = listener.local_addr().expect("read loopback address");
+    let url = Url::parse(&format!("http://{address}/provider")).expect("build loopback URL");
+    // preserve the legal 304 representation length which hyper's test server omits
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept loopback request");
+        let mut request = [0_u8; 4096];
+        assert!(stream.read(&mut request).expect("read loopback request") > 0);
+        stream.write_all(
+            b"HTTP/1.1 304 Not Modified\r\nContent-Encoding: gzip\r\nContent-Length: 8192\r\nConnection: close\r\n\r\n",
+        ).expect("write exact representation headers");
+    });
+    let client = NativeOutboundHttp::new().expect("start native client");
+    let response = client
+        .execute(
+            NativeOutboundHttpRequest::new(Method::GET, url).expect("admit request"),
+            Duration::from_secs(2),
+            4,
+        )
+        .expect("retain a body-free not-modified response");
+
+    assert_eq!(response.status, 304);
+    assert!(response.body.is_empty());
+    assert_eq!(response.streamed_body_bytes, 0);
+    assert_eq!(response.declared_body_bytes, Some(8192));
+    assert_eq!(
+        response.headers.get(CONTENT_ENCODING),
+        Some(&HeaderValue::from_static("gzip"))
+    );
+    drop(client);
+    server.join().expect("join loopback server");
+}
+
+/// head keeps the declared representation-length budget despite its absent body.
+#[test]
+fn outbound_http_retains_head_declared_length_limit() {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_LENGTH, HeaderValue::from_static("8192"));
+    let (url, server) = serve_once(StatusCode::OK, headers, Vec::new());
+    let client = NativeOutboundHttp::new().expect("start native client");
+    let error = client
+        .execute(
+            NativeOutboundHttpRequest::new(Method::HEAD, url).expect("admit request"),
+            Duration::from_secs(2),
+            4,
+        )
+        .expect_err("reject the oversized HEAD representation");
+
+    assert!(matches!(
+        error,
+        NativeOutboundHttpError::BodyTooLarge {
+            role: ContentBudgetRole::DeclaredLength,
+            status: 200,
+        }
+    ));
     drop(client);
     server.join().expect("join loopback server");
 }

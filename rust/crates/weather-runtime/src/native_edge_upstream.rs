@@ -207,7 +207,7 @@ impl<Projector: PublicApiResponseProjector> PublicApiProxyClient
         let content_type = response
             .headers
             .get(CONTENT_TYPE)
-            .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned());
+            .map(|value| node_header_string(value.as_bytes()));
         let content_length = head.then(|| response.declared_body_bytes.unwrap_or(0) as usize);
         // project only the successful response selected by the already snapshotted settings
         let body = match (head, successful, snapshot.as_ref()) {
@@ -225,6 +225,11 @@ impl<Projector: PublicApiResponseProjector> PublicApiProxyClient
             successful,
         })
     }
+}
+
+/// project raw header octets with the one-byte string semantics used by node fetch
+fn node_header_string(value: &[u8]) -> String {
+    value.iter().map(|byte| char::from(*byte)).collect()
 }
 
 impl PublicAdjustmentJsonCodec for NativeWirePrimitives {

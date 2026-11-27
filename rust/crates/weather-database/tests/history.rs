@@ -6,7 +6,8 @@ use weather_contracts::{
     WeatherRecordRow,
 };
 use weather_database::{
-    HistoryReadBind, HistoryReadPlanError, project_weather_history_rows, weather_history_read_plan,
+    AdmittedHistoryQuery, HistoryReadBind, HistoryReadPlanError, project_weather_history_rows,
+    weather_history_read_plan,
 };
 
 /// build one full optional-filter query matching the Node oracle
@@ -38,6 +39,16 @@ fn default_query() -> HistoryQuery {
         stationSlug: FieldPresence::Missing,
         to: FieldPresence::Missing,
     }
+}
+
+/// admit the full fixture query with canonical epoch evidence
+fn admitted_query() -> AdmittedHistoryQuery {
+    AdmittedHistoryQuery::admitted(query(), Some(1_785_542_400_000), Some(1_787_356_800_000))
+}
+
+/// admit the default fixture without optional time bounds
+fn admitted_default_query() -> AdmittedHistoryQuery {
+    AdmittedHistoryQuery::admitted(default_query(), None, None)
 }
 
 /// build one minimally populated typed history row
@@ -133,7 +144,7 @@ fn matches_compiled_node_history_plan() {
     );
     let stdout = String::from_utf8(output.stdout).expect("Node oracle UTF-8");
     let lines = stdout.lines().collect::<Vec<_>>();
-    let plan = weather_history_read_plan(&query()).expect("history read plan");
+    let plan = weather_history_read_plan(&admitted_query()).expect("history read plan");
 
     assert_eq!(lines[0], format!("sql={}", normalize_sql(&plan.sql)));
     assert_eq!(lines[1], format!("binds={}", render_binds(&plan.binds)));
@@ -151,14 +162,22 @@ fn rejects_invalid_history_bounds() {
     let mut invalid_limit = query();
     invalid_limit.limit = FieldPresence::Value(252);
     assert_eq!(
-        weather_history_read_plan(&invalid_limit),
+        weather_history_read_plan(&AdmittedHistoryQuery::admitted(
+            invalid_limit,
+            Some(1_785_542_400_000),
+            Some(1_787_356_800_000),
+        )),
         Err(HistoryReadPlanError::LimitOutsideRepositoryRange)
     );
 
     let mut reversed = query();
     reversed.from = FieldPresence::Value("2026-08-23T00:00:00.000Z".to_owned());
     assert_eq!(
-        weather_history_read_plan(&reversed),
+        weather_history_read_plan(&AdmittedHistoryQuery::admitted(
+            reversed,
+            Some(1_787_443_200_000),
+            Some(1_787_356_800_000),
+        )),
         Err(HistoryReadPlanError::ReversedRange)
     );
 }
@@ -166,7 +185,7 @@ fn rejects_invalid_history_bounds() {
 // verifies every optional predicate stays absent from the default query
 #[test]
 fn builds_default_history_plan() {
-    let plan = weather_history_read_plan(&default_query()).expect("default history plan");
+    let plan = weather_history_read_plan(&admitted_default_query()).expect("default history plan");
     assert_eq!(
         plan.binds,
         [

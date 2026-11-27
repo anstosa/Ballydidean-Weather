@@ -147,8 +147,8 @@ pub use health_reads::{
     health_migration_ledger_read_plan, health_ping_read_plan, verify_health_migration_readiness,
 };
 pub use history::{
-    HistoryReadBind, HistoryReadPlan, HistoryReadPlanError, WeatherHistoryResult,
-    project_weather_history_rows, weather_history_read_plan,
+    AdmittedHistoryQuery, HistoryReadBind, HistoryReadPlan, HistoryReadPlanError,
+    WeatherHistoryResult, project_weather_history_rows, weather_history_read_plan,
 };
 pub use maintenance_publication::{
     AdjustmentMaintenanceDatabasePort, AdjustmentRevisionAdmissionKey, AdjustmentRevisionGapMarker,

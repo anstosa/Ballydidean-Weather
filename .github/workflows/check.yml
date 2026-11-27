@@ -99,6 +99,14 @@ jobs:
         run: npm run verify:mobile-static
       - name: Verify the shared native HTTPS fixture
         run: python3 mobile/scripts/native_https_fixture_test.py
+      - name: Verify native benchmark support contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          # run each standalone suite without requiring private host evidence
+          for suite in scripts/native-benchmark-*.test.py; do
+            python3 "$suite"
+          done
       - name: Build and typecheck once
         run: npm run build
       - name: Prove the nested Rust toolchain pin supersedes the runner default
@@ -269,6 +277,11 @@ jobs:
             grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$log"
           }
           run_native_suite weather-adjustment temperature_mos_inference
+          # retain exact public health and instant-bound history parity on the release target
+          run_native_suite weather-api dispatch
+          run_native_suite weather-api service matches_compiled_node_service_dispatch
+          run_native_suite weather-api history
+          run_native_suite weather-database history
           run_native_suite weather-api tides
           run_native_suite weather-database tides
           run_native_suite weather-edge native_public_assets
@@ -289,6 +302,12 @@ jobs:
           run_native_suite weather-runtime native_worker_catalogs
           run_native_suite weather-runtime native_rain_capture_values
           run_native_lib_suite weather-runtime native_open_meteo_values
+          # exercise canonical grid-cell spelling and both actual provider call paths
+          run_native_lib_suite weather-worker spells_javascript_coordinates
+          run_native_lib_suite weather-runtime encoding_matches_common_javascript_number_spelling
+          run_native_lib_suite weather-runtime open_meteo_previous_runs_provider::tests::grid_cell_preserves_javascript_number_spelling
+          run_native_suite weather-runtime open_meteo_current
+          run_native_suite weather-runtime open_meteo_previous_runs_provider
           run_native_lib_suite weather-runtime native_public_backfill_time
           run_native_lib_suite weather-runtime native_scheduled_values
           # exclude only the opt-in PostgreSQL 16 fixture from the standalone unit suite

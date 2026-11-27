@@ -97,7 +97,7 @@ const handler = createWeatherApi({
 });
 
 const response = await handler(new Request(
-  "http://weather.test/api/v1/sites/ballydidean/history?sourceKind=reanalysis&station=open-meteo-virtual&source=11&from=2026-08-01T00%3A00%3A00Z&to=2026-08-22T00%3A00%3A00Z&limit=2",
+  "http://weather.test/api/v1/sites/ballydidean/history?sourceKind=reanalysis&station=open-meteo-virtual&source=11&from=2026-08-01T01%3A00%3A00%2B01%3A00&to=2026-08-22T01%3A00%3A00%2B01%3A00&limit=2",
 ));
 const body = await response.json();
 assert.equal(response.status, 200);
@@ -145,6 +145,18 @@ assert.deepEqual(invalidSelectionBody, {
   error: {
     code: "invalid_query",
     message: "source must be a positive integer",
+  },
+});
+
+const reversedOffset = await handler(new Request(
+  "http://weather.test/api/v1/sites/ballydidean/history?from=2026-08-01T00%3A30%3A00-01%3A00&to=2026-08-01T01%3A00%3A00Z",
+));
+const reversedOffsetBody = await reversedOffset.json();
+assert.equal(reversedOffset.status, 400);
+assert.deepEqual(reversedOffsetBody, {
+  error: {
+    code: "invalid_query",
+    message: "from must be earlier than to",
   },
 });
 

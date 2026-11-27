@@ -1233,6 +1233,7 @@ mod tests {
                 locations: vec![ForecastAnchorParsedLocation {
                     envelope: ForecastAnchorEnvelope {
                         elevation_m: None,
+                        grid_cell: "48.1,-122.7".to_owned(),
                         latitude: 48.1,
                         longitude: -122.7,
                         timezone: ForecastAnchorTimezone::Utc,

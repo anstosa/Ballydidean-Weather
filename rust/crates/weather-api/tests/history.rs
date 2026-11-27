@@ -11,7 +11,7 @@ use weather_contracts::{
     FieldPresence, HistoryQueryCursor, JsDateOrString, JsonValue, Nullable, SourceKind,
     StationKind, WeatherRecordRow,
 };
-use weather_database::ActiveSiteRow;
+use weather_database::{ActiveSiteRow, HistoryReadBind};
 
 struct FixtureBoundary;
 
@@ -24,14 +24,23 @@ impl HistoryBoundaryAdapter for FixtureBoundary {
     ) -> Result<CanonicalInstant, HistoryBoundaryError> {
         // preserve source-derived canonical query pairs
         match (value, field) {
-            ("2026-08-01T00:00:00Z", HistoryQueryTime::From) => {
+            ("2026-08-01T01:00:00+01:00", HistoryQueryTime::From) => {
                 Ok(instant(1_785_542_400_000, "2026-08-01T00:00:00.000Z"))
             }
-            ("2026-08-22T00:00:00Z", HistoryQueryTime::To) => {
+            ("2026-08-22T01:00:00+01:00", HistoryQueryTime::To) => {
                 Ok(instant(1_787_356_800_000, "2026-08-22T00:00:00.000Z"))
             }
             ("2026-08-23T00:00:00Z", HistoryQueryTime::From) => {
                 Ok(instant(1_787_443_200_000, "2026-08-23T00:00:00.000Z"))
+            }
+            ("2026-08-22T00:00:00Z", HistoryQueryTime::To) => {
+                Ok(instant(1_787_356_800_000, "2026-08-22T00:00:00.000Z"))
+            }
+            ("2026-08-01T00:30:00-01:00", HistoryQueryTime::From) => {
+                Ok(instant(1_785_547_800_000, "2026-08-01T01:30:00.000Z"))
+            }
+            ("2026-08-01T01:00:00Z", HistoryQueryTime::To) => {
+                Ok(instant(1_785_546_000_000, "2026-08-01T01:00:00.000Z"))
             }
             _ => Err(HistoryBoundaryError),
         }
@@ -212,11 +221,11 @@ fn matches_compiled_node_history_query_and_projection() {
         },
         QueryParameter {
             name: "from",
-            value: "2026-08-01T00:00:00Z",
+            value: "2026-08-01T01:00:00+01:00",
         },
         QueryParameter {
             name: "to",
-            value: "2026-08-22T00:00:00Z",
+            value: "2026-08-22T01:00:00+01:00",
         },
         QueryParameter {
             name: "cursor",
@@ -235,10 +244,24 @@ fn matches_compiled_node_history_query_and_projection() {
             .sql
             .contains("(candidate.valid_at, candidate.id) < ($7::timestamptz, $8::bigint)")
     );
-    assert_eq!(read_plan.binds.len(), 9);
+    assert_eq!(
+        read_plan.binds,
+        [
+            HistoryReadBind::Text("ballydidean".to_owned()),
+            HistoryReadBind::Text("open-meteo-virtual".to_owned()),
+            HistoryReadBind::BigintText("11".to_owned()),
+            HistoryReadBind::SourceKind(SourceKind::Reanalysis),
+            HistoryReadBind::UtcInstant("2026-08-01T00:00:00.000Z".to_owned()),
+            HistoryReadBind::UtcInstant("2026-08-22T00:00:00.000Z".to_owned()),
+            HistoryReadBind::UtcInstant("2026-08-21T02:00:00.000Z".to_owned()),
+            HistoryReadBind::BigintText("200".to_owned()),
+            HistoryReadBind::Limit(3),
+        ]
+    );
     let ParsedHistoryQuery {
         query,
         requested_limit,
+        ..
     } = parsed;
     assert_eq!(requested_limit, 2);
     assert_eq!(query.limit, FieldPresence::Value(3));
@@ -369,6 +392,23 @@ fn rejects_invalid_history_queries() {
     )
     .expect_err("reversed history range");
     assert_eq!(reversed.message, "from must be earlier than to");
+
+    let offset_reversed = parse_history_query(
+        &[
+            QueryParameter {
+                name: "from",
+                value: "2026-08-01T00:30:00-01:00",
+            },
+            QueryParameter {
+                name: "to",
+                value: "2026-08-01T01:00:00Z",
+            },
+        ],
+        &site(),
+        &FixtureBoundary,
+    )
+    .expect_err("offset history range reverses by instant");
+    assert_eq!(offset_reversed.message, "from must be earlier than to");
 
     let cursor = parse_history_query(
         &[QueryParameter {

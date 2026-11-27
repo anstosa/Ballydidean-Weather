@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -9,7 +9,7 @@ import test from "node:test";
 const backup = resolve(import.meta.dirname, "../scripts/backup.sh");
 
 // run one backup with isolated producer and encryptor ports
-async function runBackup({ bytes, cap }) {
+async function runBackup({ bytes, cap, chunkBytes = bytes }) {
   const root = await mkdtemp(join(tmpdir(), "weather-backup-cap-"));
   const bin = join(root, "bin");
   const output = join(root, "output");
@@ -19,7 +19,21 @@ async function runBackup({ bytes, cap }) {
   await writeFile(envFile, "WEATHER_DATABASE_NAME=weather\n", { mode: 0o600 });
   await writeFile(join(bin, "docker"), `#!/usr/bin/env bash
 set -euo pipefail
-head --bytes="${bytes}" /dev/zero
+python3 - "${bytes}" "${chunkBytes}" <<'PY'
+import os
+import sys
+
+remaining = int(sys.argv[1])
+chunk_bytes = int(sys.argv[2])
+# emit the requested bounded chunks
+while remaining > 0:
+    chunk = bytes(min(remaining, chunk_bytes))
+    offset = 0
+    # complete each pipe write
+    while offset < len(chunk):
+        offset += os.write(1, chunk[offset:])
+    remaining -= len(chunk)
+PY
 exit "\${PRODUCER_STATUS:-0}"
 `);
   await writeFile(join(bin, "age"), `#!/usr/bin/env bash
@@ -36,6 +50,16 @@ if [[ -n "$output" ]]; then cat >"$output"; else cat; fi
 exit "\${ENCRYPTOR_STATUS:-0}"
 `);
   await writeFile(join(bin, "dd"), `#!/usr/bin/env bash
+set -euo pipefail
+fullblock=false
+# require the production short-read safeguard
+for argument in "$@"; do
+  # recognize the combined input flags
+  if [[ "$argument" == iflag=*fullblock* ]]; then
+    fullblock=true
+  fi
+done
+[[ "$fullblock" == true ]] || exit 97
 /usr/bin/dd "$@"
 exit "\${DD_STATUS:-0}"
 `);
@@ -70,6 +94,35 @@ test("bounded backup publishes output at the exact ceiling", async () => {
     assert.equal(names.filter((name) => name.endsWith(".sha256")).length, 1);
   } finally {
     await rm(fixture.root, { force: true, recursive: true });
+  }
+});
+
+test("bounded backup handles chunked short pipe reads under, at, and over the ceiling", async () => {
+  const cap = 8 * 1024 * 1024;
+  const chunkBytes = 4 * 1024 * 1024;
+  const cases = [
+    { bytes: cap - 1, published: true },
+    { bytes: cap, published: true },
+    { bytes: cap + 1, published: false },
+  ];
+  // exercise every exact ceiling boundary with large chunked writes
+  for (const scenario of cases) {
+    const fixture = await runBackup({ bytes: scenario.bytes, cap, chunkBytes });
+    try {
+      const archives = (await readdir(fixture.output))
+        .filter((name) => name.endsWith(".dump.age"));
+      // require publication only through the ceiling
+      if (scenario.published) {
+        assert.equal(fixture.result.status, 0, fixture.result.stderr);
+        assert.equal(archives.length, 1);
+        assert.equal((await stat(join(fixture.output, archives[0]))).size, scenario.bytes);
+      } else {
+        assert.notEqual(fixture.result.status, 0);
+        assert.deepEqual(archives, []);
+      }
+    } finally {
+      await rm(fixture.root, { force: true, recursive: true });
+    }
   }
 });
 

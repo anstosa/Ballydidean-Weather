@@ -821,6 +821,7 @@ fn current_attempt_payload() -> OpenMeteoAttemptPayload {
         product: OpenMeteoParsedProduct {
             envelope: OpenMeteoEnvelope {
                 elevation_m: Some(17.0),
+                grid_cell: "54,-4".to_owned(),
                 latitude: 54.0,
                 longitude: -4.0,
                 upstream_timezone: "Europe/London".to_owned(),
@@ -1315,6 +1316,7 @@ fn forecast_weather_product() -> OpenMeteoForecastWeatherProduct {
         generation_ms: Some(12.5),
         envelope: OpenMeteoEnvelope {
             elevation_m: Some(17.0),
+            grid_cell: "54,-4".to_owned(),
             latitude: 54.0,
             longitude: -4.0,
             upstream_timezone: "Europe/London".to_owned(),

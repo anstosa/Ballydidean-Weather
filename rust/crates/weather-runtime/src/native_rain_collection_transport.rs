@@ -186,6 +186,15 @@ impl RainCollectionProvider for NativeRainCollectionTransport {
             }
         };
         let (completed_at_ms, completed_at) = self.now()?;
+        // match Fetch's null-body response statuses before retaining complete bytes
+        if matches!(response.status, 204 | 205 | 304) {
+            return Ok(body_free_receipt(
+                request,
+                started_at,
+                completed_at,
+                "missing_body",
+            ));
+        }
         Ok(response_receipt(
             request,
             started_at,
@@ -416,6 +425,16 @@ fn transport_receipt(
         NativeOutboundHttpError::BodyTooLarge { .. } => "body_too_large",
         _ => "transport_error",
     };
+    body_free_receipt(request, started_at, completed_at, error_code)
+}
+
+/// project one incomplete exchange category into the original body-free failure shape.
+fn body_free_receipt(
+    request: &RainCaptureRequest,
+    started_at: String,
+    completed_at: String,
+    error_code: &str,
+) -> RainCaptureReceipt {
     RainCaptureReceipt {
         available_by_decision: forecast_request_kind(request).then_some(false),
         body: None,
@@ -805,6 +824,67 @@ mod tests {
         fn now_milliseconds(&self) -> Option<i64> {
             self.0.lock().ok()?.pop_front()
         }
+    }
+
+    /// fetch one fixed forecast response from a finite loopback server.
+    fn fetch_forecast_response(response_head: &str) -> weather_worker::RainCaptureReceipt {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let response_head = response_head.to_owned();
+        // serve one complete body-free HTTP response
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            write!(stream, "{response_head}\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let endpoint = Url::parse(&format!("http://{address}/v1/forecast")).unwrap();
+        let mut transport = NativeRainCollectionTransport::with_test_dependencies(
+            Arc::new(NativeOutboundHttp::new().unwrap()),
+            None,
+            endpoint,
+            Url::parse(&format!("http://{address}/")).unwrap(),
+            Arc::new(FixtureClock(Mutex::new(VecDeque::from([
+                1_795_478_400_000,
+                1_795_478_400_250,
+            ])))),
+        );
+        let receipt = transport
+            .fetch_rain_capture(&RainCaptureRequest::Forecast {
+                attempt: 1,
+                run_initialized_at: "2026-11-24T00:00:00.000Z".to_owned(),
+                slot_key: "forecast:2026-11-24T00:00:00.000Z:1".to_owned(),
+            })
+            .unwrap();
+        server.join().unwrap();
+        receipt
+    }
+
+    /// fetch null-body statuses remain body-free while an ordinary empty body is complete.
+    #[test]
+    fn forecast_null_body_statuses_match_fetch_receipts() {
+        // require each Fetch null-body status to use the same incomplete receipt shape
+        for response_head in [
+            "HTTP/1.1 204 No Content\r\nContent-Length: 0",
+            "HTTP/1.1 205 Reset Content\r\nContent-Length: 0",
+            "HTTP/1.1 304 Not Modified\r\nContent-Encoding: gzip\r\nContent-Length: 8192",
+        ] {
+            let receipt = fetch_forecast_response(response_head);
+            assert_eq!(receipt.outcome, RainCaptureOutcome::TransportError);
+            assert_eq!(receipt.error_code.as_deref(), Some("missing_body"));
+            assert_eq!(receipt.http_status, None);
+            assert_eq!(receipt.body, None);
+            assert_eq!(receipt.body_sha256, None);
+            assert_eq!(receipt.available_by_decision, Some(false));
+            assert!(receipt.metadata.is_empty());
+        }
+
+        let empty = fetch_forecast_response("HTTP/1.1 200 OK\r\nContent-Length: 0");
+        assert_eq!(empty.outcome, RainCaptureOutcome::Invalid);
+        assert_eq!(empty.error_code.as_deref(), Some("invalid_json_or_payload"));
+        assert_eq!(empty.http_status, Some(200));
+        assert_eq!(empty.body.as_deref(), Some([].as_slice()));
+        assert_eq!(empty.body_sha256.as_deref(), Some(sha256_hex(&[]).as_str()));
     }
 
     /// A complete 429 response retains exact bytes, status, hash, and bounded retry metadata.

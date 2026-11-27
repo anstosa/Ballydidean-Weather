@@ -4,7 +4,9 @@ use weather_contracts::{
     ApiWeatherRecordMetrics, ApiWeatherRecordProvenance, ApiWeatherRecordProvenanceAttribution,
     FieldPresence, HistoryQuery, HistoryQueryCursor, Nullable, SourceKind, WeatherRecordRow,
 };
-use weather_database::{HistoryReadPlan, HistoryReadPlanError, weather_history_read_plan};
+use weather_database::{
+    AdmittedHistoryQuery, HistoryReadPlan, HistoryReadPlanError, weather_history_read_plan,
+};
 
 use crate::current_projection::{
     CanonicalInstant, CurrentProjectionError, CurrentTimeResolver, describe_freshness,
@@ -54,13 +56,19 @@ pub trait HistoryBoundaryAdapter {
 pub struct ParsedHistoryQuery {
     pub query: HistoryQuery,
     pub requested_limit: u64,
+    from_epoch_milliseconds: Option<i64>,
+    to_epoch_milliseconds: Option<i64>,
 }
 
 /// bind one parsed public query to the exact database read plan
 pub fn history_read_plan(
     parsed: &ParsedHistoryQuery,
 ) -> Result<HistoryReadPlan, HistoryReadPlanError> {
-    weather_history_read_plan(&parsed.query)
+    weather_history_read_plan(&AdmittedHistoryQuery::admitted(
+        parsed.query.clone(),
+        parsed.from_epoch_milliseconds,
+        parsed.to_epoch_milliseconds,
+    ))
 }
 
 /// parse the frozen history filters against active site discovery
@@ -144,12 +152,25 @@ pub fn parse_history_query(
         }
     };
     let from = resolve_optional_query_time(from_value, HistoryQueryTime::From, boundary)?;
+
+    // retain the lower bound's admitted instant for repository validation
+    let from_epoch_milliseconds = match &from {
+        FieldPresence::Missing => None,
+        FieldPresence::Value(from) => Some(from.epoch_milliseconds),
+    };
+
     // preserve absent provenance filters and generated wire values
     let source_kind = match source_kind_value {
         None => FieldPresence::Missing,
         Some(value) => FieldPresence::Value(parse_source_kind(value)?),
     };
     let to = resolve_optional_query_time(to_value, HistoryQueryTime::To, boundary)?;
+
+    // retain the upper bound's admitted instant for repository validation
+    let to_epoch_milliseconds = match &to {
+        FieldPresence::Missing => None,
+        FieldPresence::Value(to) => Some(to.epoch_milliseconds),
+    };
 
     // reject reversed ranges using admitted epoch values
     if let (FieldPresence::Value(from), FieldPresence::Value(to)) = (&from, &to)
@@ -175,6 +196,8 @@ pub fn parse_history_query(
             to: map_query_time(to),
         },
         requested_limit,
+        from_epoch_milliseconds,
+        to_epoch_milliseconds,
     })
 }
 

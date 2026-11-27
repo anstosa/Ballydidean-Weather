@@ -231,6 +231,34 @@ fn projects_ready_health() {
 }
 
 #[test]
+// match node's whole-second freshness boundary on both sides
+fn classifies_fractional_second_worker_heartbeat_boundary() {
+    let safety = 2_000_000;
+
+    // preserve a fresh heartbeat through the last millisecond of the threshold second
+    for (age_ms, expected) in [
+        (-1, WorkerFreshness::Stale),
+        (0, WorkerFreshness::Fresh),
+        (1_800_000, WorkerFreshness::Fresh),
+        (1_800_001, WorkerFreshness::Fresh),
+        (1_800_999, WorkerFreshness::Fresh),
+        (1_801_000, WorkerFreshness::Stale),
+    ] {
+        let projection = project_health(
+            HealthSnapshot {
+                database: DatabaseStatus::Ready,
+                migration_status: MigrationStatus::Current,
+                migration_version: Some("current".to_owned()),
+                worker_last_loop_epoch_ms: Some(safety - age_ms),
+            },
+            safety,
+            "development",
+        );
+        assert_eq!(projection.worker_freshness, expected, "age {age_ms}");
+    }
+}
+
+#[test]
 // keep liveness true while database readiness is unavailable
 fn projects_unavailable_health() {
     let projection = project_health(

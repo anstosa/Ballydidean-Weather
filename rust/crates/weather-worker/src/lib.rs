@@ -587,6 +587,7 @@ pub struct WorkerContinuation {
 #[derive(Clone, Debug, PartialEq)]
 pub struct OpenMeteoEnvelope {
     pub elevation_m: Option<f64>,
+    pub grid_cell: String,
     pub latitude: f64,
     pub longitude: f64,
     pub upstream_timezone: String,
@@ -1539,7 +1540,7 @@ fn open_meteo_provenance(envelope: &OpenMeteoEnvelope) -> OpenMeteoProvenance {
     OpenMeteoProvenance {
         dataset: "forecast",
         elevation_m: envelope.elevation_m,
-        grid_cell: format!("{},{}", envelope.latitude, envelope.longitude),
+        grid_cell: envelope.grid_cell.clone(),
         model: "best_match",
         upstream_timezone: envelope.upstream_timezone.clone(),
     }
@@ -4417,6 +4418,7 @@ mod tests {
     fn open_meteo_envelope(timezone: &str) -> OpenMeteoEnvelope {
         OpenMeteoEnvelope {
             elevation_m: Some(32.0),
+            grid_cell: "47.941,-122.438".to_owned(),
             latitude: 47.941,
             longitude: -122.438,
             upstream_timezone: timezone.to_owned(),
@@ -4447,6 +4449,20 @@ mod tests {
         assert_eq!(record.provenance.grid_cell, "47.941,-122.438");
         assert_eq!(record.provenance.model, "best_match");
         assert_eq!(record.provenance.upstream_timezone, timezone);
+    }
+
+    // preserve javascript coordinate spelling
+    #[test]
+    fn open_meteo_provenance_spells_javascript_coordinates() {
+        let provenance = super::open_meteo_provenance(&OpenMeteoEnvelope {
+            elevation_m: None,
+            grid_cell: "0,1e-7".to_owned(),
+            latitude: -0.0,
+            longitude: 1e-7,
+            upstream_timezone: "UTC".to_owned(),
+        });
+
+        assert_eq!(provenance.grid_cell, "0,1e-7");
     }
 
     // match the stale-checkpoint node oracle

@@ -30043,14 +30043,14 @@
       "installedPaths": [
         "/opt/weather/current/deploy/scripts/backup.sh"
       ],
-      "sourceDigest": "dc55c72f239d6e86bbbaa119e2e785bd090a86bab18b342524c9f453aaeffc15",
+      "sourceDigest": "d164e48f0c542c0e17471a446a6db9a187c417a6b39edfb24aeff85f60a28de0",
       "parents": [],
       "classification": "release-control",
       "runtime": "shell",
       "invokedRuntimes": [],
       "command": "observations:2:sha256:263b5dbacde8b3959ed6e7ea1dbb2c30a7d7fd027eda1db9c69cf4672fc950bf",
       "probe": null,
-      "entryDigest": "62865df41d762f754e16b79d0137b0c86fb6cf773c7b175cd2f73be6a2c1195a",
+      "entryDigest": "562a043027f4e25d82a4e6ed5fe53b74fab745ba5133d19885432a24abe9e2eb",
       "owner": "release-operations",
       "parityTest": "npm run test:deploy",
       "accountingScope": "release-control:static-source",

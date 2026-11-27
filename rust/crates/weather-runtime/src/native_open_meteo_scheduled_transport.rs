@@ -21,6 +21,7 @@ use crate::maintenance_canonical_json::field;
 use crate::native_open_meteo_transport::{
     compatibility_endpoint, decode_provider_json, json_get, number_text,
 };
+use crate::native_open_meteo_values::javascript_number_text;
 use crate::native_outbound_http::{
     NativeOutboundHttp, NativeOutboundHttpError, NativeOutboundHttpRequest,
     NativeOutboundHttpResponse, NativeProviderCodec, OwnedNativeProviderExchange,
@@ -645,12 +646,22 @@ fn parse_envelope(root: &JsonValue, attempt: u8) -> Result<ParsedEnvelope, Provi
     Ok(ParsedEnvelope {
         envelope: OpenMeteoEnvelope {
             elevation_m,
+            grid_cell: grid_cell_text(latitude, longitude),
             latitude,
             longitude,
             upstream_timezone: timezone,
         },
         offset_seconds: offset as i32,
     })
+}
+
+/// render one scheduled provider grid identity
+fn grid_cell_text(latitude: f64, longitude: f64) -> String {
+    format!(
+        "{},{}",
+        javascript_number_text(latitude),
+        javascript_number_text(longitude)
+    )
 }
 
 /// Resolve current time only when the exact provider offset agrees with the named zone.
@@ -979,6 +990,7 @@ fn placeholder_current(checksum: &str) -> OpenMeteoAttemptPayload {
 fn placeholder_envelope() -> OpenMeteoEnvelope {
     OpenMeteoEnvelope {
         elevation_m: None,
+        grid_cell: "0,0".to_owned(),
         latitude: 0.0,
         longitude: 0.0,
         upstream_timezone: String::new(),

@@ -577,12 +577,13 @@ async fn consume_response(
     head_only: bool,
     check_declared_length: bool,
 ) -> Result<NativeOutboundHttpResponse, NativeOutboundHttpError> {
+    let fetch_null_body = fetch_null_body_status(response.status());
     let status = response.status().as_u16();
     let headers = response.headers().clone();
     let declared_body_bytes = declared_body_bytes(&headers);
 
-    // reject an honestly declared oversized representation before allocation
-    if (head_only || check_declared_length)
+    // retain HEAD's representation budget while null-body statuses have no response body
+    if (head_only || check_declared_length && !fetch_null_body)
         && declared_body_bytes.is_some_and(|length| length > maximum_body_bytes)
     {
         return Err(NativeOutboundHttpError::BodyTooLarge {
@@ -590,8 +591,8 @@ async fn consume_response(
             status,
         });
     }
-    // HEAD retains the upstream representation length but does not decode an absent body
-    if head_only {
+    // retain headers without decoding bodies that Fetch defines as absent
+    if head_only || fetch_null_body {
         return Ok(NativeOutboundHttpResponse {
             body: Vec::new(),
             declared_body_bytes,
@@ -636,32 +637,54 @@ async fn consume_response(
     })
 }
 
-/// Decode gzip or deflate only when the request advertised those algorithms.
+/// recognize statuses whose Fetch response body is always null.
+const fn fetch_null_body_status(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT | StatusCode::NOT_MODIFIED
+    )
+}
+
+/// decode advertised content codings in reverse application order.
 fn decode_content(
     headers: &HeaderMap,
-    encoded: Vec<u8>,
+    mut encoded: Vec<u8>,
     maximum_body_bytes: u64,
 ) -> Result<Vec<u8>, NativeOutboundHttpError> {
-    let Some(encoding) = headers.get(CONTENT_ENCODING) else {
-        return Ok(encoded);
-    };
-    let encoding = encoding
-        .to_str()
-        .map_err(|_| NativeOutboundHttpError::UnsupportedContentEncoding)?
-        .trim()
-        .to_ascii_lowercase();
-
-    // decode only the two encodings explicitly advertised by this client
-    match encoding.as_str() {
-        "gzip" | "x-gzip" => read_decoded(
-            GzDecoder::new(encoded.as_slice()),
-            maximum_body_bytes,
-            ContentBudgetRole::StreamedBytes,
-        ),
-        "deflate" => decode_deflate(&encoded, maximum_body_bytes),
-        "identity" => Ok(encoded),
-        _ => Err(NativeOutboundHttpError::UnsupportedContentEncoding),
+    let mut encodings = Vec::new();
+    // retain coding order across repeated fields and comma-separated values
+    for value in headers.get_all(CONTENT_ENCODING) {
+        let value = value
+            .to_str()
+            .map_err(|_| NativeOutboundHttpError::UnsupportedContentEncoding)?;
+        // admit every coding before decoding the representation
+        for encoding in value.split(',') {
+            let encoding = encoding.trim().to_ascii_lowercase();
+            // preserve the existing advertised coding boundary
+            if !matches!(
+                encoding.as_str(),
+                "gzip" | "x-gzip" | "deflate" | "identity"
+            ) {
+                return Err(NativeOutboundHttpError::UnsupportedContentEncoding);
+            }
+            encodings.push(encoding);
+        }
     }
+
+    // bound every intermediate representation with the existing byte ceiling
+    for encoding in encodings.iter().rev() {
+        encoded = match encoding.as_str() {
+            "gzip" | "x-gzip" => read_decoded(
+                GzDecoder::new(encoded.as_slice()),
+                maximum_body_bytes,
+                ContentBudgetRole::StreamedBytes,
+            )?,
+            "deflate" => decode_deflate(&encoded, maximum_body_bytes)?,
+            "identity" => encoded,
+            _ => return Err(NativeOutboundHttpError::UnsupportedContentEncoding),
+        };
+    }
+    Ok(encoded)
 }
 
 /// Decode zlib-wrapped deflate, falling back to the raw format admitted by Fetch.

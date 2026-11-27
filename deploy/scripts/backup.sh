@@ -25,7 +25,7 @@ bounded_encrypted_writer() {
   local probe
 
   # preserve a failed or short bounded write even inside a conditional pipeline
-  dd bs=1M iflag=count_bytes count="$maximum" of="$target" status=none || return $?
+  dd bs=1M iflag=count_bytes,fullblock count="$maximum" of="$target" status=none || return $?
   # detect one excess byte without writing it
   probe=$(LC_ALL=C od -An -N1 -tu1) || return $?
   if [[ "$probe" =~ [0-9] ]]; then

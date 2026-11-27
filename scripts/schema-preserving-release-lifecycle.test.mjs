@@ -488,6 +488,199 @@ sp_rollback
   }
 });
 
+// exercise the documented auxiliary operator path across both retained generations
+test("retained native rollback can reactivate the exact staged Rust release", async () => {
+  const context = await fixture();
+  const log = join(context.root, "native-reactivation.log");
+  const directory = join(context.spRoot, "2026.11.04-1");
+  const sourceEnvironment = join(context.releases, "2026.11.03-3.env");
+  const targetEnvironment = join(context.releases, "2026.11.04-1.env");
+  const schemaGuard = join(context.state, "schema-release");
+  const dataGuard = join(context.root, "retained-data");
+  const nodeServer = `ghcr.io/anstosa/weather-server@sha256:${"a".repeat(64)}`;
+  const nodeWeb = `ghcr.io/anstosa/weather-web@sha256:${"b".repeat(64)}`;
+  const rustServer = `ghcr.io/anstosa/weather-server@sha256:${"c".repeat(64)}`;
+  const rustWeb = `ghcr.io/anstosa/weather-web@sha256:${"d".repeat(64)}`;
+  const nodeServerId = `sha256:${"e".repeat(64)}`;
+  const nodeWebId = `sha256:${"f".repeat(64)}`;
+  const rustServerId = `sha256:${"1".repeat(64)}`;
+  const rustWebId = `sha256:${"2".repeat(64)}`;
+  const sourceBytes = `WEATHER_RELEASE=2026.11.03-3\nWEATHER_SERVER_IMAGE=${nodeServer}\nWEATHER_WEB_IMAGE=${nodeWeb}\n`;
+  const targetBytes = `WEATHER_RELEASE=2026.11.04-1\nWEATHER_SERVER_IMAGE=${rustServer}\nWEATHER_WEB_IMAGE=${rustWeb}\n`;
+  const dataBytes = "retained application data\n";
+  // hash exact fixture bytes using the operator's digest algorithm
+  const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  const protectedBytes = `${hash("2026.11.03-3\n")}  ${schemaGuard}\n${hash(dataBytes)}  ${dataGuard}\n`;
+  const publication = {
+    contractVersion: "weather-schema-preserving-publication/v3",
+    serverImage: rustServer,
+    serverImageId: rustServerId,
+    targetCommit: "3".repeat(40),
+    targetRelease: "2026.11.04-1",
+    webImage: rustWeb,
+    webImageId: rustWebId,
+  };
+  const publicationBytes = `${JSON.stringify(publication)}\n`;
+  const runtimeMetadata = {
+    contractVersion: "weather-runtime-generation/v1",
+    generation: "rust-v1",
+    materialManifestSha256: "4".repeat(64),
+    publicationSha256: hash(publicationBytes),
+    release: "2026.11.04-1",
+    serverImage: rustServer,
+    serverImageId: rustServerId,
+    webImage: rustWeb,
+    webImageId: rustWebId,
+  };
+  const runtimeBytes = `${JSON.stringify(runtimeMetadata)}\n`;
+  const receipt = stageReceipt({
+    contractVersion: "weather-schema-preserving-stage/v2",
+    sourceEnvironmentSha256: hash(sourceBytes),
+    targetEnvironmentSha256: hash(targetBytes),
+    publicationSha256: hash(publicationBytes),
+    protectedSha256: hash(protectedBytes),
+    runtimeMetadataSha256: hash(runtimeBytes),
+  });
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await Promise.all([
+    writeFile(sourceEnvironment, sourceBytes, { mode: 0o600 }),
+    writeFile(targetEnvironment, targetBytes, { mode: 0o600 }),
+    writeFile(join(directory, "publication.json"), publicationBytes, { mode: 0o600 }),
+    writeFile(join(directory, "runtime-generation.json"), runtimeBytes, { mode: 0o600 }),
+    writeFile(join(directory, "stage.json"), `${JSON.stringify(receipt)}\n`, { mode: 0o600 }),
+    writeFile(join(directory, "ready.json"), `${JSON.stringify(receipt)}\n`, { mode: 0o600 }),
+    writeFile(join(directory, "protected.json"), protectedBytes, { mode: 0o600 }),
+    writeFile(schemaGuard, "2026.11.03-3\n", { mode: 0o600 }),
+    writeFile(join(context.state, "current-release"), "2026.11.04-1\n", { mode: 0o600 }),
+    writeFile(join(context.state, "previous-release"), "2026.11.03-3\n", { mode: 0o600 }),
+    writeFile(dataGuard, dataBytes, { mode: 0o600 }),
+  ]);
+  await symlink(targetEnvironment, join(context.state, "active.env"));
+  const body = String.raw`
+log=$2; root=$3; schema_guard=$4; data_guard=$5
+node_server=$6; node_web=$7; rust_server=$8; rust_web=$9
+node_server_id=sha256:$(printf 'e%.0s' {1..64})
+node_web_id=sha256:$(printf 'f%.0s' {1..64})
+rust_server_id=sha256:$(printf '1%.0s' {1..64})
+rust_web_id=sha256:$(printf '2%.0s' {1..64})
+
+# report one isolated lifecycle failure
+die() { printf 'die:%s\n' "$*" >>"$log"; exit 70; }
+# retain the real validator except for the separately covered publication shape
+node() { [[ "$*" != *validate-publication* ]] || return 0; command node "$@"; }
+# accept only private regular fixture files
+sp_private() { [[ -f "$1" && ! -L "$1" && "$(stat -c '%a:%h' "$1")" == 600:1 ]] || die "unsafe fixture input: $1"; }
+# retain exact file hashing throughout both transactions
+sp_sha() { sha256sum -- "$1" | awk '{print $1}'; }
+# map one fixture release to its retained environment
+release_env() { printf '%s/deploy/releases/%s.env\n' "$root" "$1"; }
+# accept only the two reviewed fixture release names
+validate_release() { [[ "$1" =~ ^2026\.11\.(03-3|04-1)$ ]] || die "invalid fixture release"; }
+# load one existing release environment without changing it
+sp_environment() { validate_release "$1"; [[ -f "$(release_env "$1")" ]] || die "missing fixture environment"; release_env "$1"; }
+# read one private marker used by the real lifecycle functions
+read_release_state() { cat -- "$1"; }
+# replace one private marker at its original boundary
+write_private_state() { printf '%s\n' "$2" >"$1"; chmod 600 "$1"; }
+# replace the active link with the selected retained environment
+write_active_symlink() { ln -sfn "$(release_env "$1")" "$state_dir/active.env"; }
+# commit the selected release and its exact predecessor
+record_release_success() { write_private_state "$state_dir/current-release" "$1"; write_private_state "$state_dir/previous-release" "$2"; write_active_symlink "$1"; printf 'commit:%s:%s\n' "$1" "$2" >>"$log"; }
+# read only the three environment values used by this lifecycle
+env_value() {
+  case "$2" in
+    WEATHER_RELEASE) sed -n 's/^WEATHER_RELEASE=//p' "$1" ;;
+    WEATHER_SERVER_IMAGE) sed -n 's/^WEATHER_SERVER_IMAGE=//p' "$1" ;;
+    WEATHER_WEB_IMAGE) sed -n 's/^WEATHER_WEB_IMAGE=//p' "$1" ;;
+    *) die "unexpected fixture environment field" ;;
+  esac
+}
+# return the retained image identifier for one immutable digest
+fixture_image_id() {
+  case "$1" in
+    "$node_server") printf '%s\n' "$node_server_id" ;;
+    "$node_web") printf '%s\n' "$node_web_id" ;;
+    "$rust_server") printf '%s\n' "$rust_server_id" ;;
+    "$rust_web") printf '%s\n' "$rust_web_id" ;;
+    *) die "unexpected fixture image" ;;
+  esac
+}
+# expose only the image metadata queried by the real generation selector
+docker() {
+  case "$4" in
+    '{{.Id}}') fixture_image_id "$5" ;;
+    '{{.Id}}|{{.Os}}/{{.Architecture}}') printf '%s|linux/arm64\n' "$(fixture_image_id "$5")" ;;
+    '{{index .Config.Labels "org.weather.runtime.generation"}}')
+      case "$5" in "$rust_server"|"$rust_web") printf 'rust-v1\n' ;; *) printf '\n' ;; esac
+      ;;
+    *) die "unexpected fixture image query" ;;
+  esac
+}
+# publish one private journal through the real transaction function
+sp_publish() { cat >"$1"; chmod 600 "$1"; }
+# retain the original protected schema and data bytes in every snapshot
+sp_snapshot() { sha256sum -- "$schema_guard" "$data_guard" >"$2"; chmod 600 "$2"; }
+# compare the live protected bytes with the transaction snapshot
+sp_unchanged() { cmp -s "$2" <(sha256sum -- "$schema_guard" "$data_guard") || die "protected fixture changed"; printf 'unchanged:%s\n' "$(env_value "$1" WEATHER_RELEASE)" >>"$log"; }
+# record the read-only database boundary without introducing mutation authority
+sp_database() { printf 'database-readonly:%s\n' "$(env_value "$1" WEATHER_RELEASE)" >>"$log"; }
+# keep capacity outside this lifecycle-only fixture
+sp_capacity() { printf 'capacity\n' >>"$log"; }
+# exercise generation and image identity before each isolated service switch
+sp_switch() {
+  local generation release server web
+  generation=$(sp_runtime_generation "$1")
+  release=$(env_value "$1" WEATHER_RELEASE)
+  server=$(env_value "$1" WEATHER_SERVER_IMAGE)
+  web=$(env_value "$1" WEATHER_WEB_IMAGE)
+  sp_image "$server" "$(fixture_image_id "$server")"
+  sp_image "$web" "$(fixture_image_id "$web")"
+  printf 'switch:%s:%s:%s:%s:%s:%s\n' "$release" "$generation" "$server" "$web" \
+    "$(fixture_image_id "$server")" "$(fixture_image_id "$web")" >>"$log"
+}
+
+printf 'generation:initial:%s\n' "$(sp_runtime_generation "$(release_env 2026.11.04-1)")" >>"$log"
+sp_rollback
+[[ "$(read_release_state "$state_dir/current-release")" == 2026.11.03-3 ]] || die "rollback marker differs"
+[[ "$(sp_runtime_generation "$(sp_source)")" == node-v1 ]] || die "rollback generation differs"
+# use the accepted direct auxiliary operator action, not the generation gateway
+sp_activate 2026.11.04-1
+printf 'generation:final:%s\n' "$(sp_runtime_generation "$(sp_source)")" >>"$log"
+`;
+  const schemaBefore = await readFile(schemaGuard);
+  const dataBefore = await readFile(dataGuard);
+  try {
+    const result = runBash(context, body, [
+      log, context.root, schemaGuard, dataGuard,
+      nodeServer, nodeWeb, rustServer, rustWeb,
+    ]);
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const output = await transcript(log);
+    assert.match(output, /generation:initial:rust-v1/u);
+    assert.ok(output.includes(`switch:2026.11.03-3:node-v1:${nodeServer}:${nodeWeb}:${nodeServerId}:${nodeWebId}`));
+    assert.ok(output.includes(`switch:2026.11.04-1:rust-v1:${rustServer}:${rustWeb}:${rustServerId}:${rustWebId}`));
+    assert.match(output, /commit:2026\.11\.03-3:2026\.11\.04-1[\s\S]*commit:2026\.11\.04-1:2026\.11\.03-3/u);
+    assert.match(output, /generation:final:rust-v1/u);
+    assert.equal((output.match(/database-readonly:/gu) ?? []).length, 5);
+    assert.equal(await readFile(join(context.state, "current-release"), "utf8"), "2026.11.04-1\n");
+    assert.equal(await readFile(join(context.state, "previous-release"), "utf8"), "2026.11.03-3\n");
+    assert.equal(await readFile(join(context.state, "active.env"), "utf8"), targetBytes);
+    assert.deepEqual(await readFile(schemaGuard), schemaBefore);
+    assert.deepEqual(await readFile(dataGuard), dataBefore);
+    assert.equal(hash(await readFile(join(directory, "runtime-generation.json"))), receipt.runtimeMetadataSha256);
+    assert.equal(hash(await readFile(join(directory, "publication.json"))), receipt.publicationSha256);
+    assert.equal(hash(await readFile(targetEnvironment)), receipt.targetEnvironmentSha256);
+    assert.deepEqual(
+      JSON.parse(await readFile(join(directory, "ready.json"), "utf8")),
+      JSON.parse(await readFile(join(directory, "stage.json"), "utf8")),
+    );
+    await assert.rejects(readFile(join(context.spRoot, "journal.json")));
+    assert.doesNotMatch(output, /FORBIDDEN:|migrat|clone|backup/u);
+  } finally {
+    await rm(context.root, { force: true, recursive: true });
+  }
+});
+
 test("retire quarantines partial stages before, after, and orphaned at environment publication", async () => {
   const scenarios = [
     { name: "before", hasStage: true, targetPublished: false },

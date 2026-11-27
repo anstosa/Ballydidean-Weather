@@ -174,6 +174,39 @@ test("transport failures and interrupted or oversized bodies do not invent compl
   assert.equal(interrupted.receipt.body, null);
 });
 
+test("Fetch null-body statuses differ from an ordinary complete empty body", async () => {
+  // retain every Fetch-mandated null-body status as an incomplete exchange
+  for (const status of [204, 205, 304]) {
+    const { receipt } = await capture(null, {
+      // return one response whose body is null by Fetch contract
+      fetch: async () => new Response(null, { status }),
+    });
+    assert.deepEqual({
+      body: receipt.body,
+      bodySha256: receipt.bodySha256,
+      errorCode: receipt.errorCode,
+      httpStatus: receipt.httpStatus,
+      outcome: receipt.outcome,
+    }, {
+      body: null,
+      bodySha256: null,
+      errorCode: "missing_body",
+      httpStatus: null,
+      outcome: "transport_error",
+    });
+  }
+
+  const empty = await capture(new Uint8Array());
+  assert.equal(empty.receipt.outcome, "invalid");
+  assert.equal(empty.receipt.errorCode, "invalid_json_or_payload");
+  assert.equal(empty.receipt.httpStatus, 200);
+  assert.equal(empty.receipt.body.byteLength, 0);
+  assert.equal(
+    empty.receipt.bodySha256,
+    createHash("sha256").update(new Uint8Array()).digest("hex"),
+  );
+});
+
 test("one deadline covers a stalled response body", async () => {
   const originalSetTimeout = globalThis.setTimeout;
   // fire only the capture deadline immediately

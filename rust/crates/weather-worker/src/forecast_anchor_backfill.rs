@@ -221,6 +221,7 @@ pub struct ForecastAnchorProviderRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ForecastAnchorEnvelope {
     pub elevation_m: Option<f64>,
+    pub grid_cell: String,
     pub latitude: f64,
     pub longitude: f64,
     pub timezone: ForecastAnchorTimezone,
@@ -1094,10 +1095,7 @@ fn create_record_metadata(envelope: &ForecastAnchorEnvelope) -> WeatherRecordMet
         ),
         (
             utf16("grid_cell"),
-            JsonValue::String(utf16(&format!(
-                "{},{}",
-                envelope.latitude, envelope.longitude
-            ))),
+            JsonValue::String(utf16(&envelope.grid_cell)),
         ),
     ];
 
@@ -1348,6 +1346,29 @@ mod tests {
         }
     }
 
+    // preserve javascript coordinate spelling
+    #[test]
+    fn record_metadata_spells_javascript_coordinates() {
+        let metadata = create_record_metadata(&ForecastAnchorEnvelope {
+            elevation_m: None,
+            grid_cell: "0,1e-7".to_owned(),
+            latitude: -0.0,
+            longitude: 1e-7,
+            timezone: ForecastAnchorTimezone::Utc,
+            utc_offset_seconds: 0,
+        });
+        // require the deterministic provider metadata object
+        let Nullable::Value(provider) = metadata.provider else {
+            panic!("provider metadata must be present");
+        };
+        let grid_cell = provider
+            .iter()
+            .find(|(key, _)| key == &utf16("grid_cell"))
+            .map(|(_, value)| value);
+
+        assert_eq!(grid_cell, Some(&JsonValue::String(utf16("0,1e-7"))));
+    }
+
     // construct one exact active database source identity
     fn source() -> ForecastAnchorBackfillSource {
         ForecastAnchorBackfillSource {
@@ -1491,6 +1512,7 @@ mod tests {
             locations: vec![ForecastAnchorParsedLocation {
                 envelope: ForecastAnchorEnvelope {
                     elevation_m: Some(12.5),
+                    grid_cell: "48.1,-122.7".to_owned(),
                     latitude: 48.1,
                     longitude: -122.7,
                     timezone: ForecastAnchorTimezone::Utc,

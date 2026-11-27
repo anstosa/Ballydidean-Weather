@@ -299,7 +299,7 @@ pub struct HealthProjection {
     pub worker_freshness: WorkerFreshness,
 }
 
-const WORKER_FRESH_MILLISECONDS: i64 = 1_800_000;
+const WORKER_FRESH_SECONDS: i64 = 1_800;
 
 /// Dispatch one transport-decoded request target.
 ///
@@ -672,8 +672,8 @@ fn describe_worker_freshness(
         return WorkerFreshness::Stale;
     }
 
-    // retain the inclusive production freshness boundary
-    if age_ms <= WORKER_FRESH_MILLISECONDS {
+    // compare whole seconds to retain node's inclusive freshness boundary
+    if age_ms / 1_000 <= WORKER_FRESH_SECONDS {
         return WorkerFreshness::Fresh;
     }
 

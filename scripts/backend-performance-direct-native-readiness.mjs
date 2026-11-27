@@ -8,6 +8,12 @@ import {
 import {
   reconcileBackendPerformanceDirectCoverage,
 } from "./backend-performance-direct-coverage.mjs";
+import {
+  BACKEND_PERFORMANCE_DIRECT_APP_AGGREGATE_VERSION,
+} from "./backend-performance-direct-app-aggregate.mjs";
+import {
+  BACKEND_PERFORMANCE_DIRECT_HOST_ACCOUNTING_VERSION,
+} from "./backend-performance-direct-host-accounting.mjs";
 
 export const BACKEND_PERFORMANCE_DIRECT_NATIVE_READINESS_VERSION =
   "weather-backend-performance-direct-native-readiness/v1";
@@ -121,15 +127,25 @@ function inspectResourceInterval(value, index, sourceReceiptSha256, diagnostics)
     authorityClass: injectedAuthority
       ? "injected-test-only"
       : nativeAuthority ? "native-linux-cgroup-v2" : "unverified",
+    cgroupSha256: value.cgroupIdentity?.sha256 ?? null,
+    completedAt: value.completedAt ?? null,
     nativeEligible: nativeAuthority && identityComplete && sourceBound,
+    releaseId: value.before?.releaseId ?? null,
     scopeId: value.scopeId,
     sourceBound,
+    startedAt: value.startedAt ?? null,
   };
 }
 
 // inspect the fixed direct service and database accounting set
 function inspectResourceCoverage(values, sourceReceiptSha256, diagnostics) {
   const observed = new Map();
+  const expected = new Set(REQUIRED_DIRECT_SCOPES.map(
+    // index the closed required direct scope set
+    (scope) => `${scope.accountingScope}\u0000${scope.scopeId}`,
+  ));
+  const duplicates = new Set();
+  let unexpected = false;
 
   // inspect every supplied interval once
   for (let index = 0; index < values.length; index += 1) {
@@ -140,15 +156,47 @@ function inspectResourceCoverage(values, sourceReceiptSha256, diagnostics) {
       diagnostics,
     );
 
-    // retain only identified direct scopes
-    if (interval !== null) {
-      observed.set(`${String(interval.accountingScope)}\u0000${String(interval.scopeId)}`, interval);
+    // reject malformed interval records from the exact batch
+    if (interval === null) {
+      unexpected = true;
+      continue;
     }
+    const key = `${String(interval.accountingScope)}\u0000${String(interval.scopeId)}`;
+    const path = `$.resourceIntervals[${String(index)}]`;
+    // do not admit caller-selected extra scopes
+    if (!expected.has(key)) {
+      unexpected = true;
+      addDiagnostic(diagnostics, "native-readiness.resource-extra", path,
+        "resource interval is outside the fixed direct scope set");
+      continue;
+    }
+    // do not select an arbitrary observation for a repeated scope
+    if (observed.has(key)) {
+      duplicates.add(key);
+      addDiagnostic(diagnostics, "native-readiness.resource-duplicate", path,
+        "resource interval repeats a fixed direct scope");
+      continue;
+    }
+    observed.set(key, interval);
   }
-  return REQUIRED_DIRECT_SCOPES.map(
+  const resources = REQUIRED_DIRECT_SCOPES.map(
     // close one fixed direct accounting requirement
     (required) => {
       const key = `${required.accountingScope}\u0000${required.scopeId}`;
+      // withhold the identity and authority of an ambiguous direct scope
+      if (duplicates.has(key)) {
+        return {
+          ...required,
+          authorityClass: "ambiguous",
+          cgroupSha256: null,
+          completedAt: null,
+          nativeEligible: false,
+          present: true,
+          releaseId: null,
+          sourceBound: false,
+          startedAt: null,
+        };
+      }
       const interval = observed.get(key) ?? null;
 
       // report each absent service or database interval independently
@@ -171,12 +219,234 @@ function inspectResourceCoverage(values, sourceReceiptSha256, diagnostics) {
       return {
         ...required,
         authorityClass: interval?.authorityClass ?? null,
+        cgroupSha256: interval?.cgroupSha256 ?? null,
+        completedAt: interval?.completedAt ?? null,
         nativeEligible: interval?.nativeEligible ?? false,
         present: interval !== null,
+        releaseId: interval?.releaseId ?? null,
         sourceBound: interval?.sourceBound ?? false,
+        startedAt: interval?.startedAt ?? null,
       };
     },
   );
+  return {
+    resources,
+    scopeSetExact: !unexpected && duplicates.size === 0 && observed.size === expected.size,
+  };
+}
+
+// inspect one derived application aggregate without widening offline authority
+function inspectApplicationAggregate(value, sourceReceiptSha256, directResources, diagnostics) {
+  const path = "$.applicationAggregateReceipt";
+
+  // preserve an explicit missing aggregate
+  if (value === null || value === undefined) {
+    addDiagnostic(
+      diagnostics,
+      "native-readiness.app-aggregate-missing",
+      path,
+      "one source-bound application aggregate receipt is required",
+    );
+    return {
+      contractValid: false,
+      nativeEligible: false,
+      present: false,
+      scopesAligned: false,
+      sourceBound: false,
+      status: "missing",
+    };
+  }
+
+  // require the published aggregate result contract
+  if (!isRecord(value)
+    || value.contractVersion !== BACKEND_PERFORMANCE_DIRECT_APP_AGGREGATE_VERSION) {
+    addDiagnostic(
+      diagnostics,
+      "native-readiness.app-aggregate-contract",
+      path,
+      "application aggregate does not use the published result contract",
+    );
+    return {
+      contractValid: false,
+      nativeEligible: false,
+      present: true,
+      scopesAligned: false,
+      sourceBound: false,
+      status: "invalid",
+    };
+  }
+  const offlineAuthority = isRecord(value.authority)
+    && value.authority.collectionAuthority === "unverified-caller-supplied-offline-intervals"
+    && value.authority.nativeEligible === false
+    && value.authority.trafficGenerated === false
+    && value.metadataKind === "performance-direct-app-aggregate-offline-noncanonical"
+    && isRecord(value.identity)
+    && Array.isArray(value.services);
+
+  // reject receipts that relabel the fixed offline result contract
+  if (!offlineAuthority) {
+    addDiagnostic(
+      diagnostics,
+      "native-readiness.app-aggregate-authority",
+      path,
+      "application aggregate authority or metadata differs from the published offline result",
+    );
+    return {
+      contractValid: false,
+      nativeEligible: false,
+      present: true,
+      scopesAligned: false,
+      sourceBound: false,
+      status: "invalid",
+    };
+  }
+  const sourceBound = sourceReceiptSha256 !== null
+    && value.identity?.sourceReceiptSha256 === sourceReceiptSha256;
+  const serviceResources = directResources.filter(
+    // select the fixed application service scopes
+    (resource) => resource.accountingScope === "service",
+  );
+  const receiptServices = Array.isArray(value.services) ? value.services : [];
+  const receiptByScope = new Map(receiptServices.map(
+    // index one aggregate service identity
+    (service) => [service?.scopeId, service],
+  ));
+  const exactScopeSet = receiptServices.length === serviceResources.length
+    && serviceResources.every(
+      // require every fixed direct service exactly once
+      (resource) => receiptByScope.has(resource.scopeId),
+    );
+  const scopesAligned = exactScopeSet && serviceResources.every(
+    // bind aggregate contributors to exact direct interval identities
+    (resource) => {
+      const service = receiptByScope.get(resource.scopeId);
+      return isRecord(service) && isRecord(service.cgroupIdentity)
+        && service.cgroupIdentity.sha256 === resource.cgroupSha256
+        && service.nativeAuthority === true
+        && value.identity?.releaseId === resource.releaseId
+        && value.identity?.startedAt === resource.startedAt
+        && value.identity?.completedAt === resource.completedAt;
+    },
+  );
+
+  // require the current live-status source identity
+  if (!sourceBound) {
+    addDiagnostic(
+      diagnostics,
+      "native-readiness.app-aggregate-source",
+      path,
+      "application aggregate is not bound to the verified live-status receipt",
+    );
+  }
+  // require the exact three application service intervals
+  if (!scopesAligned) {
+    addDiagnostic(
+      diagnostics,
+      "native-readiness.app-aggregate-alignment",
+      path,
+      "application aggregate does not align with the fixed direct service intervals",
+    );
+  }
+  // retain the published evaluator's explicit noncanonical authority boundary
+  addDiagnostic(
+    diagnostics,
+    "native-readiness.app-aggregate-offline-authority",
+    path,
+    "published application aggregation accepts caller-supplied intervals and cannot establish native collection custody",
+  );
+  return {
+    contractValid: true,
+    nativeEligible: false,
+    present: true,
+    scopesAligned,
+    sourceBound,
+    status: "offline-noncanonical",
+  };
+}
+
+// inspect one derived host accounting result without inventing source custody
+function inspectHostAccounting(value, diagnostics) {
+  const path = "$.hostAccountingReceipt";
+
+  // preserve an explicit missing host result
+  if (value === null || value === undefined) {
+    addDiagnostic(
+      diagnostics,
+      "native-readiness.host-accounting-missing",
+      path,
+      "one live-receipt-bound whole-host accounting receipt is required",
+    );
+    return {
+      contractValid: false,
+      nativeEligible: false,
+      present: false,
+      sourceBound: false,
+      status: "missing",
+    };
+  }
+
+  // require the published host-accounting result contract
+  if (!isRecord(value)
+    || value.contractVersion !== BACKEND_PERFORMANCE_DIRECT_HOST_ACCOUNTING_VERSION) {
+    addDiagnostic(
+      diagnostics,
+      "native-readiness.host-accounting-contract",
+      path,
+      "host accounting does not use the published result contract",
+    );
+    return {
+      contractValid: false,
+      nativeEligible: false,
+      present: true,
+      sourceBound: false,
+      status: "invalid",
+    };
+  }
+  const offlineAuthority = isRecord(value.authority)
+    && value.authority.collectionAuthority === "unverified-caller-supplied-offline-snapshots"
+    && value.authority.nativeEligible === false
+    && value.authority.trafficGenerated === false
+    && value.metadataKind === "performance-direct-host-accounting-offline-noncanonical"
+    && Array.isArray(value.snapshots);
+
+  // reject receipts that relabel the fixed offline result contract
+  if (!offlineAuthority) {
+    addDiagnostic(
+      diagnostics,
+      "native-readiness.host-accounting-authority",
+      path,
+      "host accounting authority or metadata differs from the published offline result",
+    );
+    return {
+      contractValid: false,
+      nativeEligible: false,
+      present: true,
+      sourceBound: false,
+      status: "invalid",
+    };
+  }
+
+  // name the missing binding in the current published result schema
+  addDiagnostic(
+    diagnostics,
+    "native-readiness.host-accounting-source-unavailable",
+    path,
+    "published host accounting has no live-status source binding or collection-custody proof",
+  );
+  // retain the published evaluator's explicit noncanonical authority boundary
+  addDiagnostic(
+    diagnostics,
+    "native-readiness.host-accounting-offline-authority",
+    path,
+    "published host accounting accepts caller-supplied snapshots and cannot establish native collection custody",
+  );
+  return {
+    contractValid: true,
+    nativeEligible: false,
+    present: true,
+    sourceBound: false,
+    status: "offline-noncanonical",
+  };
 }
 
 // inspect one validator-admitted live receipt without widening its authority
@@ -286,9 +556,20 @@ function inspectLiveStatus(value, validator, validatorInjected, diagnostics) {
 
 // assess one read-only future native batch without collecting host data
 export function assessBackendPerformanceDirectNativeReadiness(input, adapters = {}) {
+  const requiredKeys = ["liveStatus", "operationReceipts", "resourceIntervals"];
+  const optionalKeys = ["applicationAggregateReceipt", "hostAccountingReceipt"];
+  const inputKeys = isRecord(input) ? Object.keys(input) : [];
+
   // reject open caller-selected requirements
-  if (!isRecord(input) || Object.keys(input).sort().join("\u0000")
-    !== ["liveStatus", "operationReceipts", "resourceIntervals"].sort().join("\u0000")
+  if (!isRecord(input)
+    || requiredKeys.some(
+      // require every retained input batch
+      (key) => !inputKeys.includes(key),
+    )
+    || inputKeys.some(
+      // reject every unrecognized authority surface
+      (key) => !requiredKeys.includes(key) && !optionalKeys.includes(key),
+    )
     || !Array.isArray(input.operationReceipts) || !Array.isArray(input.resourceIntervals)
     || !isRecord(adapters)
     || Object.keys(adapters).some(
@@ -320,38 +601,42 @@ export function assessBackendPerformanceDirectNativeReadiness(input, adapters = 
       `${String(operations.summary.missingNativeBuckets)} operation-stratum buckets and ${String(operations.summary.missingNativeAttempts)} planned attempts lack native evidence`,
     );
   }
-  const directResources = inspectResourceCoverage(
+  const directCoverage = inspectResourceCoverage(
     input.resourceIntervals,
     liveStatus.receiptSha256,
     diagnostics,
   );
-
-  // preserve the published direct collector host exclusion as a capacity gap
-  addDiagnostic(
+  const directResources = directCoverage.resources;
+  const applicationAggregate = inspectApplicationAggregate(
+    input.applicationAggregateReceipt,
+    liveStatus.receiptSha256,
+    directResources,
     diagnostics,
-    "native-readiness.host-accounting-unavailable",
-    "$.resourceIntervals",
-    "published direct cgroup intervals exclude whole-host accounting; a verified host-accounting receipt is still required",
+  );
+  const hostAccounting = inspectHostAccounting(
+    input.hostAccountingReceipt,
+    diagnostics,
   );
   diagnostics.sort(
     // retain deterministic batch diagnostics
     (left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)),
   );
-  const wholeHostAccountingReady = false;
   const ready = liveStatus.arm64NativeHost
     && operations.nativeComplete
+    && directCoverage.scopeSetExact
     && directResources.every(
       // require every fixed service and database interval
       (resource) => resource.nativeEligible,
     )
-    && wholeHostAccountingReady;
+    && applicationAggregate.nativeEligible
+    && hostAccounting.nativeEligible;
   return Object.freeze({
     contractVersion: BACKEND_PERFORMANCE_DIRECT_NATIVE_READINESS_VERSION,
     diagnostics,
     host: {
       architectureClass: liveStatus.architectureClass,
       arm64NativeHost: liveStatus.arm64NativeHost,
-      wholeHostAccounting: "unsupported-pending",
+      wholeHostAccounting: hostAccounting.status,
     },
     liveStatus: {
       receiptSha256: liveStatus.receiptSha256,
@@ -361,9 +646,10 @@ export function assessBackendPerformanceDirectNativeReadiness(input, adapters = 
     operations,
     physicalNativeReady: ready,
     resources: {
-      applicationAggregate: "unsupported-pending",
+      applicationAggregate,
       direct: directResources,
-      host: "unsupported-pending",
+      directScopeSetExact: directCoverage.scopeSetExact,
+      host: hostAccounting,
     },
     status: ready ? "ready" : "blocked",
   });

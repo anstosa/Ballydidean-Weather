@@ -334,6 +334,7 @@ mod tests {
                     generation_ms: Some(1.5),
                     envelope: OpenMeteoEnvelope {
                         elevation_m: Some(100.0),
+                        grid_cell: "47.95,-122.43".to_owned(),
                         latitude: 47.95,
                         longitude: -122.43,
                         upstream_timezone: "America/Los_Angeles".to_owned(),

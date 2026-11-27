@@ -229,7 +229,7 @@ pub fn project_open_meteo_previous_runs_payload(
             ));
         }
         let arrays = metric_arrays(hourly, units, expected_hours)?;
-        let envelope = envelope(root)?;
+        let envelope = envelope(root, values)?;
         let mut hours = Vec::with_capacity(expected_hours);
 
         // preserve the exact expected UTC axis and all seven lead positions
@@ -410,7 +410,10 @@ fn require_location_id(
 }
 
 /// Validate the zero-offset response grid envelope.
-fn envelope(root: &Fields) -> Result<ForecastAnchorEnvelope, ForecastAnchorBackfillOperationError> {
+fn envelope(
+    root: &Fields,
+    values: &mut impl OpenMeteoPreviousRunsValues,
+) -> Result<ForecastAnchorEnvelope, ForecastAnchorBackfillOperationError> {
     let latitude = number(required(root, "latitude"), "latitude")?;
     let longitude = number(required(root, "longitude"), "longitude")?;
     validate_coordinates(latitude, longitude)
@@ -438,11 +441,44 @@ fn envelope(root: &Fields) -> Result<ForecastAnchorEnvelope, ForecastAnchorBackf
     };
     Ok(ForecastAnchorEnvelope {
         elevation_m,
+        grid_cell: grid_cell_text(values, latitude, longitude),
         latitude,
         longitude,
         timezone,
         utc_offset_seconds: 0,
     })
+}
+
+/// render one previous-runs provider grid identity
+fn grid_cell_text(
+    values: &mut impl OpenMeteoPreviousRunsValues,
+    latitude: f64,
+    longitude: f64,
+) -> String {
+    format!(
+        "{},{}",
+        values.number_text(latitude),
+        values.number_text(longitude)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grid_cell_text;
+    use crate::NativeOpenMeteoValues;
+
+    /// preserve javascript coordinate spelling in anchor metadata
+    #[test]
+    fn grid_cell_preserves_javascript_number_spelling() {
+        let tie = f64::from_bits(0x3ff0_0008_0000_0000);
+        let mut values = NativeOpenMeteoValues::new();
+
+        assert_eq!(grid_cell_text(&mut values, -0.0, 1e-7), "0,1e-7");
+        assert_eq!(
+            grid_cell_text(&mut values, tie, -0.0),
+            "1.0000076293945312,0"
+        );
+    }
 }
 
 /// Collect and validate all 63 lead-suffixed arrays in base-major order.

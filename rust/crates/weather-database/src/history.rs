@@ -86,6 +86,29 @@ const WEATHER_RECORD_LATERAL_SELECTION: &str = r#"
     candidate.water_level_m
   "#;
 
+/// one history query carrying admitted canonical epoch evidence
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdmittedHistoryQuery {
+    query: HistoryQuery,
+    from_epoch_milliseconds: Option<i64>,
+    to_epoch_milliseconds: Option<i64>,
+}
+
+impl AdmittedHistoryQuery {
+    /// retain a query already resolved by the shared time boundary
+    pub fn admitted(
+        query: HistoryQuery,
+        from_epoch_milliseconds: Option<i64>,
+        to_epoch_milliseconds: Option<i64>,
+    ) -> Self {
+        Self {
+            query,
+            from_epoch_milliseconds,
+            to_epoch_milliseconds,
+        }
+    }
+}
+
 /// one typed PostgreSQL history bind in placeholder order
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryReadBind {
@@ -133,8 +156,10 @@ pub struct WeatherHistoryResult {
 
 /// build the exact source-owned dynamic history read
 pub fn weather_history_read_plan(
-    query: &HistoryQuery,
+    admitted: &AdmittedHistoryQuery,
 ) -> Result<HistoryReadPlan, HistoryReadPlanError> {
+    let query = &admitted.query;
+
     // apply the repository default only when the caller omits its limit
     let limit = match query.limit {
         FieldPresence::Missing => 100,
@@ -146,9 +171,11 @@ pub fn weather_history_read_plan(
         return Err(HistoryReadPlanError::LimitOutsideRepositoryRange);
     }
 
-    // canonical UTC strings preserve chronological ordering
-    if let (FieldPresence::Value(from), FieldPresence::Value(to)) = (&query.from, &query.to)
-        && from >= to
+    // compare admitted instants instead of offset-sensitive source spellings
+    if let (Some(from), Some(to)) = (
+        admitted.from_epoch_milliseconds,
+        admitted.to_epoch_milliseconds,
+    ) && from >= to
     {
         return Err(HistoryReadPlanError::ReversedRange);
     }

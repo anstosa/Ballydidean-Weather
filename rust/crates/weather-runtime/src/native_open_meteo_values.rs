@@ -406,8 +406,8 @@ fn admitted_provider_offset(offset_seconds: i32, fallback_minutes: i32) -> bool 
             && offset_seconds % QUARTER_HOUR_SECONDS == 0
 }
 
-/// Strip the native ordered JSON line ending to obtain JavaScript String(number).
-fn javascript_number_text(value: f64) -> String {
+/// render the exact javascript number spelling
+pub(crate) fn javascript_number_text(value: f64) -> String {
     let encoded = encode_ordered_json(&JsonValue::Number(value))
         .expect("finite Open-Meteo coordinates must be JSON encodable");
     let bytes = encoded
@@ -494,6 +494,17 @@ mod tests {
         assert_eq!(
             OpenMeteoPreviousRunsValues::number_text(&mut values, -0.0),
             "0"
+        );
+        assert_eq!(
+            OpenMeteoPreviousRunsValues::number_text(&mut values, 1e-7),
+            "1e-7"
+        );
+        assert_eq!(
+            OpenMeteoPreviousRunsValues::number_text(
+                &mut values,
+                f64::from_bits(0x3ff0_0008_0000_0000)
+            ),
+            "1.0000076293945312"
         );
         assert_eq!(
             OpenMeteoPreviousRunsValues::number_text(&mut values, 1e21),

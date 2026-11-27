@@ -3,24 +3,25 @@
 use crate::{
     ApiMaintenanceArchiveOriginOwner, ApiMaintenanceArchivePostTransport,
     ApiMaintenanceArchiveRawPost, NativeEdgeOrigins, NativeOutboundHttp,
-    NativePrivatePostTransport, NativePublicApiProxy,
+    NativePrivatePostTransport, NativePublicApiProxy, native_edge_http_head,
 };
 use http_body_util::{BodyExt, Full};
 use hyper::{
     Request, Response, StatusCode,
     body::{Bytes, Incoming},
-    header::{ACCEPT, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, LOCATION},
+    header::{ACCEPT, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, LOCATION},
     server::conn::http1,
     service::service_fn,
 };
 use hyper_util::rt::TokioIo;
+use std::borrow::Cow;
 use std::time::Duration;
 use std::{convert::Infallible, net::TcpListener as StdTcpListener, sync::Arc, thread};
-use weather_edge::EdgeStartupOrigins;
 use weather_edge::{
     ApiUpstreamMethod, PublicApiProjection, PublicApiProxyClient, PublicApiProxyClientRequest,
     PublicApiResponseProjector,
 };
+use weather_edge::{EdgeStartupOrigins, EdgeWireHeaders, PublicServingHeaderProfile};
 
 /// Serve a single admitted loopback exchange through Hyper's actual response framing.
 fn server<F, Future>(handler: F) -> (String, thread::JoinHandle<()>)
@@ -148,6 +149,69 @@ fn native_edge_proxy_head_retains_content_length() {
     assert_eq!(result.content_length, Some(7));
     assert!(result.body.is_empty());
     server.join().unwrap();
+}
+
+/// Preserve node fetch's latin-1 projection and response-writer header octets.
+#[test]
+fn native_edge_proxy_round_trips_content_type_octets() {
+    // cover ordinary ascii, isolated obs-text, and bytes that also form valid utf-8
+    for expected in [
+        b"application/json".as_slice(),
+        b"text/plain; title=\"\xe9\"".as_slice(),
+        b"text/plain; title=\"\xc3\xa9\"".as_slice(),
+    ] {
+        let upstream = HeaderValue::from_bytes(expected).unwrap();
+        let (origin, server) = server(move |_| {
+            let upstream = upstream.clone();
+            async move {
+                Response::builder()
+                    .status(200)
+                    .header(CONTENT_TYPE, upstream)
+                    .body(Full::new(Bytes::from_static(b"{}")))
+                    .unwrap()
+            }
+        });
+        let client = Arc::new(NativeOutboundHttp::new().unwrap());
+        let origin = NativeEdgeOrigins.api_origin(&origin).unwrap();
+        let proxy = NativePublicApiProxy::new(origin, client, FixtureProjection).unwrap();
+        let result = proxy
+            .fetch_api(PublicApiProxyClientRequest {
+                accept: "application/json",
+                maximum_response_bytes: 1024,
+                pathname: "/api/v1/sites",
+                projection: PublicApiProjection::None,
+                search: "",
+                timeout_ms: 3000,
+                upstream_method: ApiUpstreamMethod::Get,
+            })
+            .unwrap();
+        let content_type = result.content_type.unwrap();
+        let headers = EdgeWireHeaders {
+            allow: None,
+            cache_control: Cow::Borrowed("no-store"),
+            content_length: result.body.len(),
+            content_type: Some(Cow::Owned(content_type.clone())),
+            location: None,
+            retry_after: None,
+            tile_age_seconds: None,
+            tile_cache: None,
+            vary: None,
+        };
+        let response =
+            native_edge_http_head(200, PublicServingHeaderProfile::Standard, &headers, None)
+                .body(())
+                .unwrap();
+
+        assert_eq!(
+            content_type.chars().map(u32::from).collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|byte| u32::from(*byte))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(response.headers()[CONTENT_TYPE].as_bytes(), expected);
+        server.join().unwrap();
+    }
 }
 
 /// Transfer archive bytes through the actual private POST transport and retain its capacity reply.

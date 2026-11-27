@@ -468,6 +468,7 @@ assert.deepEqual(forecastBody.data[0].adjustment, {
 let healthClockReads = 0;
 let healthReads = 0;
 let healthSiteReads = 0;
+let workerLastLoopAt = "2026-08-22T04:50:00.000Z";
 const inactiveAdjustment = {
   loadedAt: "2026-08-20T05:00:00.000Z",
   runtime: { bundle: null, reasonCode: "registry_inactive", state: "disabled" },
@@ -483,7 +484,7 @@ const healthHandler = createWeatherApi({
     return {
       database: "ready",
       migration: { status: "current", version: "2026082201" },
-      workerLastLoopAt: "2026-08-22T04:50:00.000Z",
+      workerLastLoopAt,
     };
   },
   // prove health never performs active-site discovery
@@ -532,6 +533,21 @@ assert.equal(
   healthBody.data.temperatureAdjustmentRuntime.loadedAt,
   inactiveTemperature.loadedAt,
 );
+
+// exercise the exact whole-second freshness boundary through the public node handler
+for (const [ageMs, expected] of [
+  [-1, "stale"],
+  [0, "fresh"],
+  [1_800_000, "fresh"],
+  [1_800_001, "fresh"],
+  [1_800_999, "fresh"],
+  [1_801_000, "stale"],
+]) {
+  workerLastLoopAt = new Date(Date.parse(dataAt) - ageMs).toISOString();
+  const response = await healthHandler(new Request("http://weather.test/api/v1/health"));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).data.worker.freshness, expected, String(ageMs));
+}
 
 let failedHealthClockReads = 0;
 const failedHealthHandler = createWeatherApi({

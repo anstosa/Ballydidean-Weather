@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  DECLARATION_DRAFT_CONTRACT_VERSION,
   GIT_ADAPTER_VERSION,
   TARGET_ADDED_FILES,
   TARGET_ONLY_ROOTS,
   deriveDeclaredGitTransitionFixture,
+  deriveGitTransitionDeclarationDraftFixture,
   deriveGitTransitionFixture,
 } from "./predecessor-rust-transition-git.mjs";
 import {
@@ -20,6 +27,7 @@ import {
 
 const PREDECESSOR_COMMIT = "a".repeat(40);
 const TARGET_COMMIT = "b".repeat(40);
+const ADAPTER_PATH = fileURLToPath(new URL("./predecessor-rust-transition-git.mjs", import.meta.url));
 const REQUIRED_PATHS = [
   "Dockerfile",
   "deploy/scripts/common.sh",
@@ -50,6 +58,10 @@ function gitFixture(options = {}) {
   // add undeclared target material on request
   if (options.targetExtra !== undefined) {
     targetPaths.push(options.targetExtra);
+  }
+  // add multiple undeclared target members on request
+  for (const targetExtra of options.targetExtras ?? []) {
+    targetPaths.push(targetExtra);
   }
   // retain one extra existing member on request
   if (options.retainedExtra !== undefined) {
@@ -98,6 +110,22 @@ function gitFixture(options = {}) {
   return { calls, predecessorPaths, runGit, targetPaths };
 }
 
+// write one exact fixture tree into a temporary Git repository
+function writeFixtureTree(root, paths, changedPath = null) {
+  // materialize every named blob with deterministic bytes
+  for (const path of paths) {
+    const file = join(root, path);
+    mkdirSync(dirname(file), { recursive: true });
+    const drift = path === changedPath ? "drift:" : "";
+    writeFileSync(file, `${drift}fixture:${path}\n`);
+  }
+}
+
+// run one quiet Git fixture command
+function runFixtureGit(root, args) {
+  return execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
+}
+
 // assemble fixture-only metadata around derived members
 function transitionDocument(derived) {
   return {
@@ -123,6 +151,148 @@ function transitionDocument(derived) {
     targetOnlyRoots: derived.targetOnlyRoots,
   };
 }
+
+// enumerate an exact non-authorizing declaration and reuse only its nested declaration
+test("Git adapter enumerates a finite declaration draft from protected object bytes", () => {
+  const addedPaths = [
+    ".github/runtime-generation",
+    "apps/api/src/draft-added.ts",
+    "scripts/draft-added.mjs",
+  ];
+  const changedPath = "rust/crates/weather-runtime/src/existing.rs";
+  const fixture = gitFixture({
+    driftPath: changedPath,
+    retainedExtra: changedPath,
+    targetExtras: ["README.md", ...addedPaths].reverse(),
+  });
+  const draft = deriveGitTransitionDeclarationDraftFixture(
+    PREDECESSOR_COMMIT,
+    TARGET_COMMIT,
+    fixture.runGit,
+  );
+  assert.deepEqual(Object.keys(draft).sort(), [
+    "contractVersion",
+    "declaration",
+    "evidenceMode",
+    "reviewed",
+  ]);
+  assert.equal(draft.contractVersion, DECLARATION_DRAFT_CONTRACT_VERSION);
+  assert.equal(draft.evidenceMode, "injected-test-fixture");
+  assert.equal(draft.reviewed, false);
+  assert.deepEqual(
+    draft.declaration.addedFiles.map((member) => member.path),
+    addedPaths,
+  );
+  assert.equal(
+    draft.declaration.addedFiles[1].sha256,
+    digest(`fixture:${addedPaths[1]}\n`),
+  );
+  assert.deepEqual(draft.declaration.changedMembers, [{
+    path: changedPath,
+    predecessorSha256: digest(`fixture:${changedPath}\n`),
+    targetSha256: digest(`drift:fixture:${changedPath}\n`),
+  }]);
+  assert.equal(
+    draft.declaration.addedFiles.some((member) => TARGET_ADDED_FILES.includes(member.path)),
+    false,
+  );
+  assert.equal(
+    draft.declaration.addedFiles.some((member) => (
+      TARGET_ONLY_ROOTS.some((root) => member.path.startsWith(`${root}/`))
+    )),
+    false,
+  );
+  const draftCalls = structuredClone(fixture.calls);
+  assert.deepEqual(draftCalls.slice(0, 5), [
+    ["rev-parse", "--verify", `${PREDECESSOR_COMMIT}^{commit}`],
+    ["rev-parse", "--verify", `${TARGET_COMMIT}^{commit}`],
+    ["merge-base", "--is-ancestor", PREDECESSOR_COMMIT, TARGET_COMMIT],
+    ["ls-tree", "-r", "-z", "--name-only", PREDECESSOR_COMMIT, "--"],
+    ["ls-tree", "-r", "-z", "--name-only", TARGET_COMMIT, "--"],
+  ]);
+  assert.equal(
+    draftCalls.every((args) => (
+      ["cat-file", "ls-tree", "merge-base", "rev-parse"].includes(args[0])
+    )),
+    true,
+  );
+  assert.equal(
+    draftCalls.some((args) => args[0] === "cat-file" && args[2].endsWith(":README.md")),
+    false,
+  );
+  const derived = deriveDeclaredGitTransitionFixture(
+    PREDECESSOR_COMMIT,
+    TARGET_COMMIT,
+    draft.declaration,
+    fixture.runGit,
+  );
+  assert.deepEqual(derived.reviewedDeclaration, draft.declaration);
+  assert.deepEqual(derived.changedMembers, draft.declaration.changedMembers);
+});
+
+// reject deletion anywhere in the fixed declared protected source surface
+test("Git declaration draft enumeration rejects protected deletion", () => {
+  const deletedPath = "rust/crates/weather-runtime/src/deleted.rs";
+  const fixture = gitFixture({
+    retainedExtra: deletedPath,
+    targetOmission: deletedPath,
+  });
+  assert.throws(
+    () => deriveGitTransitionDeclarationDraftFixture(
+      PREDECESSOR_COMMIT,
+      TARGET_COMMIT,
+      fixture.runGit,
+    ),
+    /target removed declared protected member rust\/crates\/weather-runtime\/src\/deleted\.rs/u,
+  );
+});
+
+// expose the same non-authorizing wrapper through the read-only command line
+test("Git adapter declaration-draft CLI emits a nested declaration", () => {
+  const root = mkdtempSync(join(tmpdir(), "weather-transition-draft-"));
+  const changedPath = "rust/crates/weather-runtime/src/existing.rs";
+  const addedPath = "apps/api/src/draft-added.ts";
+  const predecessorPaths = [...REQUIRED_PATHS, changedPath].sort();
+  const targetPaths = [
+    ...predecessorPaths,
+    ...TARGET_ADDED_FILES,
+    ...TARGET_ONLY_ROOTS.map((targetRoot) => `${targetRoot}/fixture.txt`),
+    addedPath,
+  ].sort();
+  try {
+    runFixtureGit(root, ["init", "--quiet"]);
+    runFixtureGit(root, ["config", "user.email", "weather-test@example.invalid"]);
+    runFixtureGit(root, ["config", "user.name", "Weather Test"]);
+    writeFixtureTree(root, predecessorPaths);
+    runFixtureGit(root, ["add", "--all"]);
+    runFixtureGit(root, ["commit", "--quiet", "-m", "predecessor"]);
+    const predecessorCommit = runFixtureGit(root, ["rev-parse", "HEAD"]);
+    writeFixtureTree(root, targetPaths, changedPath);
+    runFixtureGit(root, ["add", "--all"]);
+    runFixtureGit(root, ["commit", "--quiet", "-m", "target"]);
+    const targetCommit = runFixtureGit(root, ["rev-parse", "HEAD"]);
+    const output = execFileSync(
+      process.execPath,
+      [ADAPTER_PATH, "declaration-draft", predecessorCommit, targetCommit],
+      { cwd: root, encoding: "utf8" },
+    );
+    const draft = JSON.parse(output);
+    assert.equal(draft.reviewed, false);
+    assert.equal(draft.contractVersion, DECLARATION_DRAFT_CONTRACT_VERSION);
+    assert.equal(draft.declaration.predecessorCommit, predecessorCommit);
+    assert.equal(draft.declaration.targetCommit, targetCommit);
+    assert.deepEqual(
+      draft.declaration.addedFiles.map((member) => member.path),
+      [addedPath],
+    );
+    assert.deepEqual(
+      draft.declaration.changedMembers.map((member) => member.path),
+      [changedPath],
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
 
 // derive exact fixed surfaces from injected object bytes
 test("Git adapter derives finite transition members from object bytes", () => {

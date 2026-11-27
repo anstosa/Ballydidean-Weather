@@ -9,12 +9,15 @@ import {
 import {
   WP8B_TARGET_ADDED_FILES,
   WP8B_TARGET_ONLY_ROOTS,
+  buildReviewedTransitionDeclaration,
   sha256,
   treeSha256,
   validateReviewedTransitionDeclaration,
 } from "./predecessor-rust-transition.mjs";
 
 export const GIT_ADAPTER_VERSION = "weather-predecessor-rust-git-adapter/v1";
+export const DECLARATION_DRAFT_CONTRACT_VERSION =
+  "weather-predecessor-rust-transition-declaration-draft/v1";
 export const TARGET_ADDED_FILES = WP8B_TARGET_ADDED_FILES;
 export const TARGET_ONLY_ROOTS = WP8B_TARGET_ONLY_ROOTS;
 
@@ -431,6 +434,88 @@ function deriveTransition(
   return evidence;
 }
 
+// enumerate one non-authorizing declaration draft from exact Git object bytes
+function deriveDeclarationDraft(
+  predecessorCommit,
+  targetCommit,
+  runGit,
+  evidenceMode,
+) {
+  validateCommit(predecessorCommit, "predecessorCommit");
+  validateCommit(targetCommit, "targetCommit");
+  // require distinct object identities
+  if (predecessorCommit === targetCommit) {
+    fail("predecessorCommit and targetCommit must differ");
+  }
+  resolveCommit(predecessorCommit, runGit);
+  resolveCommit(targetCommit, runGit);
+  requireDescendant(predecessorCommit, targetCommit, runGit);
+  const predecessorPaths = listTree(predecessorCommit, runGit);
+  const targetPaths = listTree(targetCommit, runGit);
+  requireSourceAbsence(predecessorPaths);
+  const predecessorMembers = collectMembers(
+    predecessorCommit,
+    predecessorPaths,
+    declaredProtectedPath,
+    runGit,
+  );
+  const targetMembers = collectMembers(
+    targetCommit,
+    targetPaths,
+    declaredProtectedPath,
+    runGit,
+  );
+  requireProtectedSentinels(predecessorMembers, "predecessorMembers");
+  requireProtectedSentinels(targetMembers, "targetMembers");
+  const predecessorByPath = new Map(
+    predecessorMembers.map((member) => [member.path, member]),
+  );
+  const targetByPath = new Map(targetMembers.map((member) => [member.path, member]));
+  const changedMembers = [];
+  // bind every retained member transition and reject declared-surface deletion
+  for (const predecessor of predecessorMembers) {
+    const target = targetByPath.get(predecessor.path);
+    // reject incomplete target surfaces
+    if (target === undefined) {
+      fail(`target removed declared protected member ${predecessor.path}`);
+    }
+    // omit byte-identical retained members
+    if (target.sha256 === predecessor.sha256) {
+      continue;
+    }
+    changedMembers.push({
+      path: predecessor.path,
+      predecessorSha256: predecessor.sha256,
+      targetSha256: target.sha256,
+    });
+  }
+  const addedFiles = [];
+  // bind every optional target addition while leaving mandatory WP8b material implicit
+  for (const target of targetMembers) {
+    // omit retained members and fixed mandatory additions
+    if (
+      predecessorByPath.has(target.path)
+      || TARGET_ADDED_FILES.includes(target.path)
+      || targetRoot(target.path) !== undefined
+    ) {
+      continue;
+    }
+    addedFiles.push(target);
+  }
+  const declaration = buildReviewedTransitionDeclaration({
+    addedFiles,
+    changedMembers,
+    predecessorCommit,
+    targetCommit,
+  });
+  return {
+    contractVersion: DECLARATION_DRAFT_CONTRACT_VERSION,
+    declaration,
+    evidenceMode,
+    reviewed: false,
+  };
+}
+
 // snapshot the fixed protected surface from Git
 export function snapshotGitCommit(commit, cwd = process.cwd()) {
   validateCommit(commit, "commit");
@@ -487,6 +572,25 @@ export function deriveDeclaredGitTransitionMembers(
   );
 }
 
+// enumerate a production Git-object declaration draft without granting approval
+export function deriveGitTransitionDeclarationDraft(
+  predecessorCommit,
+  targetCommit,
+  cwd = process.cwd(),
+) {
+  const repository = resolve(cwd);
+  // bind the runner to one repository
+  function runGit(args) {
+    return runGitCommand(args, repository);
+  }
+  return deriveDeclarationDraft(
+    predecessorCommit,
+    targetCommit,
+    runGit,
+    "git-object-database",
+  );
+}
+
 // derive isolated injected fixture evidence
 export function deriveGitTransitionFixture(predecessorCommit, targetCommit, fixtureRunGit) {
   // require an explicit fixture runner
@@ -524,6 +628,28 @@ export function deriveDeclaredGitTransitionFixture(
   );
 }
 
+// enumerate isolated draft fixture evidence without granting production authority
+export function deriveGitTransitionDeclarationDraftFixture(
+  predecessorCommit,
+  targetCommit,
+  fixtureRunGit,
+) {
+  // require an explicit fixture runner
+  if (typeof fixtureRunGit !== "function") {
+    fail("fixtureRunGit must be a function");
+  }
+  // keep injected reads visibly fixture-only
+  function runGit(args) {
+    return fixtureRunGit([...args]);
+  }
+  return deriveDeclarationDraft(
+    predecessorCommit,
+    targetCommit,
+    runGit,
+    "injected-test-fixture",
+  );
+}
+
 // run the read-only adapter interface
 function main(argv) {
   const [command, ...args] = argv;
@@ -537,7 +663,14 @@ function main(argv) {
     process.stdout.write(`${JSON.stringify(deriveGitTransitionMembers(args[0], args[1]), null, 2)}\n`);
     return;
   }
-  fail("usage: predecessor-rust-transition-git.mjs snapshot COMMIT | transition PREDECESSOR TARGET");
+  // enumerate one explicit non-authorizing review draft
+  if (command === "declaration-draft" && args.length === 2) {
+    process.stdout.write(
+      `${JSON.stringify(deriveGitTransitionDeclarationDraft(args[0], args[1]), null, 2)}\n`,
+    );
+    return;
+  }
+  fail("usage: predecessor-rust-transition-git.mjs snapshot COMMIT | transition PREDECESSOR TARGET | declaration-draft PREDECESSOR TARGET");
 }
 
 // execute only as the entry point

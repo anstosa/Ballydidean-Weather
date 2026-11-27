@@ -327,6 +327,15 @@ test("Check workflow binds selected native jobs to the exact commit", async () =
     /run_native_lib_suite weather-runtime native_postgres -- --skip native_postgres_real_roundtrip_test::native_pool_roundtrips_typed_values_against_postgres_16\n/u,
   );
   assert.match(rust, /run_native_lib_suite weather-runtime native_outbound_http_test/u);
+  assert.match(rust, /run_native_suite weather-api dispatch\n/u);
+  assert.match(rust, /run_native_suite weather-api service matches_compiled_node_service_dispatch\n/u);
+  assert.match(rust, /run_native_suite weather-api history\n/u);
+  assert.match(rust, /run_native_suite weather-database history\n/u);
+  assert.match(rust, /run_native_lib_suite weather-worker spells_javascript_coordinates\n/u);
+  assert.match(rust, /run_native_lib_suite weather-runtime encoding_matches_common_javascript_number_spelling\n/u);
+  assert.match(rust, /run_native_lib_suite weather-runtime open_meteo_previous_runs_provider::tests::grid_cell_preserves_javascript_number_spelling\n/u);
+  assert.match(rust, /run_native_suite weather-runtime open_meteo_current\n/u);
+  assert.match(rust, /run_native_suite weather-runtime open_meteo_previous_runs_provider\n/u);
   assert.match(rust, /run_native_lib_suite weather-runtime native_open_meteo_transport::tests/u);
   assert.match(rust, /run_native_suite weather-runtime native_wire_primitives/u);
   assert.match(rust, /run_native_suite weather-runtime api_repository native_/u);
@@ -346,6 +355,10 @@ test("Check workflow binds selected native jobs to the exact commit", async () =
   assert.match(android, /"tests": "29"/u);
   assert.match(android, /managedDevice\/debug\/widgetPhone\/TEST-widgetPhone\.xml/u);
   assert.match(quality, /python3 mobile\/scripts\/native_https_fixture_test\.py/u);
+  assert.match(
+    quality,
+    /Verify native benchmark support contracts[\s\S]*set -euo pipefail[\s\S]*for suite in scripts\/native-benchmark-\*\.test\.py; do\s+python3 "\$suite"\s+done/u,
+  );
   assert.match(aggregate, /if: always\(\)[\s\S]*CI_CHANGES_MODE: aggregate/u);
   assert.match(
     aggregate,

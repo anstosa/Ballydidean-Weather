@@ -15,7 +15,7 @@ use tokio::net::TcpListener;
 use weather_providers::{ProviderControls, ProviderRequestPolicy, run_provider_request};
 use weather_worker::{OpenMeteoSourceKind, ProviderRequest, ScheduledWindow};
 
-use super::NativeOpenMeteoScheduledTransport;
+use super::{NativeOpenMeteoScheduledTransport, grid_cell_text};
 use crate::{OpenMeteoWorkerLocation, WorkerOpenMeteoForecastTransport, provider_task_failure};
 
 const WEATHER_BODY: &str = r#"{
@@ -115,6 +115,15 @@ fn serve_forecast_pair() -> (String, mpsc::Receiver<String>, JoinHandle<()>) {
         });
     });
     (format!("http://{address}"), request_receiver, server)
+}
+
+/// preserve javascript coordinate spelling in scheduled metadata
+#[test]
+fn grid_cell_preserves_javascript_number_spelling() {
+    let tie = f64::from_bits(0x3ff0_0008_0000_0000);
+
+    assert_eq!(grid_cell_text(-0.0, 1e-7), "0,1e-7");
+    assert_eq!(grid_cell_text(tie, -0.0), "1.0000076293945312,0");
 }
 
 /// Preserve exact paired query wire and independently overlap both bounded controllers.

@@ -1,5 +1,7 @@
 //! Materialize the existing edge response policy as Hyper response headers.
 
+use std::borrow::Cow;
+
 use hyper::Response;
 use hyper::header::{
     ALLOW, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, RETRY_AFTER, SET_COOKIE, VARY,
@@ -58,7 +60,8 @@ pub fn native_edge_http_head(
     }
     // preserve an intentionally absent redirect content type
     if let Some(value) = headers.content_type.as_deref() {
-        response = response.header(CONTENT_TYPE, value);
+        let bytes = node_header_bytes(value);
+        response = response.header(CONTENT_TYPE, bytes.as_ref());
     }
     // preserve only an application-selected redirect target
     if let Some(value) = headers.location.as_deref() {
@@ -85,6 +88,30 @@ pub fn native_edge_http_head(
         response = response.header(SET_COOKIE, admin_cookie_value(cookie));
     }
     response
+}
+
+/// restore a node header string to its original one-byte header representation
+fn node_header_bytes(value: &str) -> Cow<'_, [u8]> {
+    // avoid allocating for every ordinary application content type
+    if value.is_ascii() {
+        return Cow::Borrowed(value.as_bytes());
+    }
+    // retain the previous utf-8 handling for unrelated non-latin-1 values
+    if value
+        .chars()
+        .any(|character| u32::from(character) > u32::from(u8::MAX))
+    {
+        return Cow::Borrowed(value.as_bytes());
+    }
+    let mut bytes = Vec::with_capacity(value.len());
+
+    // retain one byte for every latin-1 code point produced by fetch
+    for character in value.chars() {
+        let code_point = u32::from(character);
+        let byte = u8::try_from(code_point).expect("latin-1 code point");
+        bytes.push(byte);
+    }
+    Cow::Owned(bytes)
 }
 
 /// serialize one admitted cookie action in the original source attribute order.
