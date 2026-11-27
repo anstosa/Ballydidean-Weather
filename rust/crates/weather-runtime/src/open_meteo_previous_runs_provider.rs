@@ -462,25 +462,6 @@ fn grid_cell_text(
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::grid_cell_text;
-    use crate::NativeOpenMeteoValues;
-
-    /// preserve javascript coordinate spelling in anchor metadata
-    #[test]
-    fn grid_cell_preserves_javascript_number_spelling() {
-        let tie = f64::from_bits(0x3ff0_0008_0000_0000);
-        let mut values = NativeOpenMeteoValues::new();
-
-        assert_eq!(grid_cell_text(&mut values, -0.0, 1e-7), "0,1e-7");
-        assert_eq!(
-            grid_cell_text(&mut values, tie, -0.0),
-            "1.0000076293945312,0"
-        );
-    }
-}
-
 /// Collect and validate all 63 lead-suffixed arrays in base-major order.
 fn metric_arrays<'a>(
     hourly: &'a Fields,
@@ -681,4 +662,23 @@ fn provider_failure(error: ProviderRunError) -> ForecastAnchorBackfillOperationE
         failure.error.code,
         failure.error.message,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grid_cell_text;
+    use crate::NativeOpenMeteoValues;
+
+    /// preserve javascript coordinate spelling in anchor metadata
+    #[test]
+    fn grid_cell_preserves_javascript_number_spelling() {
+        let tie = f64::from_bits(0x3ff0_0008_0000_0000);
+        let mut values = NativeOpenMeteoValues::new();
+
+        assert_eq!(grid_cell_text(&mut values, -0.0, 1e-7), "0,1e-7");
+        assert_eq!(
+            grid_cell_text(&mut values, tie, -0.0),
+            "1.0000076293945312,0"
+        );
+    }
 }
