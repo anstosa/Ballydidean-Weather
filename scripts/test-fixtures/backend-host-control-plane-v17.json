@@ -1,0 +1,537 @@
+{
+  "sourceCommit": "97d42c76b7e51c7e4c176f28af6ab2d8e0ccc28d",
+  "controlPlaneSha256": "b2a211e5936fe0063f552a5e0d9ccf9a89b61a308ab9accf58e95fa54325822d",
+  "directories": [
+    {
+      "path": "deploy/postgres",
+      "entries": [
+        {
+          "name": "010-create-runtime-roles.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "postgres-admin-entrypoint.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "runtime-acl-v1.sql",
+          "type": "regular-file"
+        },
+        {
+          "name": "runtime-acl-v2.sql",
+          "type": "regular-file"
+        }
+      ]
+    },
+    {
+      "path": "deploy/scripts",
+      "entries": [
+        {
+          "name": "adjustment-evaluation-export.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "adjustment-evaluation-package.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "adjustment-evidence-store.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "backup-stream.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "backup.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "build-native-runtime-image-material.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "build-native-runtime-image-material.test.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "common.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "compatibility-provider.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "forecast-adjustment-scorecard-contract.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "forecast-observations.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "forecast-training-export.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "forecast-training-package.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "home-network.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "install-adjustment-scorecard.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "migrate.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "native-dashboard-release-control.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "native-dashboard-release-control.test.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "native-evidence-remote-dispatch.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "native-evidence-remote-dispatch.test.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "native-generation-remote-ops.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "native-generation-remote-ops.test.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "native-release-control-remote-dispatch.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "native-release-control-remote-dispatch.test.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "package-native-evidence-operator.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "preflight-capacity.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "public-stations-backfill.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "publish-adjustment-scorecard.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "pull-adjustment-evaluation-export.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "pull-backup.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "pull-forecast-training-export.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "remote-ops.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "resolve-image.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "restore.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "rust-runtime-image-material.fixture.json",
+          "type": "regular-file"
+        },
+        {
+          "name": "rust-runtime-image-material.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "rust-runtime-image-material.test.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "ssh-dispatch.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "ssh-run.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "status.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "tempest-backfill.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "tide-backfill.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "update.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "verify-static.sh",
+          "type": "regular-file"
+        },
+        {
+          "name": "weather-admin-store.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "web-server.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "xweather-tile-cache.mjs",
+          "type": "regular-file"
+        },
+        {
+          "name": "xweather-usage-budget.mjs",
+          "type": "regular-file"
+        }
+      ]
+    },
+    {
+      "path": "deploy/sudoers",
+      "entries": [
+        {
+          "name": "weather-ops",
+          "type": "regular-file"
+        }
+      ]
+    },
+    {
+      "path": "deploy/systemd",
+      "entries": [
+        {
+          "name": "weather-backup-local.service",
+          "type": "regular-file"
+        },
+        {
+          "name": "weather-backup-local.timer",
+          "type": "regular-file"
+        },
+        {
+          "name": "weather-compose.service",
+          "type": "regular-file"
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "deploy/postgres/010-create-runtime-roles.sh",
+      "sizeBytes": 5054,
+      "sha256": "c598784b280e13b9f12982e93df751b1b9a4290bb3c7a5c1994808cb75e16223"
+    },
+    {
+      "path": "deploy/postgres/postgres-admin-entrypoint.sh",
+      "sizeBytes": 5592,
+      "sha256": "20f90bfd9f86f9c35a8c0fa540760c71a96e0a9d1d2a71049ca0fbcf15a3031f"
+    },
+    {
+      "path": "deploy/postgres/runtime-acl-v1.sql",
+      "sizeBytes": 2239,
+      "sha256": "b1e1f92d24a84317797bbe1ead5b877d3335e1ccadc54cb2680a55d033a24cc5"
+    },
+    {
+      "path": "deploy/postgres/runtime-acl-v2.sql",
+      "sizeBytes": 51629,
+      "sha256": "94a91746fbe0018873d8f0ab3971619737d6a40f94c2c48fed6164570f915321"
+    },
+    {
+      "path": "deploy/scripts/adjustment-evaluation-export.sh",
+      "sizeBytes": 25214,
+      "sha256": "09a456e821cf39d03a257f4795a05fd9787e10893869c455df7ca78bd2d7919a"
+    },
+    {
+      "path": "deploy/scripts/adjustment-evaluation-package.mjs",
+      "sizeBytes": 489590,
+      "sha256": "a9be242390fd13e3946e9296a2c787a17881cec2ded1e08686f91e1cdad6ddd1"
+    },
+    {
+      "path": "deploy/scripts/adjustment-evidence-store.mjs",
+      "sizeBytes": 623233,
+      "sha256": "e9f74ec9c4e26f072b456590ffd81e6f75f39dad06007fb761c8fb0a48507c81"
+    },
+    {
+      "path": "deploy/scripts/backup-stream.sh",
+      "sizeBytes": 1466,
+      "sha256": "3446f5d8a3840bf4caf57ee7c09bdfccaa546d69abb6f31888d6a51192273038"
+    },
+    {
+      "path": "deploy/scripts/backup.sh",
+      "sizeBytes": 4554,
+      "sha256": "dc55c72f239d6e86bbbaa119e2e785bd090a86bab18b342524c9f453aaeffc15"
+    },
+    {
+      "path": "deploy/scripts/build-native-runtime-image-material.mjs",
+      "sizeBytes": 16532,
+      "sha256": "bb53af62c7df47d6e44f4840069404210a6073ccca2fb26b729841683d0ac53f"
+    },
+    {
+      "path": "deploy/scripts/build-native-runtime-image-material.test.mjs",
+      "sizeBytes": 7600,
+      "sha256": "e270961153febcce8269f01a65508912aa62696b9dc741ea1b7bdd6dd29acda6"
+    },
+    {
+      "path": "deploy/scripts/common.sh",
+      "sizeBytes": 69309,
+      "sha256": "a08c58b72377b087f2f27de03c439496c4f95bba75b509a115a03bbea3c9bb7e"
+    },
+    {
+      "path": "deploy/scripts/compatibility-provider.mjs",
+      "sizeBytes": 5216,
+      "sha256": "8b7b4b1fa44ad2969066487ced0269b9d594cba4b3c29d17d6bffb474e16a6e3"
+    },
+    {
+      "path": "deploy/scripts/forecast-adjustment-scorecard-contract.mjs",
+      "sizeBytes": 32246,
+      "sha256": "50c70b59285d2dd10e5e63a5c04b7331cfadd1da7e3db872d8c5561839e54975"
+    },
+    {
+      "path": "deploy/scripts/forecast-observations.mjs",
+      "sizeBytes": 9069,
+      "sha256": "039a07dc370278334c47ef2f355eeb1833f69b3ce561abfb8342f2cf54812203"
+    },
+    {
+      "path": "deploy/scripts/forecast-training-export.sh",
+      "sizeBytes": 6801,
+      "sha256": "48db6635659da7dba0062594f9ae1146176c40d22a714a58b7675b3f1570b5f8"
+    },
+    {
+      "path": "deploy/scripts/forecast-training-package.mjs",
+      "sizeBytes": 59628,
+      "sha256": "f1bd65685da06f0d6969ad9b96722c5edb6f030e291a375bfb3e36192db76787"
+    },
+    {
+      "path": "deploy/scripts/home-network.mjs",
+      "sizeBytes": 6084,
+      "sha256": "3dc0cf6b07f4a844f95fffd58352523636d7b93c4b51f42ad47e1161c7dd0266"
+    },
+    {
+      "path": "deploy/scripts/install-adjustment-scorecard.sh",
+      "sizeBytes": 13597,
+      "sha256": "6cc70ddf1ad123c0ba4863405f0fe7b83b124ad5ff69fd126a295f354b6a4226"
+    },
+    {
+      "path": "deploy/scripts/migrate.mjs",
+      "sizeBytes": 6487,
+      "sha256": "b5991cf942bda840e7a0a177b6fc0854b4273e3d7656f5465d4fe9b0e8fce3ca"
+    },
+    {
+      "path": "deploy/scripts/native-dashboard-release-control.sh",
+      "sizeBytes": 45672,
+      "sha256": "0e5d5a42bad7cf5485a8544a4d1b91af4f718b619a4316034d649e22b438bb04"
+    },
+    {
+      "path": "deploy/scripts/native-dashboard-release-control.test.mjs",
+      "sizeBytes": 14129,
+      "sha256": "75226532a25066a44e6de70574e836107ddc0f6ade4f2447f04197590acebf37"
+    },
+    {
+      "path": "deploy/scripts/native-evidence-remote-dispatch.sh",
+      "sizeBytes": 39060,
+      "sha256": "81670d23c2023a276f027d5251a81afe1c5a0cd8394a1ed39be484384ec8a82a"
+    },
+    {
+      "path": "deploy/scripts/native-evidence-remote-dispatch.test.mjs",
+      "sizeBytes": 23196,
+      "sha256": "be7ace7dcb9a62d7f7345065e30516f816bf6ea2e5b15d456ff9f2afff919bcf"
+    },
+    {
+      "path": "deploy/scripts/native-generation-remote-ops.sh",
+      "sizeBytes": 36504,
+      "sha256": "a67002c0781ac2d29b6e5c869a25223cb13080399b5a78ddf6b10ecfac0729e6"
+    },
+    {
+      "path": "deploy/scripts/native-generation-remote-ops.test.mjs",
+      "sizeBytes": 3256,
+      "sha256": "70ff85830878fc875263f24af76de5e07aa5c51473f4d00515a246eee080039c"
+    },
+    {
+      "path": "deploy/scripts/native-release-control-remote-dispatch.sh",
+      "sizeBytes": 7141,
+      "sha256": "f741f7715530211d0f287a8a9581767de67e13a11e6124a8abb8883f4110829f"
+    },
+    {
+      "path": "deploy/scripts/native-release-control-remote-dispatch.test.mjs",
+      "sizeBytes": 8684,
+      "sha256": "feed6a494c1612037cd7167ec454d726a102a7c0f6386a2c0e216c9afa1d4c59"
+    },
+    {
+      "path": "deploy/scripts/package-native-evidence-operator.sh",
+      "sizeBytes": 1803,
+      "sha256": "b9114590877af28afef65a30850438cedb8b0d8b5290a44e92044c14dd9ae924"
+    },
+    {
+      "path": "deploy/scripts/preflight-capacity.sh",
+      "sizeBytes": 6876,
+      "sha256": "e8e70038bf77a85ca5eafc8047800ebbd931edd81d5f58a0228908ea4858987e"
+    },
+    {
+      "path": "deploy/scripts/public-stations-backfill.sh",
+      "sizeBytes": 1205,
+      "sha256": "d7f790b0cba619210777f1c797c8f8a569fc405af24b75077d47e6b50dc9ce05"
+    },
+    {
+      "path": "deploy/scripts/publish-adjustment-scorecard.sh",
+      "sizeBytes": 3546,
+      "sha256": "9fda1ec3e3a4a6d9522e6a00c478af406b2767b20b9e971cdb9d7a4cf0bfae8b"
+    },
+    {
+      "path": "deploy/scripts/pull-adjustment-evaluation-export.sh",
+      "sizeBytes": 11491,
+      "sha256": "72875b48e703da00b9683c9f6a86506e0bcfe9f492f4c4a5275ee69590f0dd1d"
+    },
+    {
+      "path": "deploy/scripts/pull-backup.sh",
+      "sizeBytes": 3048,
+      "sha256": "566e114a050d54743e679f2ba5b1c39a7466a24dc8040fed910dff30da72355e"
+    },
+    {
+      "path": "deploy/scripts/pull-forecast-training-export.sh",
+      "sizeBytes": 3500,
+      "sha256": "1cd1f32732bb30837f86e3fdab10d31ebb06e3bace2de1e219aed8ee4b320053"
+    },
+    {
+      "path": "deploy/scripts/remote-ops.sh",
+      "sizeBytes": 26142,
+      "sha256": "7a0bc4c09cb1044f5e3a3123319a819138a7d029158e07163673f80c18331496"
+    },
+    {
+      "path": "deploy/scripts/resolve-image.mjs",
+      "sizeBytes": 1900,
+      "sha256": "f4f845fd094ac39c5ab1533efff0a4d5acd5e820a2916e625fbd7532dd070d22"
+    },
+    {
+      "path": "deploy/scripts/restore.sh",
+      "sizeBytes": 5158,
+      "sha256": "106957ec33fe86dfcef039129a2890df8655cf8521ee80cd4cf1282fefa9e9a9"
+    },
+    {
+      "path": "deploy/scripts/rust-runtime-image-material.fixture.json",
+      "sizeBytes": 11933,
+      "sha256": "1773c69eea890cbb099a5c3882dfe55d19a374e67d06521931b61b4b1807bfda"
+    },
+    {
+      "path": "deploy/scripts/rust-runtime-image-material.mjs",
+      "sizeBytes": 25459,
+      "sha256": "7208d3ad1b6ca73e018801d00d2b087b1c9036066f11521bfa6d1f82fcab1c21"
+    },
+    {
+      "path": "deploy/scripts/rust-runtime-image-material.test.mjs",
+      "sizeBytes": 16509,
+      "sha256": "7187867a698ce2ccdae4059f334f6a1c46154a0ce256455c7b67885399977e73"
+    },
+    {
+      "path": "deploy/scripts/ssh-dispatch.sh",
+      "sizeBytes": 5089,
+      "sha256": "0b8bf4c0e65a9a1f1f272c519ba4c7c098f5367ccaf30f47304fe966c9f29dd5"
+    },
+    {
+      "path": "deploy/scripts/ssh-run.sh",
+      "sizeBytes": 12730,
+      "sha256": "f568eec0fb0c16dfe9096dd6a54780c3aa07ea39af0318b08fcea68c82b16fd9"
+    },
+    {
+      "path": "deploy/scripts/status.sh",
+      "sizeBytes": 5923,
+      "sha256": "a18d836d4646634d31bfd0fa3f7d5e73264f299391c958763151c6f0c0ed2b86"
+    },
+    {
+      "path": "deploy/scripts/tempest-backfill.sh",
+      "sizeBytes": 1150,
+      "sha256": "7991a5a4f99e0fc3bc60440f963ed17247eb3ca2a4d22fad07aec915e3c91c1f"
+    },
+    {
+      "path": "deploy/scripts/tide-backfill.sh",
+      "sizeBytes": 1140,
+      "sha256": "56344b9e042cb12f56dd6af5c0a24cfea5c770ddc96d5a37517888e09da462f3"
+    },
+    {
+      "path": "deploy/scripts/update.sh",
+      "sizeBytes": 433122,
+      "sha256": "ea1185e04e0da2439c856b5b6989ce4f87f087a63ff7bafa1781c577cf42b8a0"
+    },
+    {
+      "path": "deploy/scripts/verify-static.sh",
+      "sizeBytes": 1831,
+      "sha256": "aadfcdfa9fbdf76761616675e8c52995840b5bf6489185e4ba8a8eb9589e4dad"
+    },
+    {
+      "path": "deploy/scripts/weather-admin-store.mjs",
+      "sizeBytes": 18614,
+      "sha256": "27ac1c81f2d178d1d36e5b350f294ce901873e35876ad5e128422141d7eab0cd"
+    },
+    {
+      "path": "deploy/scripts/web-server.mjs",
+      "sizeBytes": 86677,
+      "sha256": "0afc5d86542479d3dc214780035c509f15188cf323497c886ca6edbdd52167c5"
+    },
+    {
+      "path": "deploy/scripts/xweather-tile-cache.mjs",
+      "sizeBytes": 4644,
+      "sha256": "2a0006cf85e7b6416c4628bcef23ddd55553402f63382358b283e2f8c37ffa82"
+    },
+    {
+      "path": "deploy/scripts/xweather-usage-budget.mjs",
+      "sizeBytes": 4857,
+      "sha256": "2a2f3e0cc8f59369a5235454a4237eed91c60cdbe374dcd1c8c7821731e2e3d0"
+    },
+    {
+      "path": "deploy/sudoers/weather-ops",
+      "sizeBytes": 117,
+      "sha256": "4f8b4d58b8645f40e5da779857669114a2bec11cb720aedd7be340c3c6c1ac00"
+    },
+    {
+      "path": "deploy/systemd/weather-backup-local.service",
+      "sizeBytes": 289,
+      "sha256": "85d77f2e61be5dab2d387e867a8dfb4ff70a90e659c5e9e91d633858d0c3d4aa"
+    },
+    {
+      "path": "deploy/systemd/weather-backup-local.timer",
+      "sizeBytes": 176,
+      "sha256": "9fb0866ceb3b81f90e0c579628a8028bc807d3f7c1a7ac9ff3e37c505c2d02dd"
+    },
+    {
+      "path": "deploy/systemd/weather-compose.service",
+      "sizeBytes": 615,
+      "sha256": "12e33019380f77215a44340e4d6feb4a0dc13f76c968ab36c4501d039ec24de8"
+    },
+    {
+      "path": "deploy/compose.yaml",
+      "sizeBytes": 13433,
+      "sha256": "0fa4b2b990345a110ab324e13bf2e3528c19d530bf9a4d2b8576d3b42eebeade"
+    }
+  ]
+}

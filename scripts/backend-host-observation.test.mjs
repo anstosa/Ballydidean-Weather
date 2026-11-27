@@ -692,85 +692,31 @@ function blueberryEvidenceFixture({ includeOperator = true } = {}) {
   return { evidence, inventory, runtimeMap };
 }
 
-// build the complete current v17 control-plane tree proof
+// load the immutable v17 fixture rather than the candidate checkout's mutable tree
 async function buildControlPlaneTreeFixture() {
-  const directories = [];
-  const files = [];
-
-  // walk one fixed predecessor-protected directory
-  async function walk(relativeDirectory) {
-    const entries = await readdir(
-      new URL(`../${relativeDirectory}`, import.meta.url),
-      { withFileTypes: true },
-    );
-    const retainedEntries = entries.map(
-      // reject links and special nodes from the fixture oracle
-      (entry) => {
-        assert.ok(entry.isDirectory() || entry.isFile(), `${relativeDirectory}/${entry.name}`);
-        return {
-          name: entry.name,
-          type: entry.isDirectory() ? "directory" : "regular-file",
-        };
-      },
-    ).sort(
-      // retain canonical directory order
-      (left, right) => left.name.localeCompare(right.name),
-    );
-    directories.push({ entries: retainedEntries, path: relativeDirectory });
-
-    // retain every recursive regular file exactly once
-    for (const entry of retainedEntries) {
-      const relativePath = `${relativeDirectory}/${entry.name}`;
-
-      // recurse only through the four fixed protected roots
-      if (entry.type === "directory") {
-        await walk(relativePath);
-        continue;
-      }
-      const bytes = await readFile(new URL(`../${relativePath}`, import.meta.url));
-      const expected = { expectedGid: 0, expectedMode: "0644", expectedUid: 0 };
-      const identity = secureFileIdentity(expected);
-      identity.ino = String(8000 + files.length);
-      identity.size = String(bytes.length);
-      files.push({ identity, path: relativePath, sha256: sha256Bytes(bytes) });
-    }
-  }
-
-  // retain all four predecessor-protected roots
-  for (const relativeDirectory of [
-    "deploy/postgres",
-    "deploy/scripts",
-    "deploy/sudoers",
-    "deploy/systemd",
-  ]) {
-    await walk(relativeDirectory);
-  }
-  files.sort(
-    // retain the predecessor's protected-root order before Compose
-    (left, right) => left.path.localeCompare(right.path),
+  const snapshot = JSON.parse(await readFile(
+    new URL("./test-fixtures/backend-host-control-plane-v17.json", import.meta.url),
+    "utf8",
+  ));
+  assert.equal(snapshot.sourceCommit, "97d42c76b7e51c7e4c176f28af6ab2d8e0ccc28d");
+  const files = snapshot.files.map(
+    // retain the historical byte identities while synthesizing installed metadata
+    (file, index) => {
+      const identity = secureFileIdentity({
+        expectedGid: 0,
+        expectedMode: "0644",
+        expectedUid: 0,
+      });
+      identity.ino = String(8000 + index);
+      identity.size = String(file.sizeBytes);
+      return { identity, path: file.path, sha256: file.sha256 };
+    },
   );
-  const composeBytes = await readFile(new URL("../deploy/compose.yaml", import.meta.url));
-  const composeIdentity = secureFileIdentity({
-    expectedGid: 0,
-    expectedMode: "0644",
-    expectedUid: 0,
-  });
-  composeIdentity.ino = String(8000 + files.length);
-  composeIdentity.size = String(composeBytes.length);
-  files.push({
-    identity: composeIdentity,
-    path: "deploy/compose.yaml",
-    sha256: sha256Bytes(composeBytes),
-  });
-  directories.sort(
-    // retain canonical recursive directory order
-    (left, right) => left.path.localeCompare(right.path),
-  );
-  const controlPlaneSha256 = controlPlaneDigest(files);
+  assert.equal(controlPlaneDigest(files), snapshot.controlPlaneSha256);
   return {
     contractVersion: "weather-schema-preserving-control-plane-tree/v1",
-    controlPlaneSha256,
-    directories,
+    controlPlaneSha256: snapshot.controlPlaneSha256,
+    directories: snapshot.directories,
     files,
   };
 }
